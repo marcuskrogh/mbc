@@ -1196,12 +1196,18 @@ ocp = CDOptimalControlProblem(model, N=20, Q=Q_y, R=R_u, P=P_terminal)
 U_seq, X_seq = ocp.solve(x0=x_hat, D=D_forecast, x_ref=model.x_ref, u_prev=u_prev)
 ```
 
-#### `EconomicNMPC` — `mbc.control` *(stub — Ph.D. Ch. 9)*
+#### `EconomicNMPC` — Economic Optimal Control Problem — `mbc.control` *(stub — Ph.D. Ch. 9)*
 
-Economic Nonlinear MPC for a `ContinuousDiscreteModel`.  Unlike tracking MPC,
-which minimises a quadratic distance to a setpoint, Economic NMPC minimises an
-arbitrary economic stage cost `l_e(x, u, d)` that directly represents an
-operational criterion (e.g. energy consumption, product yield, operating profit).
+Economic Optimal Control Problem (OCP) for a `ContinuousDiscreteModel`.  Unlike
+the tracking OCP (`CDOptimalControlProblem`), which minimises a quadratic distance
+to a setpoint, this OCP minimises an arbitrary economic stage cost `l_e(x, u, d)`
+that directly represents an operational criterion (e.g. energy consumption, product
+yield, operating profit).
+
+This class is an **OCP solver only** — it takes a state estimate `x̂` as input and
+returns an optimal input sequence.  It does not include a state estimator.  To form
+a complete closed-loop controller, embed it in an `NMPCController` (§2.5) together
+with a continuous-discrete state estimator.
 
 **Problem formulation**:
 
@@ -1246,23 +1252,34 @@ from mbc.control import EconomicNMPC
 def energy_cost(x, u, d):
     return float(u @ u)   # quadratic energy proxy
 
+# Construct the OCP — no estimator here
 ocp = EconomicNMPC(model, N=20, stage_cost=energy_cost, n_steps=10)
 
-u_opt, cost = ocp.solve(x0, d_trajectory, u_prev=None)
-# u_opt : (N, nu) ndarray — full optimal sequence
+# Solve from a given state estimate (produced externally by a CD estimator)
+u_opt, cost = ocp.solve(x0=x_hat, d_trajectory=d_fcast, u_prev=None)
+# u_opt : (N, nu) ndarray — full optimal input sequence
 # cost  : float — optimal economic objective value
 
-u0 = ocp.step(x0, d_trajectory, u_prev)  # returns (nu,) first action only
+u0 = ocp.step(x_hat, d_fcast, u_prev)  # returns (nu,) first action only
+
+# To close the loop, pair with an estimator via NMPCController (§2.5)
 ```
 
 ---
 
 ### 2.5 MPC Controllers
 
+An MPC controller is **not** an OCP.  The OCP (§2.4) takes a state estimate as
+input and returns an optimal input sequence.  The MPC controller closes the loop
+by combining an OCP with a state estimator: it receives the raw measurement `y[k]`,
+passes it to the estimator to produce `x̂[k]`, and then solves the OCP from that
+estimate.  The distinction matters: an OCP can be tested and tuned in isolation;
+the MPC is the closed-loop composition.
+
 #### `CDMPCController` — `mbc.control`
 
-Combines a `CDKalmanFilter` and a `CDOptimalControlProblem` into a receding-horizon
-controller for a linear continuous-discrete system.
+Combines a `CDKalmanFilter` (estimator) and a `CDOptimalControlProblem` (OCP) into
+a closed-loop receding-horizon controller for a linear continuous-discrete system.
 
 **Receding-horizon policy** — at each measurement time k:
 
@@ -1302,24 +1319,48 @@ to obtain ZOH matrices for the QP.  Both operate on the same `model` object.
 
 #### `NMPCController` *(stub)*
 
-Pairs any continuous-discrete state estimator (EKF, UKF, EnKF, PF, or DAE-EKF)
-with any nonlinear OCP (`EconomicNMPC`, or a future `TrackingNMPC`) to form a
-general nonlinear receding-horizon controller.
+Closes the loop around any continuous-discrete OCP by pairing it with any
+continuous-discrete state estimator (EKF, UKF, EnKF, PF, or DAE-EKF).  The OCP
+itself (`EconomicNMPC` or a future `TrackingOCP`) is an open-loop solver that maps
+a state estimate to an optimal input sequence; `NMPCController` is the closed-loop
+wrapper that supplies that estimate from measurements.
 
 **Closed-loop structure**:
 
 ```
-           ┌────────────────────────────────────────────────────┐
-           │              NMPCController                         │
-  y[k] ───┤──► CD Estimator ──x̂[k]──► Nonlinear OCP ──►u[k]───┼──► Plant
-           │   (EKF/UKF/EnKF/PF)       (SLSQP NLP)             │
-           │         ▲                                          │
-           │    record_action(u[k])                             │
-           └────────────────────────────────────────────────────┘
+           ┌──────────────────────────────────────────────────────────┐
+           │                    NMPCController                         │
+  y[k] ───┤──► CD Estimator ──x̂[k]──► Nonlinear OCP ──u_opt──►u[k]──┼──► Plant
+           │  (EKF/UKF/EnKF/    │       (EconomicNMPC                │
+           │   PF/DAE-EKF)      │        or future TrackingOCP)      │
+           │         ▲          │         SLSQP NLP solver            │
+           │    record_action(u[k])                                   │
+           └──────────────────────────────────────────────────────────┘
 ```
 
-At each step: (1) estimator `step(y, u_prev, d, t)` → `x̂[k]`; (2) OCP
-`solve(x̂[k], d_trajectory, u_prev)` → `u_opt`; (3) apply `u[k] = u_opt[0]`.
+**Receding-horizon policy** — at each measurement time k:
+
+1. **Estimate**: `x̂[k] ← estimator.step(y[k], u_prev, d[k], t_k)` → `(x̂, P)`
+2. **Optimise**: `u_opt ← ocp.solve(x̂[k], d_trajectory, u_prev)` → `(N, nu)` sequence
+3. **Apply**: `u[k] = u_opt[0]` (first element, receding horizon)
+4. **Record**: `u_prev ← u_opt` (shifted for warm-start on next call)
+
+The controller is agnostic to which estimator and OCP are used.  Any CD estimator
+that exposes `step(y, u, d, t)` and any OCP that exposes `solve(x0, d_trajectory,
+u_prev)` can be composed.
+
+**Usage**:
+
+```python
+from mbc.estimation import ContinuousDiscreteEKF
+from mbc.control import EconomicNMPC, NMPCController
+
+ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
+ocp = EconomicNMPC(model, N=20, stage_cost=energy_cost)
+
+ctrl = NMPCController(estimator=ekf, ocp=ocp)
+u = ctrl.step(y, d, t)   # full observe-optimise-apply cycle
+```
 
 ---
 
