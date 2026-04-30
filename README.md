@@ -24,13 +24,14 @@ two is clearly indicated in each interface.
 - [Part I — Discrete-Discrete Systems](#part-i--discrete-discrete-systems)
   - [1.1 Models](#11-models)
   - [1.2 State Estimators](#12-state-estimators)
+    - [DelayedObservationFilter (wraps any estimator)](#delayedobservationfilter--mbcestimation)
   - [1.3 Optimal Control Problems](#13-optimal-control-problems)
   - [1.4 MPC Controllers](#14-mpc-controllers)
 - [Part II — Continuous-Discrete Systems](#part-ii--continuous-discrete-systems)
   - [2.1 Models](#21-models)
   - [2.2 Simulators](#22-simulators)
   - [2.3 State Estimators](#23-state-estimators)
-    - [Delayed-observation update (all variants)](#delayed-observation-update-all-estimator-variants)
+    - [Delayed-observation update (cross-ref §1.2)](#delayed-observation-update-all-estimator-variants)
   - [2.4 Optimal Control Problems](#24-optimal-control-problems)
   - [2.5 MPC Controllers](#25-mpc-controllers)
 - [Part III — System Identification](#part-iii--system-identification)
@@ -197,12 +198,9 @@ When only a subset of outputs are available, the filter constructs sub-matrices
 `filter(y_sub, x_pred, P_pred, C_sub)`.  The reduced `R_sub` is the
 sub-block of `R` corresponding to the active output pairs.
 
-**Delayed observations**: laboratory measurements or other sources with a known
-reporting delay `τ` steps can be incorporated by the **retrospective correction**
-pattern described in §2.3 (Delayed-observation update).  The same buffer-and-replay
-procedure applies to `KalmanFilter`; the buffer stores the posterior
-`(x̂[k], P[k], u[k], d[k], y[k], mask[k])` and the discrete filter's `predict`
-and `update` methods are used as the replay primitives.
+**Delayed observations**: measurements with a known reporting delay (e.g.
+laboratory assays) are handled by `DelayedObservationFilter` (§1.2), which wraps
+any estimator and adds a `delay` argument to `update` / `step`.
 
 **Noise separation** (M.Sc. Ch. 5.4): the standard prediction covariance step
 `P⁻ = A P Aᵀ + Q` assumes `Q` is the full state-noise covariance (i.e. the
@@ -240,6 +238,117 @@ kf.record_action(u)                   # store u[k] for next prediction
 | `x_hat` | `(n,1) matrix` | Current state estimate x̂[k] (copy) |
 | `P` | `(n,n) matrix` | Current covariance P[k] (copy) |
 | `last_innovation` | `list[float]` or `None` | Most recent innovation ν = y − Cx̂⁻ |
+
+#### `DelayedObservationFilter` — `mbc.estimation`
+
+A transparent wrapper that adds per-channel reporting-delay handling to **any**
+state estimator.  Its call interface is identical to the wrapped estimator plus
+one optional `delay` argument; it can therefore be substituted into
+`MPCController`, `CDMPCController`, or `NMPCController` without any change to
+the controller code.
+
+**Motivation**: some measurement channels have a fixed or variable reporting
+delay — a laboratory analyser returns a result `τ` sampling steps after the
+sample was taken, while on-line sensors have `τ = 0`.  Passing all channels
+together in a single `update` call (with their respective delays declared)
+allows the filter to apply each measurement at the correct point in time.
+
+**Interface** (discrete-time):
+
+```python
+x_hat = filt.update(y, d, mask=None, delay=None)   # returns (n,1)
+filt.record_action(u)
+```
+
+**Interface** (continuous-discrete, wrapping a CD estimator):
+
+```python
+x_hat, P = filt.step(y, u, d, t, mask=None, delay=None)
+x_hat, P = filt.predict(u, d, t)
+x_hat, P = filt.update(y, d, mask=None, delay=None)
+```
+
+**`delay` argument**: a `(ny,)` integer `ndarray` where `delay[i]` is the number
+of sampling steps by which output channel `i` arrived late.  `delay[i] = 0`
+means a current-step observation (no delay).  `None` is equivalent to all zeros
+— the filter behaves identically to the unwrapped estimator.
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `estimator` | any estimator | — | Wrapped estimator (KF, EKF, UKF, EnKF, PF, DAE-EKF, …) |
+| `lag_max` | `int` | — | Maximum delay in steps that the buffer can accommodate |
+
+**Properties** (`x_hat`, `P`, `last_innovation`): delegated to the wrapped
+estimator — the caller sees no difference from a plain estimator.
+
+**Internal algorithm** — at each call to `update(y, d, mask, delay)`:
+
+```
+Partition channels by delay:
+    immediate = [i for i where delay[i] == 0 (or delay is None)]
+    delayed   = [(i, tau) for i where delay[i] = tau > 0]
+
+1. Standard update for immediate channels:
+      Apply wrapped_estimator.update(y[immediate], d, mask=immediate_mask)
+      Append (x̂, P, u, d, y, mask, t) to the internal buffer (deque, maxlen=lag_max)
+
+2. For each (i, tau) in delayed channels (sorted by tau ascending):
+      a. Retrieve buffer entry at position -(tau+1):
+             x̂_0, P_0 = buffer[-(tau+1)]["x_hat"], buffer[-(tau+1)]["P"]
+      b. Temporarily restore the wrapped estimator to (x̂_0, P_0)
+      c. Apply update for channel i only (mask = single-channel, y_i = y[i]):
+             x̂_upd, P_upd = wrapped_estimator.update(y_i, d, mask=channel_i_mask)
+      d. Re-propagate forward through the buffer from -(tau) to -1:
+             for each entry j (oldest delayed entry to most recent):
+                 (x̂, P) = wrapped_estimator.predict(entry["u"], entry["d"], ...)
+                 if entry had active channels:
+                     (x̂, P) = wrapped_estimator.update(entry["y"], entry["d"],
+                                                         entry["mask"])
+      e. Set wrapped estimator state to the re-propagated (x̂, P)
+      f. Update the buffer entries [-(tau) .. -1] with the re-computed posteriors
+
+3. Restore wrapped estimator to the final (x̂, P)
+```
+
+If `delay[i] > lag_max`, channel `i` is silently dropped (the required prior has
+been evicted from the buffer) and a warning is issued.
+
+**Usage with `MPCController`** (discrete):
+
+```python
+from mbc.estimation import KalmanFilter, DelayedObservationFilter
+from mbc.control import OptimalControlProblem, MPCController
+
+kf   = KalmanFilter(model, Q=Q, R=R)
+filt = DelayedObservationFilter(kf, lag_max=10)   # up to 10-step lab delay
+
+ocp  = OptimalControlProblem(model, N=20, Q=Q_y, R=R_u)
+ctrl = MPCController(model, estimator=filt, ocp=ocp)
+
+# Normal on-line sensor (delay=0) + lab result with 5-step delay:
+delay = np.array([0, 0, 5])     # 3 output channels; channel 2 is the lab assay
+u, U_seq, X_seq = ctrl.step(y, D)   # MPC calls filt.update(y, d) internally
+# — when a lab result is ready, set y[2] to the assay value and pass delay;
+#   outside the MPC loop, call filt.update(y, d, delay=delay) directly before ctrl.step
+```
+
+**Usage with `NMPCController`** (continuous-discrete):
+
+```python
+from mbc.estimation import ContinuousDiscreteEKF, DelayedObservationFilter
+from mbc.control import EconomicNMPC, NMPCController
+
+ekf  = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
+filt = DelayedObservationFilter(ekf, lag_max=10)
+
+ocp  = EconomicNMPC(model, N=20, dt=1.0, stage_cost=cost_fn)
+ctrl = NMPCController(estimator=filt, ocp=ocp)
+
+u = ctrl.step(y, d, t)                     # no lab result this step
+u = ctrl.step(y, d, t, delay=np.array([0, 3]))  # channel 1 delayed by 3 steps
+```
 
 ---
 
@@ -793,73 +902,13 @@ Kalman-gain computations.  For the EnKF and PF, only the active rows of
 
 #### Delayed-observation update (all estimator variants)
 
-Some measurements arrive with a known delay — for example, a laboratory assay
-taken at time `k − τ` whose result is only reported at time `k`.  The standard
-one-step update scheme cannot handle such observations directly, but a
-**retrospective correction** can be applied using only the estimator's existing
-`predict` and `update` methods.  The same pattern works for `KalmanFilter`,
-`CDKalmanFilter`, `ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`,
-`ContinuousDiscreteEnKF`, `ContinuousDiscreteParticleFilter`, and
-`ContinuousDiscreteDAEEKF`.
-
-**Buffer maintained by the caller** (rolling window of depth `lag_max`):
-
-```python
-history = deque(maxlen=lag_max)   # newest at right
-
-# At each normal time step k, after predict+update, append:
-history.append({
-    "x_hat": x_hat,   # posterior state estimate x̂[k|k]
-    "P":     P,       # posterior covariance P[k|k]
-    "u":     u,       # control action u[k] applied after this step
-    "d":     d,       # disturbance d[k]
-    "y":     y,       # normal-time observation y[k] (may be None if masked)
-    "mask":  mask,    # mask used at this step (None = all active)
-    "t":     t,       # time t_k
-})
-```
-
-**Delayed-update procedure** — called when delayed observation `y_lab` arrives at
-time `k` but was taken at time `k − τ` (delay `τ`, `1 ≤ τ ≤ lag_max`):
-
-```
-1. Retrieve the entry at lag τ from the buffer:
-      entry = history[-(τ+1)]     (negative index: right = newest)
-      x̂_0, P_0, t_0 = entry["x_hat"], entry["P"], entry["t"]
-
-2. Apply the delayed measurement update at time k − τ:
-      (x̂_upd, P_upd) = estimator.update(y_lab, d_lab, mask_lab)
-      using x̂_0, P_0 as the current state  (temporarily set on the estimator)
-
-3. Re-propagate forward from k − τ to k by replaying the buffer:
-      x̂ = x̂_upd,  P = P_upd
-      for each entry j in history from index -(τ) to -1  (oldest to newest):
-          (x̂, P) = estimator.predict(entry_j["u"], entry_j["d"], entry_j["t"])
-          if entry_j["y"] is not None:
-              (x̂, P) = estimator.update(entry_j["y"], entry_j["d"], entry_j["mask"])
-
-4. Restore the estimator to the re-computed current estimate:
-      estimator._x = x̂;  estimator._P = P
-      (or equivalent internal state assignment for each estimator class)
-```
-
-**Key invariant**: the buffer replay uses the **original** `u`, `d`, `y`, and
-`mask` values that were applied at each past step, so the re-propagated estimate
-is identical to what the filter would have produced had the delayed observation
-arrived on time.
-
-**Delay constraint**: `τ ≤ lag_max`.  Observations that arrive later than
-`lag_max` steps after they were taken cannot be incorporated (the required prior
-state has been evicted from the buffer).  Choose `lag_max` to cover the maximum
-expected laboratory or network delay.
-
-**Computational cost**: the replay loop executes `τ` predict/update cycles.  For
-small delays this is negligible; for large delays or fast sampling, run the replay
-in a background thread and apply the correction to the next available control cycle.
-
-**Continuous-discrete estimators**: the replay calls `estimator.predict(u, d, t)`
-and `estimator.update(y, d, mask)` exactly as in the normal-time loop.  No
-additional interface is required beyond what every CD estimator already exposes.
+Measurements with a per-channel reporting delay (e.g. laboratory assays) are
+handled by `DelayedObservationFilter` — see §1.2 for the full class description.
+The wrapper works with all CD estimators listed below by accepting the same
+`step`/`update`/`predict` interface and adding a `delay=(ny,) int ndarray`
+argument.  The buffer, retrospective correction, and replay logic are fully
+encapsulated inside the wrapper; the wrapped CD estimator is called only through
+its standard `predict` and `update` methods.
 
 ---
 
