@@ -7,9 +7,11 @@ model-based control, estimation, identification, and simulation.
   mbc.models
       Abstract model interfaces:
 
-      * ``LinearDiscreteModel``        – linear discrete-time system (ZOH).
-      * ``ContinuousDiscreteModel``    – nonlinear SDE (Ph.D. Ch. 5).
-      * ``ContinuousDiscreteDAEModel`` – nonlinear SDAE (Ph.D. Ch. 6).
+      * ``LinearDiscreteModel``              – linear discrete-time system (ZOH).
+      * ``LinearContinuousDiscreteModel``    – linear continuous-discrete system
+                                               (M.Sc. Ch. 5).
+      * ``ContinuousDiscreteModel``          – nonlinear SDE (Ph.D. Ch. 5).
+      * ``ContinuousDiscreteDAEModel``       – nonlinear SDAE (Ph.D. Ch. 6).
 
   mbc.estimation
       State-estimation algorithms:
@@ -17,6 +19,8 @@ model-based control, estimation, identification, and simulation.
       * ``KalmanFilter``                    – discrete-time KF (Joseph form).
         Supports noise-separated covariance (M.Sc. Ch. 5.4) and missing
         observations (M.Sc. Ch. 5.5).
+      * ``CDKalmanFilter``                  – KF for linear continuous-discrete
+                                              systems; ZOH + Van Loan Q_d (M.Sc. Ch. 5).
       * ``ContinuousDiscreteEKF``           – CD-EKF (Ph.D. Ch. 7.1).
       * ``ContinuousDiscreteUKF``           – CD-UKF (Ph.D. Ch. 7.2).
       * ``ContinuousDiscreteEnKF``          – CD-EnKF (Ph.D. Ch. 7.3).
@@ -26,9 +30,11 @@ model-based control, estimation, identification, and simulation.
   mbc.control
       Optimal control algorithms:
 
-      * ``OptimalControlProblem`` – receding-horizon QP (tracking MPC).
-      * ``MPCController``         – KalmanFilter + OptimalControlProblem.
-      * ``EconomicNMPC``          – economic nonlinear MPC (Ph.D. Ch. 9).
+      * ``OptimalControlProblem``   – receding-horizon QP (tracking MPC, discrete).
+      * ``MPCController``           – KalmanFilter + OptimalControlProblem.
+      * ``CDOptimalControlProblem`` – receding-horizon QP for linear CD systems.
+      * ``CDMPCController``         – CDKalmanFilter + CDOptimalControlProblem.
+      * ``EconomicNMPC``            – economic nonlinear MPC (Ph.D. Ch. 9).
 
   mbc.identification
       System-identification / parameter-estimation utilities:
@@ -59,18 +65,26 @@ model-based control, estimation, identification, and simulation.
 
 from .models import (
     LinearDiscreteModel,
+    LinearContinuousDiscreteModel,
     ContinuousDiscreteModel,
     ContinuousDiscreteDAEModel,
 )
 from .estimation import (
     KalmanFilter,
+    CDKalmanFilter,
     ContinuousDiscreteEKF,
     ContinuousDiscreteUKF,
     ContinuousDiscreteEnKF,
     ContinuousDiscreteParticleFilter,
     ContinuousDiscreteDAEEKF,
 )
-from .control import OptimalControlProblem, MPCController, EconomicNMPC
+from .control import (
+    OptimalControlProblem,
+    MPCController,
+    CDOptimalControlProblem,
+    CDMPCController,
+    EconomicNMPC,
+)
 from .identification.estimator import ParameterEstimator, EstimationResult
 from .identification.likelihood import (
     ped_neg_log_likelihood,
@@ -83,10 +97,12 @@ from .monte_carlo import MonteCarloSimulation, MonteCarloResult
 __all__ = [
     # Models
     "LinearDiscreteModel",
+    "LinearContinuousDiscreteModel",
     "ContinuousDiscreteModel",
     "ContinuousDiscreteDAEModel",
     # Estimation
     "KalmanFilter",
+    "CDKalmanFilter",
     "ContinuousDiscreteEKF",
     "ContinuousDiscreteUKF",
     "ContinuousDiscreteEnKF",
@@ -95,6 +111,8 @@ __all__ = [
     # Control
     "OptimalControlProblem",
     "MPCController",
+    "CDOptimalControlProblem",
+    "CDMPCController",
     "EconomicNMPC",
     # Identification
     "ParameterEstimator",
