@@ -30,6 +30,7 @@ two is clearly indicated in each interface.
   - [2.1 Models](#21-models)
   - [2.2 Simulators](#22-simulators)
   - [2.3 State Estimators](#23-state-estimators)
+    - [Delayed-observation update (all variants)](#delayed-observation-update-all-estimator-variants)
   - [2.4 Optimal Control Problems](#24-optimal-control-problems)
   - [2.5 MPC Controllers](#25-mpc-controllers)
 - [Part III — System Identification](#part-iii--system-identification)
@@ -195,6 +196,13 @@ When only a subset of outputs are available, the filter constructs sub-matrices
 `C_sub`, `R_sub`, and `y_sub` restricted to the active rows before calling
 `filter(y_sub, x_pred, P_pred, C_sub)`.  The reduced `R_sub` is the
 sub-block of `R` corresponding to the active output pairs.
+
+**Delayed observations**: laboratory measurements or other sources with a known
+reporting delay `τ` steps can be incorporated by the **retrospective correction**
+pattern described in §2.3 (Delayed-observation update).  The same buffer-and-replay
+procedure applies to `KalmanFilter`; the buffer stores the posterior
+`(x̂[k], P[k], u[k], d[k], y[k], mask[k])` and the discrete filter's `predict`
+and `update` methods are used as the replay primitives.
 
 **Noise separation** (M.Sc. Ch. 5.4): the standard prediction covariance step
 `P⁻ = A P Aᵀ + Q` assumes `Q` is the full state-noise covariance (i.e. the
@@ -782,6 +790,76 @@ R_sub    = R[np.ix_(active, active)]       (na, na) sub-block of the noise matri
 These sub-matrices replace their full-size counterparts in the innovation and
 Kalman-gain computations.  For the EnKF and PF, only the active rows of
 `h(x, d)` are evaluated and only `R_sub` enters the likelihood computation.
+
+#### Delayed-observation update (all estimator variants)
+
+Some measurements arrive with a known delay — for example, a laboratory assay
+taken at time `k − τ` whose result is only reported at time `k`.  The standard
+one-step update scheme cannot handle such observations directly, but a
+**retrospective correction** can be applied using only the estimator's existing
+`predict` and `update` methods.  The same pattern works for `KalmanFilter`,
+`CDKalmanFilter`, `ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`,
+`ContinuousDiscreteEnKF`, `ContinuousDiscreteParticleFilter`, and
+`ContinuousDiscreteDAEEKF`.
+
+**Buffer maintained by the caller** (rolling window of depth `lag_max`):
+
+```python
+history = deque(maxlen=lag_max)   # newest at right
+
+# At each normal time step k, after predict+update, append:
+history.append({
+    "x_hat": x_hat,   # posterior state estimate x̂[k|k]
+    "P":     P,       # posterior covariance P[k|k]
+    "u":     u,       # control action u[k] applied after this step
+    "d":     d,       # disturbance d[k]
+    "y":     y,       # normal-time observation y[k] (may be None if masked)
+    "mask":  mask,    # mask used at this step (None = all active)
+    "t":     t,       # time t_k
+})
+```
+
+**Delayed-update procedure** — called when delayed observation `y_lab` arrives at
+time `k` but was taken at time `k − τ` (delay `τ`, `1 ≤ τ ≤ lag_max`):
+
+```
+1. Retrieve the entry at lag τ from the buffer:
+      entry = history[-(τ+1)]     (negative index: right = newest)
+      x̂_0, P_0, t_0 = entry["x_hat"], entry["P"], entry["t"]
+
+2. Apply the delayed measurement update at time k − τ:
+      (x̂_upd, P_upd) = estimator.update(y_lab, d_lab, mask_lab)
+      using x̂_0, P_0 as the current state  (temporarily set on the estimator)
+
+3. Re-propagate forward from k − τ to k by replaying the buffer:
+      x̂ = x̂_upd,  P = P_upd
+      for each entry j in history from index -(τ) to -1  (oldest to newest):
+          (x̂, P) = estimator.predict(entry_j["u"], entry_j["d"], entry_j["t"])
+          if entry_j["y"] is not None:
+              (x̂, P) = estimator.update(entry_j["y"], entry_j["d"], entry_j["mask"])
+
+4. Restore the estimator to the re-computed current estimate:
+      estimator._x = x̂;  estimator._P = P
+      (or equivalent internal state assignment for each estimator class)
+```
+
+**Key invariant**: the buffer replay uses the **original** `u`, `d`, `y`, and
+`mask` values that were applied at each past step, so the re-propagated estimate
+is identical to what the filter would have produced had the delayed observation
+arrived on time.
+
+**Delay constraint**: `τ ≤ lag_max`.  Observations that arrive later than
+`lag_max` steps after they were taken cannot be incorporated (the required prior
+state has been evicted from the buffer).  Choose `lag_max` to cover the maximum
+expected laboratory or network delay.
+
+**Computational cost**: the replay loop executes `τ` predict/update cycles.  For
+small delays this is negligible; for large delays or fast sampling, run the replay
+in a background thread and apply the correction to the next available control cycle.
+
+**Continuous-discrete estimators**: the replay calls `estimator.predict(u, d, t)`
+and `estimator.update(y, d, mask)` exactly as in the normal-time loop.  No
+additional interface is required beyond what every CD estimator already exposes.
 
 ---
 
