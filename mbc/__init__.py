@@ -1,57 +1,113 @@
 """
 mbc – model-based control library.
 
-Provides generic, reusable algorithms that operate on any model implementing
-the ``LinearDiscreteModel`` interface:
+Provides generic, reusable algorithms for linear and nonlinear
+model-based control, estimation, identification, and simulation.
 
   mbc.models
-      Abstract model interface:
+      Abstract model interfaces:
 
-      * ``LinearDiscreteModel`` – abstract base class for linear discrete-time
-        systems.
+      * ``LinearDiscreteModel``        – linear discrete-time system (ZOH).
+      * ``ContinuousDiscreteModel``    – nonlinear SDE (Ph.D. Ch. 5).
+      * ``ContinuousDiscreteDAEModel`` – nonlinear SDAE (Ph.D. Ch. 6).
 
   mbc.estimation
       State-estimation algorithms:
 
-      * ``KalmanFilter`` – discrete-time Kalman filter with Joseph stabilised
-        covariance update.
+      * ``KalmanFilter``                    – discrete-time KF (Joseph form).
+        Supports noise-separated covariance (M.Sc. Ch. 5.4) and missing
+        observations (M.Sc. Ch. 5.5).
+      * ``ContinuousDiscreteEKF``           – CD-EKF (Ph.D. Ch. 7.1).
+      * ``ContinuousDiscreteUKF``           – CD-UKF (Ph.D. Ch. 7.2).
+      * ``ContinuousDiscreteEnKF``          – CD-EnKF (Ph.D. Ch. 7.3).
+      * ``ContinuousDiscreteParticleFilter``– CD-PF  (Ph.D. Ch. 7.4).
+      * ``ContinuousDiscreteDAEEKF``        – CD-EKF for SDAE (Ph.D. Ch. 8).
 
   mbc.control
       Optimal control algorithms:
 
-      * ``OptimalControlProblem`` – receding-horizon QP with setpoint tracking,
-        Δu penalty, hard input box-constraints, and soft output constraints.
-      * ``MPCController`` – generic MPC controller composing a KalmanFilter and
-        OptimalControlProblem.
+      * ``OptimalControlProblem`` – receding-horizon QP (tracking MPC).
+      * ``MPCController``         – KalmanFilter + OptimalControlProblem.
+      * ``EconomicNMPC``          – economic nonlinear MPC (Ph.D. Ch. 9).
 
   mbc.identification
       System-identification / parameter-estimation utilities:
 
-      * ``ped_neg_log_likelihood``  – prediction-error decomposition (PED)
-        Kalman-filter log-likelihood.
-      * ``ped_neg_log_likelihood_gradient`` – finite-difference gradient of
-        the above.
-      * ``ParameterEstimator``  – multi-start optimiser wrapping the
-        likelihood with optional regularisation and gradient-based search.
-      * ``EstimationResult``    – lightweight result dataclass.
+      * ``ped_neg_log_likelihood``          – PED Kalman log-likelihood.
+      * ``ped_neg_log_likelihood_gradient`` – finite-difference gradient.
+      * ``ParameterEstimator``              – multi-start optimiser.
+      * ``EstimationResult``                – result dataclass.
+
+  mbc.realization
+      State-space realization from I/O data (M.Sc. Ch. 2–4):
+
+      * ``SISORealization`` – from transfer function or impulse response.
+      * ``MIMORealization`` – Ho–Kalman from Markov parameters.
+
+  mbc.simulation
+      Numerical integration of SDE/SDAE models (Ph.D. Ch. 5–6):
+
+      * ``SDESimulator``  – Euler-Maruyama for SDE systems.
+      * ``SDAESimulator`` – Euler-Maruyama for SDAE systems.
+
+  mbc.monte_carlo
+      Closed-loop Monte Carlo simulation framework (Ph.D. Ch. 12):
+
+      * ``MonteCarloSimulation`` – N_mc independent closed-loop trials.
+      * ``MonteCarloResult``     – results container.
 """
 
-from .models import LinearDiscreteModel
-from .estimation import KalmanFilter
-from .control import OptimalControlProblem, MPCController
+from .models import (
+    LinearDiscreteModel,
+    ContinuousDiscreteModel,
+    ContinuousDiscreteDAEModel,
+)
+from .estimation import (
+    KalmanFilter,
+    ContinuousDiscreteEKF,
+    ContinuousDiscreteUKF,
+    ContinuousDiscreteEnKF,
+    ContinuousDiscreteParticleFilter,
+    ContinuousDiscreteDAEEKF,
+)
+from .control import OptimalControlProblem, MPCController, EconomicNMPC
 from .identification.estimator import ParameterEstimator, EstimationResult
 from .identification.likelihood import (
     ped_neg_log_likelihood,
     ped_neg_log_likelihood_gradient,
 )
+from .realization import SISORealization, MIMORealization
+from .simulation import SDESimulator, SDAESimulator
+from .monte_carlo import MonteCarloSimulation, MonteCarloResult
 
 __all__ = [
+    # Models
     "LinearDiscreteModel",
+    "ContinuousDiscreteModel",
+    "ContinuousDiscreteDAEModel",
+    # Estimation
     "KalmanFilter",
+    "ContinuousDiscreteEKF",
+    "ContinuousDiscreteUKF",
+    "ContinuousDiscreteEnKF",
+    "ContinuousDiscreteParticleFilter",
+    "ContinuousDiscreteDAEEKF",
+    # Control
     "OptimalControlProblem",
     "MPCController",
+    "EconomicNMPC",
+    # Identification
     "ParameterEstimator",
     "EstimationResult",
     "ped_neg_log_likelihood",
     "ped_neg_log_likelihood_gradient",
+    # Realization
+    "SISORealization",
+    "MIMORealization",
+    # Simulation
+    "SDESimulator",
+    "SDAESimulator",
+    # Monte Carlo
+    "MonteCarloSimulation",
+    "MonteCarloResult",
 ]
