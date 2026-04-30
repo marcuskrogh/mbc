@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "mbc"
+version = "0.1.0"
+description = "Generic model-based control library for linear discrete-time systems"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "cvxopt",
+]
+
+[tool.setuptools.packages.find]
+include = ["mbc*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
