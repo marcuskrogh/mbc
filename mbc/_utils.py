@@ -7,6 +7,10 @@ Provides helpers used across the mbc sub-packages:
   - ``_eye`` / ``_zeros`` / ``_symmetrise``                 – cvxopt matrix construction
   - ``_expm`` / ``_zoh``                                    – matrix exponential and
                                                               zero-order-hold discretisation
+  - ``_zoh_full``                                           – ZOH for systems with multiple
+                                                              input matrices (B_c, E_c)
+  - ``_van_loan``                                           – exact discrete process-noise
+                                                              covariance via Van Loan (1978)
 """
 
 from __future__ import annotations
@@ -86,3 +90,85 @@ def _zoh(Fc: np.ndarray, Gc: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndar
     A_d = _expm(Fc * dt)
     B_d = np.linalg.solve(Fc, (A_d - np.eye(n)) @ Gc)
     return A_d, B_d
+
+
+def _zoh_full(
+    A_c: np.ndarray,
+    B_c: np.ndarray,
+    E_c: np.ndarray,
+    dt: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Zero-order hold discretisation of  ẋ = A_c x + B_c u + E_c d.
+
+    Uses the augmented-matrix method (no matrix inverse required):
+
+        expm([[A_c, B_c, E_c],   =  [[A_d,  B_d,  E_d ],
+              [ 0,   0,   0 ],        [ 0,   I_m,   0  ],
+              [ 0,   0,   0 ]] * dt)  [ 0,    0,   I_p ]]
+
+    Returns (A_d, B_d, E_d) as numpy arrays.
+
+    Parameters
+    ----------
+    A_c : (n, n) ndarray  — continuous state matrix.
+    B_c : (n, m) ndarray  — continuous input matrix.
+    E_c : (n, p) ndarray  — continuous disturbance matrix.
+    dt  : float           — sampling interval.
+    """
+    n, m, p = A_c.shape[0], B_c.shape[1], E_c.shape[1]
+    size = n + m + p
+    M = np.zeros((size, size))
+    M[:n, :n] = A_c
+    M[:n, n:n + m] = B_c
+    M[:n, n + m:] = E_c
+    E = _expm(M * dt)
+    return E[:n, :n], E[:n, n:n + m], E[:n, n + m:]
+
+
+def _van_loan(
+    A_c: np.ndarray,
+    G: np.ndarray,
+    Q_c: np.ndarray,
+    dt: float,
+) -> np.ndarray:
+    """
+    Exact discrete process-noise covariance via the Van Loan (1978) method.
+
+    For the continuous-time SDE  dx = A_c x dt + G dw,  cov(dw dw^T) = Q_c dt,
+    the exact discrete covariance is
+
+        Q_d = ∫₀^{dt} expm(A_c τ) G Q_c Gᵀ expm(A_c τ)ᵀ dτ
+
+    Computed via the augmented 2n×2n matrix (Van Loan, 1978):
+
+        M = [[-A_c,   G Q_c Gᵀ],   * dt
+              [  0,   A_cᵀ    ]]
+
+        expm(M) = [[expm(-A_c dt),   expm(-A_c dt) Q_d],
+                   [      0,         expm(A_cᵀ dt)    ]]
+
+    so that  Q_d = A_d · E[:n, n:]  where A_d = expm(A_c dt).
+
+    The result is symmetrised numerically to eliminate floating-point skew.
+
+    Parameters
+    ----------
+    A_c : (n, n) ndarray  — continuous state matrix.
+    G   : (n, q) ndarray  — noise input matrix.
+    Q_c : (q, q) ndarray  — continuous process-noise covariance.
+    dt  : float           — sampling interval.
+
+    Returns
+    -------
+    Q_d : (n, n) ndarray — discrete process-noise covariance.
+    """
+    n = A_c.shape[0]
+    M = np.zeros((2 * n, 2 * n))
+    M[:n, :n] = -A_c
+    M[:n, n:] = G @ Q_c @ G.T
+    M[n:, n:] = A_c.T
+    E = _expm(M * dt)
+    A_d = E[n:, n:].T          # expm(A_c dt)
+    Q_d = A_d @ E[:n, n:]      # expm(A_c dt) · (expm(-A_c dt) Q_d)
+    return (Q_d + Q_d.T) * 0.5  # symmetrise

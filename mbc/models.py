@@ -235,6 +235,217 @@ class LinearDiscreteModel(ABC):
         return dA, dB, dE
 
 
+# ── Linear Continuous-Discrete Model ─────────────────────────────────────────
+
+
+class LinearContinuousDiscreteModel(ABC):
+    """
+    Abstract interface for a linear continuous-discrete stochastic system.
+
+    The continuous-time dynamics follow the Itô SDE
+
+        dx = (A_c x[t] + B_c u[t] + E_c d[t]) dt + G dw[t],
+        w[t] ~ N(0, Q_c)
+
+    with zero-order-hold (ZOH) inputs and zero-order-hold disturbances over
+    each sampling interval [t_k, t_{k+1}].  Observations are collected at the
+    discrete measurement times t_k:
+
+        y[k] = C x[k] + v[k],   v[k] ~ N(0, R)
+
+    The model exposes the ZOH-discretised matrices via ``discretize`` so that
+    the existing ``OptimalControlProblem`` (and ``CDOptimalControlProblem``) can
+    be used without modification.
+
+    Notation (M.Sc. thesis, Ch. 5)
+    --------------------------------
+        n   – state dimension              x ∈ ℝⁿ
+        m   – input dimension              u ∈ ℝᵐ
+        p   – disturbance dimension        d ∈ ℝᵖ
+        l   – output dimension             y ∈ ℝˡ
+        q   – process noise dimension      w ∈ ℝᵍ
+        A_c – continuous state matrix      A_c ∈ ℝⁿˣⁿ
+        B_c – continuous input matrix      B_c ∈ ℝⁿˣᵐ
+        E_c – continuous disturbance mat.  E_c ∈ ℝⁿˣᵖ
+        G   – noise input matrix           G ∈ ℝⁿˣᵍ
+        Q_c – continuous process noise     Q_c ∈ ℝᵍˣᵍ
+        R   – measurement noise cov.       R ∈ ℝˡˣˡ
+        C   – output matrix                C ∈ ℝˡˣⁿ (time-invariant)
+        dt  – sampling interval
+
+    ZOH discretisation (``discretize``)
+    -------------------------------------
+    Computed via the augmented-matrix method (no matrix inverse required):
+
+        A_d = expm(A_c · dt)
+        [A_d | B_d | E_d] = expm([[A_c, B_c, E_c], [0, 0, 0], [0, 0, 0]] · dt)[:n, :]
+
+    Discrete process noise (``discretize_noise``)
+    -----------------------------------------------
+    Computed by the Van Loan (1978) method:
+
+        Q_d = ∫₀^{dt} expm(A_c τ) G Q_c Gᵀ expm(A_c τ)ᵀ dτ
+    """
+
+    # ── Abstract dimensions ───────────────────────────────────────────────
+
+    @property
+    @abstractmethod
+    def n_x(self) -> int:
+        """State dimension n."""
+
+    @property
+    @abstractmethod
+    def n_u(self) -> int:
+        """Input dimension m."""
+
+    @property
+    @abstractmethod
+    def n_d(self) -> int:
+        """Disturbance dimension p."""
+
+    # ── Abstract continuous-time matrices (numpy) ─────────────────────────
+
+    @property
+    @abstractmethod
+    def A_c(self) -> np.ndarray:
+        """Continuous state matrix A_c ∈ ℝⁿˣⁿ."""
+
+    @property
+    @abstractmethod
+    def B_c(self) -> np.ndarray:
+        """Continuous input matrix B_c ∈ ℝⁿˣᵐ."""
+
+    @property
+    @abstractmethod
+    def E_c(self) -> np.ndarray:
+        """Continuous disturbance matrix E_c ∈ ℝⁿˣᵖ."""
+
+    @property
+    @abstractmethod
+    def G(self) -> np.ndarray:
+        """Noise input matrix G ∈ ℝⁿˣᵍ."""
+
+    @property
+    @abstractmethod
+    def Q_c(self) -> np.ndarray:
+        """Continuous process-noise covariance Q_c ∈ ℝᵍˣᵍ."""
+
+    # ── Abstract observation matrices (cvxopt, for OCP compatibility) ─────
+
+    @property
+    @abstractmethod
+    def C(self) -> "matrix":
+        """Output matrix C ∈ ℝˡˣⁿ (cvxopt dense)."""
+
+    @property
+    @abstractmethod
+    def R(self) -> "matrix":
+        """Measurement noise covariance R ∈ ℝˡˣˡ (cvxopt dense)."""
+
+    # ── Abstract sampling interval ────────────────────────────────────────
+
+    @property
+    @abstractmethod
+    def dt(self) -> float:
+        """Sampling interval (seconds)."""
+
+    # ── Abstract control-interface properties ────────────────────────────
+
+    @property
+    @abstractmethod
+    def x(self) -> list[float]:
+        """Current state x as a plain list of floats."""
+
+    @x.setter
+    @abstractmethod
+    def x(self, val: list[float]) -> None: ...
+
+    @property
+    @abstractmethod
+    def x_ref(self) -> "matrix":
+        """Reference / setpoint x_ref ∈ ℝⁿ (cvxopt column vector)."""
+
+    @property
+    @abstractmethod
+    def u_bounds(self) -> Tuple["matrix", "matrix"]:
+        """Box constraint on inputs (u_min, u_max), each (m, 1) cvxopt."""
+
+    # ── Concrete discretisation methods ───────────────────────────────────
+
+    def discretize(self, d: "matrix") -> Tuple["matrix", "matrix", "matrix"]:
+        """
+        ZOH-discretised matrices (A_d, B_d, E_d) as cvxopt dense matrices.
+
+        Uses the augmented-matrix method so that no matrix inverse is
+        required:
+
+            expm([[A_c, B_c, E_c], [0, 0, 0], [0, 0, 0]] · dt)[:n, :]
+            = [A_d | B_d | E_d]
+
+        The ``d`` argument is accepted for interface compatibility with
+        ``OptimalControlProblem`` (LPV sub-classes may override this method
+        to schedule matrices on the current disturbance); the default LTI
+        implementation ignores it.
+
+        Parameters
+        ----------
+        d : (p, 1) cvxopt column  — current disturbance (ignored for LTI).
+
+        Returns
+        -------
+        A_d : (n, n) cvxopt dense — discrete state-transition matrix.
+        B_d : (n, m) cvxopt dense — discrete input matrix.
+        E_d : (n, p) cvxopt dense — discrete disturbance matrix.
+        """
+        from ._utils import _zoh_full, _np_to_cvx
+
+        A_d_np, B_d_np, E_d_np = _zoh_full(self.A_c, self.B_c, self.E_c, self.dt)
+        return _np_to_cvx(A_d_np), _np_to_cvx(B_d_np), _np_to_cvx(E_d_np)
+
+    def discretize_noise(self) -> "matrix":
+        """
+        Exact discrete process-noise covariance Q_d via Van Loan (1978).
+
+        Computes
+
+            Q_d = ∫₀^{dt} expm(A_c τ) G Q_c Gᵀ expm(A_c τ)ᵀ dτ
+
+        using the augmented 2n×2n matrix method.  The result is symmetric
+        positive semi-definite by construction.
+
+        Returns
+        -------
+        Q_d : (n, n) cvxopt dense — discrete process-noise covariance.
+        """
+        from ._utils import _van_loan, _np_to_cvx
+
+        Q_d_np = _van_loan(self.A_c, self.G, self.Q_c, self.dt)
+        return _np_to_cvx(Q_d_np)
+
+    # ── Parameter-identification interface (non-abstract, overridable) ────
+
+    @property
+    def params(self) -> np.ndarray:
+        """
+        Current parameter vector θ as a flat numpy array.
+
+        Default: empty (no identifiable parameters exposed).  Subclasses
+        should override to support system identification.
+        """
+        return np.array([], dtype=float)
+
+    def with_params(self, theta: np.ndarray) -> "LinearContinuousDiscreteModel":
+        """
+        Return a new model instance from parameter vector θ.
+
+        Default implementation raises :class:`NotImplementedError`.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement with_params."
+        )
+
+
 # ── Continuous-Discrete SDE Model ────────────────────────────────────────────
 
 
