@@ -14,13 +14,19 @@ y[k] arrives:
 
   **Prediction** (time update):
     x̂⁻  = A x̂[k−1] + B u[k−1] + E d[k−1]
-    P⁻   = A P[k−1] Aᵀ + Q
+    P⁻   = A P[k−1] Aᵀ + Q                     (standard form, G = I)
+    P⁻   = A P[k−1] Aᵀ + G Q Gᵀ               (noise-separated form, M.Sc. Ch. 5.4)
 
   **Filtering** (measurement update, Joseph stabilised form):
     S    = C P⁻ Cᵀ + R                       (innovation covariance)
     K    = P⁻ Cᵀ S⁻¹                         (Kalman gain)
     x̂    = x̂⁻ + K (y − C x̂⁻)               (corrected state)
     P    = (I − K C) P⁻ (I − K C)ᵀ + K R Kᵀ (Joseph form)
+
+    If a boolean mask is supplied, outputs with mask[i]=False are treated
+    as missing and the measurement update is skipped for those channels
+    (M.Sc. Ch. 5.5).  When all outputs are masked, the full update is
+    skipped (prediction-only step).
 
 The Joseph form  P = (I−KC) P⁻ (I−KC)ᵀ + K R Kᵀ  guarantees that
 the posterior covariance remains symmetric positive-semidefinite even
@@ -34,6 +40,7 @@ Notation
     p   – disturbance dimension               d ∈ ℝᵖ
     l   – output dimension                    y ∈ ℝˡ
     Q   – process noise covariance            Q ∈ ℝⁿˣⁿ
+    G   – noise input matrix                  G ∈ ℝⁿˣⁿ  (default I)
     R   – measurement noise covariance        R ∈ ℝˡˣˡ
     P   – state estimation error covariance   P ∈ ℝⁿˣⁿ
     K   – Kalman gain                         K ∈ ℝⁿˣˡ
@@ -69,6 +76,10 @@ class KalmanFilter:
         Measurement noise covariance.  Default: 0.1 · Iˡ.
     P0 : cvxopt.matrix (n, n), optional
         Initial state covariance.  Default: Iₙ.
+    noise_matrix : cvxopt.matrix (n, n), optional
+        Noise input matrix G so that the prediction covariance step becomes
+        ``P⁻ = A P Aᵀ + G Q Gᵀ`` (M.Sc. Ch. 5.4).  When ``None`` (default),
+        the standard form ``P⁻ = A P Aᵀ + Q`` is used (equivalent to G = I).
     """
 
     def __init__(
@@ -77,6 +88,7 @@ class KalmanFilter:
         Q: matrix | None = None,
         R: matrix | None = None,
         P0: matrix | None = None,
+        noise_matrix: matrix | None = None,
     ) -> None:
         self._model = model
         n = model.n_x
@@ -92,6 +104,9 @@ class KalmanFilter:
         if R is None:
             for i in range(l):
                 self._R[i, i] = 0.1
+
+        # Noise input matrix G (M.Sc. Ch. 5.4); None means use standard form
+        self._G: matrix | None = noise_matrix
 
         # State covariance
         self._P: matrix = P0 if P0 is not None else _eye(n)
@@ -157,7 +172,10 @@ class KalmanFilter:
         P_pred : (n, n) predicted covariance.
         """
         x_pred = A * self._x_hat + B * self._u_prev + E * self._d_prev
-        P_pred = A * self._P * A.T + self._Q
+        if self._G is None:
+            P_pred = A * self._P * A.T + self._Q
+        else:
+            P_pred = A * self._P * A.T + self._G * self._Q * self._G.T
         return x_pred, P_pred
 
     # ── Filtering step (Joseph form) ─────────────────────────────────────
@@ -219,7 +237,12 @@ class KalmanFilter:
 
     # ── Combined update ──────────────────────────────────────────────────
 
-    def update(self, y: matrix, d: matrix) -> matrix:
+    def update(
+        self,
+        y: matrix,
+        d: matrix,
+        mask: list[bool] | None = None,
+    ) -> matrix:
         """
         Assimilate measurement y[k] and return corrected estimate x̂[k].
 
@@ -231,17 +254,29 @@ class KalmanFilter:
         ----------
         y : (l, 1) measurement vector.
         d : (p, 1) current disturbance vector.
+        mask : list of bool, length l, optional
+            When provided, only outputs where ``mask[i] is True`` are used
+            in the measurement update.  If all entries are ``False`` the
+            measurement update is skipped entirely (prediction-only step,
+            M.Sc. Ch. 5.5).  ``None`` (default) uses all outputs.
 
         Returns
         -------
         x_hat : (n, 1) corrected state estimate (copy).
         """
+        from cvxopt import lapack
         C = self._model.C
+        l = C.size[0]
+
+        # Build active-output submatrices when a mask is provided
+        if mask is not None:
+            active = [i for i, m in enumerate(mask) if m]
+        else:
+            active = list(range(l))
 
         if self._first:
             # Bootstrap:  x̂ = C⁺ y  (Moore–Penrose pseudoinverse for C
             # with full column rank; for C = I this reduces to x̂ = y).
-            from cvxopt import lapack
             CtC = C.T * C
             Cty = C.T * y
             lapack.posv(CtC, Cty)
@@ -254,8 +289,31 @@ class KalmanFilter:
             # Prediction step
             x_pred, P_pred = self.predict(A, B, E)
 
-            # Filtering step (Joseph form)
-            self._x_hat, self._P = self.filter(y, x_pred, P_pred, C)
+            if not active:
+                # All outputs masked — skip measurement update (M.Sc. Ch. 5.5)
+                self._x_hat = x_pred
+                self._P = P_pred
+            elif len(active) == l:
+                # All outputs available — full update
+                self._x_hat, self._P = self.filter(y, x_pred, P_pred, C)
+            else:
+                # Partial update: restrict C, R, y to active rows
+                n = P_pred.size[0]
+                C_sub = matrix([C[i, j] for j in range(n) for i in active],
+                               (len(active), n))
+                R_sub = matrix(
+                    [self._R[i, j] for j in range(l) for i in active
+                     if j in active],
+                    (len(active), len(active)),
+                )
+                y_sub = matrix([y[i] for i in active], (len(active), 1))
+                # Temporarily swap noise covariance for the filter call
+                R_orig = self._R
+                self._R = R_sub
+                self._x_hat, self._P = self.filter(
+                    y_sub, x_pred, P_pred, C_sub
+                )
+                self._R = R_orig
 
         self._d_prev = matrix(d)
         return matrix(self._x_hat)

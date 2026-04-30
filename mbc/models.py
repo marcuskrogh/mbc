@@ -1,8 +1,9 @@
 """
-Abstract linear discrete-time model interface.
+Abstract model interfaces for the mbc toolbox.
 
-Defines the LinearDiscreteModel ABC that all model-based control algorithms
-in mbc operate on:
+Linear discrete-time interface
+-------------------------------
+``LinearDiscreteModel`` — abstract base for linear discrete-time systems:
 
     x[k+1] = A(d) x[k] + B(d) u[k] + E(d) d[k] + offset,   y[k] = C x[k]
 
@@ -10,6 +11,19 @@ in mbc operate on:
     d ∈ ℝᵖ  disturbance,    y ∈ ℝˡ  output.
 
     Matrices A, B, E may depend on d (LPV); C is time-invariant.
+
+Continuous-discrete SDE interface (Ph.D. Ch. 5–6)
+--------------------------------------------------
+``ContinuousDiscreteModel`` — abstract base for continuous-discrete
+stochastic systems:
+
+    dx = f(x, u, d, t) dt + g(x, u, d, t) dw,   w ~ N(0, Q_c)
+    y_k = h(x_k, d_k) + v_k,                     v_k ~ N(0, R)
+
+``ContinuousDiscreteDAEModel`` — extends the above with an algebraic
+constraint:
+
+    0 = l(x, z, u, d, t)
 """
 
 from __future__ import annotations
@@ -156,6 +170,7 @@ class LinearDiscreteModel(ABC):
         )
 
     def discretize_jacobian(
+
         self,
         d: np.ndarray,
         h: float = 1e-5,
@@ -218,3 +233,173 @@ class LinearDiscreteModel(ABC):
             dB.append((_to_np(Bh) - B0_np) / h)
             dE.append((_to_np(Eh) - E0_np) / h)
         return dA, dB, dE
+
+
+# ── Continuous-Discrete SDE Model ────────────────────────────────────────────
+
+
+class ContinuousDiscreteModel(ABC):
+    """
+    Abstract interface for a continuous-discrete stochastic system (Ph.D. Ch. 5).
+
+    The system is governed by the Itô SDE
+
+        dx = f(x, u, d, t) dt + g(x, u, d, t) dw,   w ~ N(0, Q_c)
+
+    with discrete-time observations
+
+        y_k = h(x_k, d_k) + v_k,   v_k ~ N(0, R)
+
+    Subclasses must implement the drift ``f``, diffusion ``g``, observation
+    ``h``, and the noise covariance properties ``Q_c`` and ``R``.
+    """
+
+    @abstractmethod
+    def f(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """
+        Drift function f(x, u, d, t).
+
+        Parameters
+        ----------
+        x : (nx,) state vector.
+        u : (nu,) input vector.
+        d : (nd,) disturbance vector.
+        t : current time.
+
+        Returns
+        -------
+        (nx,) drift value.
+        """
+
+    @abstractmethod
+    def g(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """
+        Diffusion function g(x, u, d, t).
+
+        Parameters
+        ----------
+        x : (nx,) state vector.
+        u : (nu,) input vector.
+        d : (nd,) disturbance vector.
+        t : current time.
+
+        Returns
+        -------
+        (nx, nw) diffusion matrix.
+        """
+
+    @abstractmethod
+    def h(
+        self,
+        x: np.ndarray,
+        d: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Observation function h(x_k, d_k).
+
+        Parameters
+        ----------
+        x : (nx,) state vector at measurement time k.
+        d : (nd,) disturbance vector at measurement time k.
+
+        Returns
+        -------
+        (ny,) predicted observation.
+        """
+
+    @property
+    @abstractmethod
+    def Q_c(self) -> np.ndarray:
+        """Continuous-time process noise covariance Q_c ∈ ℝⁿʷˣⁿʷ."""
+
+    @property
+    @abstractmethod
+    def R(self) -> np.ndarray:
+        """Measurement noise covariance R ∈ ℝⁿʸˣⁿʸ."""
+
+    @property
+    @abstractmethod
+    def nx(self) -> int:
+        """State dimension."""
+
+    @property
+    @abstractmethod
+    def nu(self) -> int:
+        """Input dimension."""
+
+    @property
+    @abstractmethod
+    def nd(self) -> int:
+        """Disturbance dimension."""
+
+    @property
+    @abstractmethod
+    def ny(self) -> int:
+        """Output dimension."""
+
+
+# ── Continuous-Discrete SDAE Model ───────────────────────────────────────────
+
+
+class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
+    """
+    Abstract interface for a continuous-discrete stochastic DAE (Ph.D. Ch. 6).
+
+    Extends ``ContinuousDiscreteModel`` with algebraic state z and constraint:
+
+        dx = f(x, z, u, d, t) dt + g(x, z, u, d, t) dw
+        0  = l(x, z, u, d, t)
+        y_k = h(x_k, z_k, d_k) + v_k
+
+    At each integration step the algebraic constraint is enforced by solving
+    ``l = 0`` for z (typically via Newton iteration in the simulator).
+
+    Subclasses must additionally implement ``l`` and ``nz``.  The observation
+    function ``h`` should be overridden to accept ``(x, z, d)`` if the
+    outputs depend on z; the base signature ``h(x, d)`` is retained for
+    compatibility with ``ContinuousDiscreteModel``-typed interfaces.
+    """
+
+    @abstractmethod
+    def l(
+        self,
+        x: np.ndarray,
+        z: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """
+        Algebraic constraint residual.
+
+        The constraint is satisfied when ``l(x, z, u, d, t) = 0``.
+
+        Parameters
+        ----------
+        x : (nx,) differential state vector.
+        z : (nz,) algebraic state vector.
+        u : (nu,) input vector.
+        d : (nd,) disturbance vector.
+        t : current time.
+
+        Returns
+        -------
+        (nz,) residual vector.
+        """
+
+    @property
+    @abstractmethod
+    def nz(self) -> int:
+        """Algebraic state dimension."""
