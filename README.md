@@ -596,8 +596,12 @@ x_{j+1} = x_j + h · f(x_{j+1}, u, d, t_{j+1}) + √h · g(x_j, u, d, t_j) · w_
 The implicit drift term is resolved by **fixed-point iteration**:
 
 ```
+noise_term = √h · g(x_j, u, d, t_j) · w_j          (fixed at start of sub-step)
+
 x^(0) = x_j
-x^(ℓ+1) = x_j + h · f(x^(ℓ), u, d, t_{j+1}) + noise_term   (until convergence)
+x^(ℓ+1) = x_j + h · f(x^(ℓ), u, d, t_{j+1}) + noise_term
+
+Converged when  ‖x^(ℓ+1) − x^(ℓ)‖₂ < fp_tol,  or after fp_max_iter iterations.
 ```
 
 The noise term `√h · g(x_j, u, d, t_j) · w_j` is fixed during the inner iteration
@@ -615,6 +619,8 @@ system's fastest time constant.
 | `n_steps` | `int` | `10` | Euler-Maruyama sub-steps per interval |
 | `scheme` | `"EE"` or `"IE"` | `"EE"` | Integration scheme |
 | `seed` | `int` or `None` | `None` | Random seed for reproducibility |
+| `fp_tol` | `float` | `1e-8` | IE fixed-point convergence tolerance (ignored for EE) |
+| `fp_max_iter` | `int` | `50` | IE maximum fixed-point iterations per sub-step |
 
 **Methods**:
 
@@ -636,8 +642,27 @@ X = sim.simulate(x0, U, D, t0=0.0)             # returns (T+1, nx) ndarray
 Euler-Maruyama integrator for `ContinuousDiscreteDAEModel` (Ph.D. thesis, Ch. 6).
 Extends `SDESimulator` to maintain the algebraic constraint `l(x, z, u, d, t) = 0`
 at every sub-step by interleaving Newton iteration for `z` with the Euler step
-for `x`.  Finite-difference Jacobians `∂l/∂z` are used by default; analytic
-Jacobians can be provided by overriding the relevant method.
+for `x`.
+
+**Newton iteration for `z`** (used at every sub-step after the Euler update on `x`):
+
+```
+z^(0) = z_j   (previous algebraic state)
+
+For ℓ = 0, 1, …, newton_max_iter − 1:
+
+    J_lz ≈ ∂l/∂z  (finite-difference Jacobian, nz × nz)
+
+    where  J_lz[i, k] = (l(x, z + h_fd · e_k, u, d, t)[i] − l(x, z, u, d, t)[i]) / h_fd
+           h_fd = 1e-5,  e_k = k-th standard basis vector ∈ ℝⁿᶻ
+
+    z^(ℓ+1) = z^(ℓ) − J_lz⁻¹ l(x, z^(ℓ), u, d, t)    (Newton step)
+
+    Converged when  ‖l(x, z^(ℓ+1), u, d, t)‖₂ < newton_tol
+```
+
+Analytic Jacobians can be provided by overriding the relevant method on the model
+subclass, replacing the finite-difference computation.
 
 **Explicit-Explicit (EE) scheme** (default):
 
@@ -706,6 +731,57 @@ All continuous-discrete estimators share the interface:
 - `predict(u, d, t) → (x_pred, P_pred)` — propagate from `t` to `t + dt`
 - `update(y, d, mask=None) → (x_hat, P)` — measurement update at time `t`
 - `step(y, u, d, t, mask=None) → (x_hat, P)` — combined predict + update
+
+#### Numerical Jacobians (used by all nonlinear estimators)
+
+When the model does not supply analytic Jacobians, all nonlinear estimators
+compute them by **forward finite differences** with step size `h_fd = 1e-5`:
+
+```python
+# Drift Jacobian  F = ∂f/∂x  (nx × nx)
+def fd_jacobian_f(model, x, u, d, t, h_fd=1e-5):
+    f0 = model.f(x, u, d, t)
+    J = np.zeros((len(f0), len(x)))
+    for k in range(len(x)):
+        x_fwd = x.copy(); x_fwd[k] += h_fd
+        J[:, k] = (model.f(x_fwd, u, d, t) - f0) / h_fd
+    return J
+
+# Observation Jacobian  H = ∂h/∂x  (ny × nx)
+def fd_jacobian_h(model, x, d, h_fd=1e-5):
+    h0 = model.h(x, d)
+    J = np.zeros((len(h0), len(x)))
+    for k in range(len(x)):
+        x_fwd = x.copy(); x_fwd[k] += h_fd
+        J[:, k] = (model.h(x_fwd, d) - h0) / h_fd
+    return J
+```
+
+For `ContinuousDiscreteDAEModel`, additional Jacobians are needed:
+
+```python
+# ∂f/∂z  (nx × nz),  ∂l/∂x  (nz × nx),  ∂l/∂z  (nz × nz),  ∂h/∂z  (ny × nz)
+# Each follows the same forward-FD pattern, perturbing z or x respectively.
+```
+
+#### Missing-observation masking (nonlinear estimators)
+
+All nonlinear estimators accept the same `mask` argument as `KalmanFilter`.
+When `mask[i] = False`, output `i` is excluded from the measurement update by
+constructing sub-matrices restricted to the active rows before calling the
+update equations.  Let `active = [i for i, m in enumerate(mask) if m]` and
+`na = len(active)`:
+
+```
+y_sub    = y[active]                       (na,) subset of the measurement vector
+H_sub    = H[active, :]                    (na, nx) rows of the Jacobian (EKF/DAE-EKF)
+R_sub    = R[np.ix_(active, active)]       (na, na) sub-block of the noise matrix
+ŷ_sub    = ŷ[active]                       (na,) predicted observation subset
+```
+
+These sub-matrices replace their full-size counterparts in the innovation and
+Kalman-gain computations.  For the EnKF and PF, only the active rows of
+`h(x, d)` are evaluated and only `R_sub` enters the likelihood computation.
 
 ---
 
@@ -869,10 +945,22 @@ transformation to third order for Gaussian distributions.
 λ = α² (nx + κ) − nx
 
 χ_0    = x̂                           (mean sigma point)
-χ_i    = x̂ + (√((nx+λ) P))_i        for i = 1, …, nx
-χ_{nx+i} = x̂ − (√((nx+λ) P))_i     for i = 1, …, nx
+χ_i    = x̂ + L[:, i-1]              for i = 1, …, nx
+χ_{nx+i} = x̂ − L[:, i-1]           for i = 1, …, nx
 
-where (√M)_i denotes the i-th column of the Cholesky factor of M.
+where L = cholesky((nx + λ) · P, lower=True)   ∈ ℝ^{nx × nx}
+      L[:, i] denotes the i-th column of L
+```
+
+`L` is the **lower** Cholesky factor (i.e. `L @ L.T = (nx + λ) P`), computed via
+`scipy.linalg.cholesky((nx + λ) * P, lower=True)`.  If `P` is numerically
+near-singular, add a small jitter `ε · I` (e.g. `ε = 1e-8`) before factoring:
+
+```python
+try:
+    L = scipy.linalg.cholesky((nx + lam) * P, lower=True)
+except np.linalg.LinAlgError:
+    L = scipy.linalg.cholesky((nx + lam) * P + 1e-8 * np.eye(nx), lower=True)
 ```
 
 **Weights** for mean and covariance reconstruction:
@@ -889,12 +977,29 @@ Typical values: `α = 1e-3` (spread), `β = 2` (optimal for Gaussian), `κ = 0`.
 
 ```
 For each sigma point χ_i (i = 0, …, 2nx):
-    Integrate:  χ̃_i = χ_i + ∫₀^{dt} f(χ_i(τ), u, d, t+τ) dτ   (Euler, n_steps sub-steps)
+    For sub-step j = 0, …, n_steps − 1:
+        χ_i ← χ_i + h · f(χ_i, u, d, t + j·h)      (pure drift, no noise)
 
 Predicted mean:       x̂⁻ = Σ_i W_m^i χ̃_i
-Predicted covariance: P⁻  = Σ_i W_c^i (χ̃_i − x̂⁻)(χ̃_i − x̂⁻)ᵀ
-                            + G Q_c Gᵀ · dt     (diffusion, accumulated per sub-step)
+Predicted covariance: P⁻  = Σ_i W_c^i (χ̃_i − x̂⁻)(χ̃_i − x̂⁻)ᵀ + Q_d
 ```
+
+The discrete diffusion term `Q_d` is accumulated across all `n_steps` sub-steps
+using the propagated **mean** sigma point `χ_0` (i.e. the mean trajectory) to
+evaluate the diffusion matrix:
+
+```
+Q_d = 0
+For sub-step j = 0, …, n_steps − 1:
+    x̂_j  = current mean sigma point χ_0 at sub-step j
+    G_j   = g(x̂_j, u, d, t + j·h)               (nx × nw diffusion matrix)
+    Q_d  += h · G_j · Q_c · G_jᵀ
+```
+
+This evaluates the stochastic integral `∫₀^dt g g^T dt` with a left-point
+Euler rule along the mean trajectory.  Using the mean sigma point (rather than
+all `2nx+1` sigma points) for diffusion accumulation is the standard CD-UKF
+approximation and avoids `O(nx)` extra model evaluations per sub-step.
 
 **Filtering** — unscented measurement update:
 
@@ -971,6 +1076,7 @@ P⁻ = (1/(N−1)) A Aᵀ                               (ensemble sample covaria
 
 ```
 Perturb observations:  y_i = y + v_i,   v_i ~ N(0, R),   i = 1, …, N
+                       (freshly drawn at each update call, independent of prediction noise)
 
 Predicted obs for each particle:
     Ŷ[:,i] = h(X⁻[:,i], d)
@@ -1035,22 +1141,33 @@ X[:,i] ~ N(x0, P0),   w_i = 1/N   for i = 1, …, N
 propagated independently through the nonlinear SDE via Euler-Maruyama.  Weights
 are unchanged during prediction (the transition density acts as the proposal).
 
-**Filtering** — importance weight update:
+**Filtering** — importance weight update (numerically stable log-domain):
 
 ```
 For each particle i = 1, …, N:
 
     ŷ_i = h(X⁻[:,i], d)                           (predicted observation)
-    ℓ_i = exp(−½ (y − ŷ_i)ᵀ R⁻¹ (y − ŷ_i))      (Gaussian likelihood)
-    w_i ← w_i · ℓ_i                                (weight update)
-
-Normalise:  w_i ← w_i / Σ_j w_j
-
-Effective sample size:  N_eff = 1 / Σ_i w_i²
+    r_i = y − ŷ_i                                  (residual)
+    log_ℓ_i = −½ rᵢᵀ R⁻¹ r_i − ½ log|2π R|      (log Gaussian likelihood)
+    log_w_i ← log_w_i + log_ℓ_i                   (log-weight update)
 ```
 
-When `mask` is provided, only active output channels contribute to the
-likelihood computation.
+To avoid underflow, normalise weights using the **log-sum-exp** trick:
+
+```
+log_w_max = max_i(log_w_i)
+log_Z     = log_w_max + log( Σ_i exp(log_w_i − log_w_max) )   (log normaliser)
+w_i       = exp(log_w_i − log_Z)                               (normalised weights)
+```
+
+```
+Effective sample size:  N_eff = 1 / Σ_i w_i²      (w_i already normalised)
+```
+
+**Initialisation**: set `log_w_i = −log(N)` (i.e. uniform weights in log domain).
+
+When `mask` is provided, only active output channels enter the log-likelihood:
+`r_i = y_sub − ŷ_i[active]`, `R_sub = R[np.ix_(active, active)]`.
 
 **Systematic resampling** — triggered when `N_eff < resample_threshold · N`:
 
@@ -1121,8 +1238,21 @@ F_eff = ∂f/∂x + (∂f/∂z)(∂z/∂x)
       = ∂f/∂x − (∂f/∂z)(∂l/∂z)⁻¹ (∂l/∂x)
 ```
 
-All Jacobians can be supplied analytically by the model or computed by finite
-differences.
+**Four Jacobians required** (all computed by forward FD with `h_fd = 1e-5` if not
+supplied analytically):
+
+| Jacobian | Shape | Formula |
+|----------|-------|---------|
+| `∂f/∂x` | `(nx, nx)` | perturb `x` in `f(x, z, u, d, t)` |
+| `∂f/∂z` | `(nx, nz)` | perturb `z` in `f(x, z, u, d, t)` |
+| `∂l/∂x` | `(nz, nx)` | perturb `x` in `l(x, z, u, d, t)` |
+| `∂l/∂z` | `(nz, nz)` | perturb `z` in `l(x, z, u, d, t)` |
+
+If `h` depends on `z`, also compute `∂h/∂z` (shape `ny × nz`) and use the
+extended observation Jacobian `H_eff = ∂h/∂x − (∂h/∂z)(∂l/∂z)⁻¹ (∂l/∂x)`.
+
+`(∂l/∂z)⁻¹` is solved via `np.linalg.solve(J_lz, rhs)` rather than explicit
+inversion, following the same pattern as the Newton solver in `SDAESimulator`.
 
 **Prediction** — interleaved Euler/Newton:
 
@@ -1222,14 +1352,37 @@ subject to:
 
 The prediction model `f̄` is obtained by integrating the drift `f` with
 `n_steps` forward-Euler sub-steps per sampling interval (noise term omitted for
-deterministic prediction).  Constraints are passed as a list of
-`scipy.optimize.minimize`-compatible dictionaries
-`[{"type": "ineq"/"eq", "fun": ...}]`.
+deterministic prediction):
+
+```
+x̂_{k+1} ≈ x̂_k + Σ_{j=0}^{n_steps-1} h · f(x̂_j, u_k, d_k, t_k + j·h)
+         where  h = dt / n_steps
+```
+
+Constraints are passed as a list of `scipy.optimize.minimize`-compatible
+dictionaries `[{"type": "ineq"/"eq", "fun": ...}]`.
+
+**NLP decision variable layout**: the optimisation variable is the flattened
+input sequence `u_flat ∈ ℝ^{N · nu}`, stored in row-major order:
+
+```
+u_flat = [u_0[0], …, u_0[nu-1], u_1[0], …, u_1[nu-1], …, u_{N-1}[nu-1]]
+```
+
+Reshaped as `u_flat.reshape(N, nu)` at the start of the objective and
+constraint evaluations.
 
 The NLP is solved with `scipy.optimize.minimize` using the SLSQP method by
-default.  **Warm-starting**: the previous optimal sequence `u_prev` is shifted
-by one step (last element repeated) and used as the initial guess for the NLP,
-which significantly reduces solve time in closed-loop operation.
+default.  **Warm-starting**: the previous optimal sequence `u_prev` (shape
+`(N, nu)`) is shifted by one step (rows 1..N-1, then last row repeated) and
+flattened to produce the initial guess for the NLP.  If no `u_prev` is
+provided (first call), use zeros.  **On solver failure** (status ≠ 0), fall
+back to returning the shifted `u_prev` sequence rather than raising an error,
+to maintain closed-loop safety during transients.
+
+**Note on `dt`**: `ContinuousDiscreteModel` does not define `dt` as part of
+its abstract interface (unlike `LinearContinuousDiscreteModel`).  `EconomicNMPC`
+therefore accepts `dt` as an explicit constructor parameter.
 
 **Parameters**:
 
@@ -1237,6 +1390,7 @@ which significantly reduces solve time in closed-loop operation.
 |-----------|------|---------|-------------|
 | `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model |
 | `N` | `int` | — | Prediction horizon |
+| `dt` | `float` | — | Sampling interval (not on `ContinuousDiscreteModel` ABC) |
 | `stage_cost` | `(x, u, d) → float` | — | Economic stage cost `l_e` |
 | `terminal_cost` | `(x) → float` or `None` | `None` | Terminal cost `V_f` |
 | `constraints` | `list[dict]` or `None` | `None` | scipy-format constraints |
@@ -1252,8 +1406,8 @@ from mbc.control import EconomicNMPC
 def energy_cost(x, u, d):
     return float(u @ u)   # quadratic energy proxy
 
-# Construct the OCP — no estimator here
-ocp = EconomicNMPC(model, N=20, stage_cost=energy_cost, n_steps=10)
+# Construct the OCP — dt is required because ContinuousDiscreteModel has no dt
+ocp = EconomicNMPC(model, N=20, dt=1.0, stage_cost=energy_cost, n_steps=10)
 
 # Solve from a given state estimate (produced externally by a CD estimator)
 u_opt, cost = ocp.solve(x0=x_hat, d_trajectory=d_fcast, u_prev=None)
@@ -1568,11 +1722,31 @@ corresponds to `C(z)` having a leading coefficient of 1.
 This structure means `G` can be passed directly as the `noise_matrix` argument to
 `KalmanFilter` or `CDKalmanFilter` for noise-separated filtering (M.Sc. Ch. 5.4).
 
+**Transfer-function normalisation**: `den` must be supplied in **monic** form (leading
+coefficient 1.0).  If `den[0] ≠ 1`, divide both `num` and `den` by `den[0]` before
+constructing the canonical form.  `num` may have fewer coefficients than `den`; it is
+zero-padded on the left so that `len(num) == len(den)` and `b_0 = num_padded[0]`.
+
 **From impulse response** — `from_impulse_response(h, dt, n)`:
 
 Constructs a minimal nth-order model whose impulse response best fits the sampled
 sequence `h[0], h[1], …, h[T-1]` (sampled at interval `dt`) using the Ho-Kalman
-algorithm restricted to the SISO case (see §4.2).
+algorithm restricted to the SISO case.
+
+**SISO Hankel matrix construction** (with `q = len(h) // 2`; require `q ≥ n`):
+
+```
+        [h[1],  h[2],  …, h[q]  ]
+H_blk = [h[2],  h[3],  …, h[q+1]]   ∈ ℝ^{q × q}
+        [ ⋮       ⋮          ⋮  ]
+        [h[q], h[q+1], …, h[2q-1]]
+```
+
+Note: `h[0]` is excluded from the Hankel matrix (`D = h[0]` for the SISO case).
+The rank-`n` truncated SVD, observability/controllability factorisation, and
+state-matrix extraction follow the same steps as the MIMO Ho-Kalman algorithm
+(§4.2) with `ny = nu = 1`.  Require `len(h) ≥ 2n + 1` to form a well-determined
+Hankel matrix.
 
 **Usage**:
 
@@ -1649,8 +1823,15 @@ D = H[0]
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `H` | `list[(ny,nu) ndarray]` | Markov parameters `H[0], H[1], …`; length ≥ `2n+1` |
+| `H` | `list[(ny,nu) ndarray]` | Markov parameters `H[0], H[1], …`; minimum length `2n+1` |
 | `n` | `int` | Desired model order |
+
+**Minimum H length**: the block Hankel matrix uses `q` block rows and `q` block
+columns from `H[1], …, H[2q]`, so `len(H) ≥ 2q + 1`.  The minimum useful choice
+is `q = n`, giving `len(H) ≥ 2n + 1`.  Use `q > n` (over-determined Hankel) for
+noise-robustness; the rank-`n` truncation then discards sensor-noise contributions.
+The Hankel block `H_blk ∈ ℝ^{q·ny × q·nu}` must satisfy `q · ny ≥ n` and
+`q · nu ≥ n` for the observability and controllability matrices to have rank `n`.
 
 **Usage**:
 
@@ -1678,12 +1859,18 @@ performance under stochastic initial conditions and process noise.
 
 1. Draw initial state: `x₀ⁱ ~ N(x0_mean, x0_cov)`
 2. Initialise estimator with `x₀ⁱ` (or skip if `estimator=None`)
-3. For each of `T` measurement intervals `k = 0, 1, …, T-1`:
-   - **Simulate**: `x_{k+1}^i = simulator.step(x_k^i, u_k^i, D[k], t_k)` (with noise)
+3. Compute initial control: `u₀ⁱ = controller.step(x₀ⁱ, D[0:N], …)`
+4. For each of `T` measurement intervals `k = 0, 1, …, T-1`:
+   - **Simulate**: `x_{k+1}^i = simulator.step(x_k^i, u_k^i, D[k], t_k)` (with SDE noise)
    - **Observe**: `y_k^i = model.h(x_{k+1}^i, D[k]) + v_k^i`, `v_k^i ~ N(0, R)`
-   - **Estimate**: `x̂_{k+1}^i = estimator.step(y_k^i, u_k^i, D[k], t_{k+1})` (if provided)
+   - **Accumulate cost**: `costs[i] += stage_cost(x_k^i, u_k^i, D[k])`
+   - **Estimate**: `x̂_{k+1}^i, _ = estimator.step(y_k^i, u_k^i, D[k], t_{k+1})` (if provided)
    - **Control**: `u_{k+1}^i = controller.step(x̂_{k+1}^i, D[k+1:k+1+N], …)`
-4. Record `(X^i, Y^i, U^i)` and cumulative cost `Σ_k l(x_k^i, u_k^i, D[k])`
+5. Record `X^i = [x_0^i, …, x_T^i]`, `Y^i = [y_0^i, …, y_{T-1}^i]`, `U^i = [u_0^i, …, u_{T-1}^i]`
+
+**State timeline**: `X[i, k]` is the true state **before** the k-th control action;
+`Y[i, k]` is the observation generated from `x_{k+1}` and reported at time `k`
+(i.e. the measurement arrives one step after the state that generated it).
 
 When `estimator=None`, the true state `x_k^i` is fed directly to the controller
 (perfect state-information baseline).
@@ -1695,10 +1882,11 @@ but deterministic realisations.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Plant model (for observation function) |
+| `model` | `ContinuousDiscreteModel` | — | Plant model (for observation function `h`) |
 | `simulator` | `SDESimulator` or `SDAESimulator` | — | Plant dynamics integrator |
 | `controller` | `object` with `.step()` | — | Feedback controller |
 | `estimator` | `object` with `.step()` or `None` | `None` | State estimator; `None` = perfect state info |
+| `stage_cost` | `(x, u, d) → float` | — | Cost accumulated per step (used for `costs` field) |
 | `N_mc` | `int` | `100` | Number of Monte Carlo trials |
 | `seed` | `int` or `None` | `None` | Base random seed (trial i uses seed+i) |
 
