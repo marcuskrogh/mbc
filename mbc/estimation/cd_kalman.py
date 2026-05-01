@@ -92,7 +92,7 @@ class CDKalmanFilter:
         n_steps: int = 10,
     ) -> None:
         self._model = model
-        n = model.n_x
+        n = model.nx
 
         # Continuous-time matrices (numpy, cached for speed)
         self._A_c: np.ndarray = model.A_c
@@ -106,7 +106,7 @@ class CDKalmanFilter:
         self._h: float = model.dt / n_steps
 
         # Measurement noise covariance (cvxopt, for Joseph update)
-        self._R: matrix = model.R
+        self._R: matrix = model.R_cvx
 
         # State error covariance (numpy internally)
         if P0 is not None:
@@ -121,8 +121,8 @@ class CDKalmanFilter:
         self._x_np: np.ndarray = np.array(model.x, dtype=float)
 
         # Previous input and disturbance (numpy, ZOH over the interval)
-        self._u_prev_np: np.ndarray = np.zeros(model.n_u)
-        self._d_prev_np: np.ndarray = np.zeros(model.n_d)
+        self._u_prev_np: np.ndarray = np.zeros(model.nu)
+        self._d_prev_np: np.ndarray = np.zeros(model.nd)
 
         self._first: bool = True
 
@@ -290,8 +290,8 @@ class CDKalmanFilter:
         -------
         x_hat : (n, 1) corrected state estimate (copy).
         """
-        C = self._model.C
-        l = C.size[0]
+        C = self._model.C_cvx
+        l = self._model.ny
 
         active = list(range(l)) if mask is None else [i for i, m in enumerate(mask) if m]
 
@@ -302,7 +302,7 @@ class CDKalmanFilter:
             alpha = matrix(y)
             lapack.posv(CCt, alpha)
             x_boot = C.T * alpha
-            n = self._model.n_x
+            n = self._model.nx
             self._x_np = np.array([float(x_boot[i]) for i in range(n)])
             self._first = False
         else:
@@ -320,7 +320,7 @@ class CDKalmanFilter:
             elif len(active) == l:
                 # All outputs available — standard update
                 x_hat_cvx, P_cvx = self.filter(y, x_pred, P_pred, C)
-                n = self._model.n_x
+                n = self._model.nx
                 self._x_np = np.array([float(x_hat_cvx[i]) for i in range(n)])
                 self._P_np = np.array(list(P_cvx), dtype=float).reshape(
                     (n, n), order="F"
@@ -347,7 +347,7 @@ class CDKalmanFilter:
                 )
 
         # Update stored disturbance for next prediction
-        n_d = self._model.n_d
+        n_d = self._model.nd
         self._d_prev_np = np.array([float(d[i]) for i in range(n_d)])
         return self.x_hat
 
@@ -355,5 +355,5 @@ class CDKalmanFilter:
 
     def record_action(self, u: matrix) -> None:
         """Record the applied control action u[k] for use in the next prediction."""
-        n_u = self._model.n_u
+        n_u = self._model.nu
         self._u_prev_np = np.array([float(u[i]) for i in range(n_u)])
