@@ -57,21 +57,25 @@ class ContinuousDiscreteEKF:
         dt: float,
         n_steps: int = 10,
     ) -> None:
-        raise NotImplementedError(
-            "ContinuousDiscreteEKF.__init__ is not yet implemented."
-        )
+        self._model = model
+        self._x_np: np.ndarray = np.array(x0, dtype=float)
+        self._P_np: np.ndarray = np.array(P0, dtype=float)
+        self._dt = dt
+        self._n_steps = n_steps
+        self._h = dt / n_steps
+        self._Q_c: np.ndarray = model.Q_c
 
     # ── Public properties ─────────────────────────────────────────────────
 
     @property
     def x_hat(self) -> np.ndarray:
         """Current state estimate x̂ ∈ ℝⁿˣ (copy)."""
-        raise NotImplementedError
+        return self._x_np.copy()
 
     @property
     def P(self) -> np.ndarray:
         """Current state covariance P ∈ ℝⁿˣˣⁿˣ (copy)."""
-        raise NotImplementedError
+        return self._P_np.copy()
 
     # ── Filter steps ──────────────────────────────────────────────────────
 
@@ -79,6 +83,7 @@ class ContinuousDiscreteEKF:
         self,
         u: np.ndarray,
         d: np.ndarray,
+        p: np.ndarray,
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -91,26 +96,43 @@ class ContinuousDiscreteEKF:
         ----------
         u : (nu,) ndarray  — control input applied over [t, t+dt].
         d : (nd,) ndarray  — disturbance over [t, t+dt].
+        p : (nparams,) ndarray  — parameter vector.
         t : float          — current time.
 
         Returns
         -------
         x_pred : (nx,) predicted state estimate.
         P_pred : (nx, nx) predicted covariance.
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
-        raise NotImplementedError(
-            "ContinuousDiscreteEKF.predict is not yet implemented."
-        )
+        x = self._x_np.copy()
+        P = self._P_np.copy()
+        h = self._h
+        Q_c = self._Q_c
+        model = self._model
+
+        t_j = t
+        for _ in range(self._n_steps):
+            F_j = model.dfdx(x, u, d, p, t_j)
+            G_j = model.g(x, u, d, p, t_j)
+            f_j = model.f(x, u, d, p, t_j)
+
+            P_dot = F_j @ P + P @ F_j.T + G_j @ Q_c @ G_j.T
+            x = x + h * f_j
+            P = P + h * P_dot
+            # Symmetrise at every sub-step to prevent numerical drift to non-PD
+            P = (P + P.T) * 0.5
+            t_j += h
+
+        self._x_np = x
+        self._P_np = P
+        return x.copy(), P.copy()
 
     def update(
         self,
         y: np.ndarray,
+        u: np.ndarray,
         d: np.ndarray,
+        p: np.ndarray,
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -119,7 +141,9 @@ class ContinuousDiscreteEKF:
         Parameters
         ----------
         y : (ny,) ndarray   — observation vector.
+        u : (nu,) ndarray   — input at measurement time.
         d : (nd,) ndarray   — disturbance at measurement time.
+        p : (nparams,) ndarray  — parameter vector.
         mask : (ny,) bool ndarray, optional
             When provided, only outputs where ``mask[i]`` is ``True`` are
             used in the update.  ``None`` (default) uses all outputs.
@@ -128,21 +152,53 @@ class ContinuousDiscreteEKF:
         -------
         x_hat : (nx,) corrected state estimate.
         P     : (nx, nx) corrected covariance.
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
-        raise NotImplementedError(
-            "ContinuousDiscreteEKF.update is not yet implemented."
-        )
+        x = self._x_np
+        P = self._P_np
+        nx = x.shape[0]
+        R = self._model.R
+
+        H = self._model.dhdx(x, u, d, p)               # (ny, nx)
+        y_hat = self._model.h(x, u, d, p)               # (ny,)
+
+        if mask is not None:
+            active = np.where(mask)[0]
+            if len(active) == 0:
+                return x.copy(), P.copy()
+            H = H[active, :]
+            y_hat = y_hat[active]
+            y_sub = y[active]
+            R_sub = R[np.ix_(active, active)]
+        else:
+            y_sub = y
+            R_sub = R
+
+        # Innovation covariance  S = H P Hᵀ + R
+        S = H @ P @ H.T + R_sub                   # (na, na)
+
+        # Kalman gain  K = P Hᵀ S⁻¹   via  S Kᵀ = H P
+        Kt = np.linalg.solve(S, H @ P)            # (na, nx)  = K^T
+        K = Kt.T                                   # (nx, na)
+
+        # State correction
+        e = y_sub - y_hat
+        x_new = x + K @ e
+
+        # Joseph form:  P = (I − K H) P (I − K H)ᵀ + K R Kᵀ
+        IKH = np.eye(nx) - K @ H
+        P_new = IKH @ P @ IKH.T + K @ R_sub @ K.T
+        P_new = (P_new + P_new.T) * 0.5
+
+        self._x_np = x_new
+        self._P_np = P_new
+        return x_new.copy(), P_new.copy()
 
     def step(
         self,
         y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
+        p: np.ndarray,
         t: float,
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
@@ -157,6 +213,7 @@ class ContinuousDiscreteEKF:
         y    : (ny,) ndarray  — observation at time t.
         u    : (nu,) ndarray  — input applied over the previous interval.
         d    : (nd,) ndarray  — disturbance at time t.
+        p    : (nparams,) ndarray  — parameter vector.
         t    : float          — current measurement time.
         mask : (ny,) bool ndarray, optional — see :meth:`update`.
 
@@ -164,12 +221,6 @@ class ContinuousDiscreteEKF:
         -------
         x_hat : (nx,) corrected state estimate.
         P     : (nx, nx) corrected covariance.
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
-        raise NotImplementedError(
-            "ContinuousDiscreteEKF.step is not yet implemented."
-        )
+        self.predict(u, d, p, t)
+        return self.update(y, u, d, p, mask=mask)

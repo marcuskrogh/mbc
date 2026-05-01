@@ -68,6 +68,7 @@ class SDAESimulator:
         z: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
+        p: np.ndarray,
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -79,6 +80,7 @@ class SDAESimulator:
         z : (nz,) ndarray  — algebraic state at time t (consistent).
         u : (nu,) ndarray  — control input over [t, t+dt].
         d : (nd,) ndarray  — disturbance over [t, t+dt].
+        p : (nparams,) ndarray  — parameter vector.
         t : float          — current time.
 
         Returns
@@ -101,6 +103,7 @@ class SDAESimulator:
         z0: np.ndarray,
         U: np.ndarray,
         D: np.ndarray,
+        P: np.ndarray,
         t0: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -116,6 +119,8 @@ class SDAESimulator:
             Input trajectory.
         D : (T, nd) ndarray
             Disturbance trajectory.
+        P : (T, nparams) ndarray
+            Parameter trajectory.
         t0 : float, optional
             Start time.  Default: 0.
 

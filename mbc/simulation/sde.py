@@ -67,6 +67,7 @@ class SDESimulator:
         x: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
+        p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
@@ -81,6 +82,7 @@ class SDESimulator:
         x : (nx,) ndarray  — state at time t.
         u : (nu,) ndarray  — control input over [t, t+dt].
         d : (nd,) ndarray  — disturbance over [t, t+dt].
+        p : (nparams,) ndarray  — parameter vector.
         t : float          — current time.
 
         Returns
@@ -101,6 +103,7 @@ class SDESimulator:
         x0: np.ndarray,
         U: np.ndarray,
         D: np.ndarray,
+        P: np.ndarray,
         t0: float = 0.0,
     ) -> np.ndarray:
         """
@@ -114,13 +117,15 @@ class SDESimulator:
             Input trajectory; U[k] is applied over [t_k, t_{k+1}].
         D : (T, nd) ndarray
             Disturbance trajectory; D[k] applies over [t_k, t_{k+1}].
+        P : (T, nparams) ndarray
+            Parameter trajectory; P[k] applies over [t_k, t_{k+1}].
         t0 : float, optional
             Start time.  Default: 0.
 
         Returns
         -------
         X : (T+1, nx) ndarray
-            State trajectory where X[0] = x0 and X[k+1] = step(X[k], ...).
+            State trajectory where X[0] = x0 and X[k+1] = step(X[k], ...).  
 
         Raises
         ------
