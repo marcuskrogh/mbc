@@ -503,10 +503,39 @@ u, U_seq, X_seq = ctrl.step(y, D)   # D = stacked disturbance forecast (N*p, 1)
 
 ### 2.1 Models
 
+#### `ContinuousDiscreteModel` — `mbc.models`
+
+Abstract base class for a nonlinear continuous-discrete stochastic SDE system
+(Ph.D. thesis, Ch. 5):
+
+```
+dx = f(x, u, d, t) dt + g(x, u, d, t) dw,   w ~ N(0, Q_c)
+y[k] = h(x[k], d[k]) + v[k],                 v[k] ~ N(0, R)
+```
+
+All arrays use `numpy.ndarray`.  This ABC is accepted by all nonlinear estimators
+(`ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`, `ContinuousDiscreteEnKF`,
+`ContinuousDiscreteParticleFilter`) and by `SDESimulator` and `EconomicNMPC`.
+
+**Abstract interface** — subclasses must implement:
+
+| Member | Signature / Type | Description |
+|--------|-----------------|-------------|
+| `f` | `(x, u, d, t) → (nx,) ndarray` | Drift function |
+| `g` | `(x, u, d, t) → (nx, nw) ndarray` | Diffusion matrix |
+| `h` | `(x, d) → (ny,) ndarray` | Observation function |
+| `Q_c` | `(nw, nw) ndarray` | Continuous process-noise covariance |
+| `R` | `(ny, ny) ndarray` | Measurement noise covariance |
+| `nx` | `int` | State dimension |
+| `nu` | `int` | Input dimension |
+| `nd` | `int` | Disturbance dimension |
+| `ny` | `int` | Output dimension |
+| `nw` | `int` | Process-noise / diffusion dimension (columns of `g`'s output) |
+
 #### `LinearContinuousDiscreteModel` — `mbc.models`
 
-Abstract base class for a linear continuous-discrete stochastic system.  The
-state evolves continuously according to the Itô SDE
+Extends `ContinuousDiscreteModel` for linear systems.  The state evolves
+continuously according to the Itô SDE
 
 ```
 dx = (A_c x[t] + B_c u[t] + E_c d[t]) dt + G dw[t],   w[t] ~ N(0, Q_c)
@@ -525,31 +554,42 @@ sampling interval `[t_k, t_{k+1}]`.
 
 | Symbol | Dimension | Description |
 |--------|-----------|-------------|
-| `n` | — | State dimension |
-| `m` | — | Input dimension |
-| `p` | — | Disturbance dimension |
-| `l` | — | Output dimension |
-| `q` | — | Process-noise dimension |
-| `A_c` | `(n,n)` | Continuous state matrix |
-| `B_c` | `(n,m)` | Continuous input matrix |
-| `E_c` | `(n,p)` | Continuous disturbance matrix |
-| `G` | `(n,q)` | Noise input matrix |
-| `Q_c` | `(q,q)` | Continuous process-noise covariance |
-| `C` | `(l,n)` | Output matrix (time-invariant) |
-| `R` | `(l,l)` | Measurement noise covariance |
+| `nx` | `int` | State dimension |
+| `nu` | `int` | Input dimension |
+| `nd` | `int` | Disturbance dimension |
+| `ny` | `int` | Output dimension (derived: `C.shape[0]`) |
+| `nw` | `int` | Process-noise dimension (derived: `G.shape[1]`) |
+| `A_c` | `(nx, nx)` | Continuous state matrix |
+| `B_c` | `(nx, nu)` | Continuous input matrix |
+| `E_c` | `(nx, nd)` | Continuous disturbance matrix |
+| `G` | `(nx, nw)` | Noise input matrix |
+| `Q_c` | `(nw, nw)` | Continuous process-noise covariance |
+| `C` | `(ny, nx)` | Output matrix (time-invariant) |
+| `R` | `(ny, ny)` | Measurement noise covariance |
 | `dt` | `float` | Sampling interval |
 
 **Abstract interface** — subclasses must implement:
 
 | Member | Type | Description |
 |--------|------|-------------|
-| `n_x`, `n_u`, `n_d` | `int` | Dimensions |
-| `A_c`, `B_c`, `E_c`, `G`, `Q_c` | `(·,·) ndarray` | Continuous-time matrices |
-| `C`, `R` | `(·,·) matrix` | Output/noise matrices (cvxopt) |
+| `nx`, `nu`, `nd` | `int` | Dimensions (inherited abstracts) |
+| `A_c`, `B_c`, `E_c`, `G`, `Q_c` | `ndarray` | Continuous-time matrices |
+| `C` | `(ny, nx) ndarray` | Output matrix |
+| `R` | `(ny, ny) ndarray` | Measurement noise covariance |
 | `dt` | `float` | Sampling interval |
 | `x` | `list[float]` | Current state (read/write) |
-| `x_ref` | `(n,1) matrix` | State reference |
-| `u_bounds` | `(matrix, matrix)` | Input box `(u_min, u_max)` |
+| `x_ref` | `(nx,) ndarray` | State reference / setpoint |
+| `u_bounds` | `(ndarray, ndarray)` | Input box `(u_min, u_max)`, each `(nu,)` |
+
+**Concrete implementations** (provided by the ABC — no override needed):
+
+| Member | Implementation |
+|--------|---------------|
+| `f(x, u, d, t)` | `A_c @ x + B_c @ u + E_c @ d` |
+| `g(x, u, d, t)` | `G` (constant; arguments ignored) |
+| `h(x, d)` | `C @ x` (d ignored for LTI) |
+| `ny` | `C.shape[0]` |
+| `nw` | `G.shape[1]` |
 
 **Concrete utility methods** (provided by the ABC):
 
@@ -573,7 +613,7 @@ The exact discrete process-noise covariance via the Van Loan (1978) method:
 Q_d = ∫₀^{dt} expm(A_c τ) G Q_c Gᵀ expm(A_c τ)ᵀ dτ
 ```
 
-Computed using the `2n × 2n` augmented matrix:
+Computed using the `2nx × 2nx` augmented matrix:
 
 ```
 M = [[-A_c,   G Q_c Gᵀ],   * dt
@@ -582,7 +622,7 @@ M = [[-A_c,   G Q_c Gᵀ],   * dt
 expm(M) = [[expm(-A_c dt),  expm(-A_c dt) Q_d],
            [      0,        expm( A_c dt)     ]]
 
-⟹  Q_d = A_d · expm(M)[:n, n:]
+⟹  Q_d = A_d · expm(M)[:nx, nx:]
 ```
 
 These utility methods are used for analysis and for initialising discrete filters
@@ -591,20 +631,31 @@ from continuous model parameters.  They are **not** called internally by
 internally by `CDOptimalControlProblem`, which uses ZOH-discretised matrices
 for the QP.
 
+**Backward-compatible aliases** (concrete, non-abstract):
+
+| Alias | Returns | Notes |
+|-------|---------|-------|
+| `n_x` | `int` | Deprecated alias for `nx` |
+| `n_u` | `int` | Deprecated alias for `nu` |
+| `n_d` | `int` | Deprecated alias for `nd` |
+| `C_cvx` | `cvxopt.matrix` | `C` converted to cvxopt dense |
+| `R_cvx` | `cvxopt.matrix` | `R` converted to cvxopt dense |
+| `x_ref_cvx` | `(nx, 1) cvxopt.matrix` | `x_ref` as cvxopt column vector |
+| `u_bounds_cvx` | `(matrix, matrix)` | `u_bounds` as cvxopt `(nu, 1)` columns |
+
 **Example**:
 
 ```python
 import numpy as np
-from cvxopt import matrix
 from mbc.models import LinearContinuousDiscreteModel
 
 class CSTRLinear(LinearContinuousDiscreteModel):
     @property
-    def n_x(self): return 2
+    def nx(self): return 2
     @property
-    def n_u(self): return 1
+    def nu(self): return 1
     @property
-    def n_d(self): return 1
+    def nd(self): return 1
     @property
     def A_c(self): return np.array([[-1.0, 0.5], [0.0, -2.0]])
     @property
@@ -616,45 +667,26 @@ class CSTRLinear(LinearContinuousDiscreteModel):
     @property
     def Q_c(self): return np.diag([1e-4, 1e-4])
     @property
-    def C(self):   return matrix([[1.0, 0.0]])
+    def C(self):   return np.array([[1.0, 0.0]])       # (ny=1, nx=2)
     @property
-    def R(self):   return matrix([[0.05]])
+    def R(self):   return np.array([[0.05]])            # (ny=1, ny=1)
     @property
-    def dt(self):  return 60.0   # 1-minute sampling
+    def dt(self):  return 60.0                         # 1-minute sampling
     @property
     def x(self):   return [0.0, 0.0]
     @x.setter
     def x(self, v): ...
     @property
-    def x_ref(self): return matrix([1.0, 0.0])
+    def x_ref(self): return np.array([1.0, 0.0])       # (nx,) ndarray
     @property
-    def u_bounds(self): return matrix([0.0]), matrix([2.0])
+    def u_bounds(self): return np.array([0.0]), np.array([2.0])
+
+# ny and nw are derived automatically
+m = CSTRLinear()
+print(m.ny)   # 1  (= C.shape[0])
+print(m.nw)   # 2  (= G.shape[1])
+print(isinstance(m, LinearContinuousDiscreteModel))  # True
 ```
-
-#### `ContinuousDiscreteModel` — `mbc.models`
-
-Abstract base class for a nonlinear continuous-discrete stochastic SDE system
-(Ph.D. thesis, Ch. 5):
-
-```
-dx = f(x, u, d, t) dt + g(x, u, d, t) dw,   w ~ N(0, Q_c)
-y[k] = h(x[k], d[k]) + v[k],                 v[k] ~ N(0, R)
-```
-
-**Abstract interface** — subclasses must implement:
-
-| Member | Signature | Description |
-|--------|-----------|-------------|
-| `f` | `(x, u, d, t) → (nx,)` | Drift function |
-| `g` | `(x, u, d, t) → (nx, nw)` | Diffusion matrix |
-| `h` | `(x, d) → (ny,)` | Observation function |
-| `Q_c` | `(nw, nw) ndarray` | Continuous process-noise covariance |
-| `R` | `(ny, ny) ndarray` | Measurement noise covariance |
-| `nx`, `nu`, `nd`, `ny` | `int` | Dimensions |
-
-All arrays use `numpy.ndarray`.  This ABC is accepted by all nonlinear estimators
-(`ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`, `ContinuousDiscreteEnKF`,
-`ContinuousDiscreteParticleFilter`) and by `SDESimulator` and `EconomicNMPC`.
 
 #### `ContinuousDiscreteDAEModel` — `mbc.models`
 
@@ -667,7 +699,9 @@ y[k] = h(x[k], z[k], d[k]) + v[k]
 ```
 
 where `z ∈ ℝⁿᶻ` is the algebraic state vector, kept consistent with the
-differential state `x` at all times by enforcing `l = 0`.
+differential state `x` at all times by enforcing `l = 0`.  The `nw` property
+is inherited from `ContinuousDiscreteModel` and must be implemented by
+concrete subclasses.
 
 **Additional abstract members**:
 

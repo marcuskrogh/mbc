@@ -69,7 +69,7 @@ class CDMPCController:
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
-        self._u_prev: matrix = _zeros(model.n_u, 1)
+        self._u_prev: matrix = _zeros(model.nu, 1)
 
     def step(
         self,
@@ -98,13 +98,13 @@ class CDMPCController:
         U_seq : (N·m, 1) cvxopt column — full optimal input sequence.
         X_seq : (N·n, 1) cvxopt column — predicted state trajectory x[1], …, x[N].
         """
-        n_u = self._model.n_u
-        n_d = self._model.n_d
+        n_u = self._model.nu
+        n_d = self._model.nd
         d0 = D[:n_d]
 
         x_hat = self._estimator.update(y, d0)
         U_seq, X_seq = self._ocp.solve(
-            x_hat, D, self._model.x_ref, u_prev=self._u_prev
+            x_hat, D, self._model.x_ref_cvx, u_prev=self._u_prev
         )
         u = U_seq[:n_u]
         self._u_prev = matrix(u)
