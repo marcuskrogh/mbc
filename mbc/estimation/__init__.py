@@ -7,6 +7,7 @@ from .ukf import ContinuousDiscreteUKF
 from .enkf import ContinuousDiscreteEnKF
 from .pf import ContinuousDiscreteParticleFilter
 from .ekf_dae import ContinuousDiscreteDAEEKF
+from .delayed import DelayedObservationFilter
 
 __all__ = [
     "KalmanFilter",
@@ -16,4 +17,5 @@ __all__ = [
     "ContinuousDiscreteEnKF",
     "ContinuousDiscreteParticleFilter",
     "ContinuousDiscreteDAEEKF",
+    "DelayedObservationFilter",
 ]
