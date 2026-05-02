@@ -99,6 +99,11 @@ def _to_cvx_mat(arr: np.ndarray):
     return cvx_matrix(arr.ravel(order="F").tolist(), (n, m))
 
 
+# Small regularisation added to P when a Cholesky factor is needed but the
+# matrix is near-singular.  Used when restoring ensemble / particle state.
+_CHOLESKY_REGULARIZATION: float = 1e-10
+
+
 def _ny_of(y) -> int:
     """Return the number of output channels in a measurement vector."""
     if _is_cvxopt(y):
@@ -185,12 +190,24 @@ class DelayedObservationFilter:
             # Stochastic estimators: reinitialise ensemble / particles from
             # N(x_np, P_np).  This is an approximation but is the best
             # available restoration for sample-based methods.
-            nx, N = est._nx, est._N
+            # Direct access to private attributes is intentional here:
+            # the ensemble/particle state is only exposed through _nx, _N,
+            # _rng, _X (and _w for PF), which are the canonical internal
+            # fields of both implementations.
+            try:
+                nx, N = est._nx, est._N
+                rng = est._rng
+            except AttributeError as exc:
+                raise TypeError(
+                    f"DelayedObservationFilter: ensemble/particle estimator "
+                    f"{type(est)!r} does not expose expected internal fields "
+                    f"(_nx, _N, _rng): {exc}"
+                ) from exc
             try:
                 L = np.linalg.cholesky(P_np)
             except np.linalg.LinAlgError:
-                L = np.linalg.cholesky(P_np + 1e-10 * np.eye(nx))
-            Z = est._rng.standard_normal((nx, N))
+                L = np.linalg.cholesky(P_np + _CHOLESKY_REGULARIZATION * np.eye(nx))
+            Z = rng.standard_normal((nx, N))
             est._X = x_np[:, None] + L @ Z
             if isinstance(est, ContinuousDiscreteParticleFilter):
                 est._w = np.full(N, 1.0 / N)
