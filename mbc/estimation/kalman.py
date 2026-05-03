@@ -50,9 +50,9 @@ from __future__ import annotations
 
 from typing import List, Optional, TYPE_CHECKING
 
-from cvxopt import matrix
+import numpy as np
 
-from .._utils import _eye, _zeros, _symmetrise
+from .._utils import _np_to_cvx, _cvx_to_np, _cvx_col_to_np, _any_to_np1d, _any_to_np2d
 
 if TYPE_CHECKING:
     from ..models import LinearDiscreteModel
@@ -70,13 +70,13 @@ class KalmanFilter:
     model : LinearDiscreteModel
         Linear discrete-time plant providing dimensions, output matrix C,
         initial state x, and the ``discretize(d)`` method.
-    Q : cvxopt.matrix (n, n), optional
+    Q : numpy or cvxopt matrix (n, n), optional
         Process noise covariance.  Default: 0.01 · Iₙ.
-    R : cvxopt.matrix (l, l), optional
+    R : numpy or cvxopt matrix (l, l), optional
         Measurement noise covariance.  Default: 0.1 · Iˡ.
-    P0 : cvxopt.matrix (n, n), optional
+    P0 : numpy or cvxopt matrix (n, n), optional
         Initial state covariance.  Default: Iₙ.
-    noise_matrix : cvxopt.matrix (n, n), optional
+    noise_matrix : numpy or cvxopt matrix (n, n), optional
         Noise input matrix G so that the prediction covariance step becomes
         ``P⁻ = A P Aᵀ + G Q Gᵀ`` (M.Sc. Ch. 5.4).  When ``None`` (default),
         the standard form ``P⁻ = A P Aᵀ + Q`` is used (equivalent to G = I).
@@ -85,56 +85,48 @@ class KalmanFilter:
     def __init__(
         self,
         model: "LinearDiscreteModel",
-        Q: matrix | None = None,
-        R: matrix | None = None,
-        P0: matrix | None = None,
-        noise_matrix: matrix | None = None,
+        Q=None,
+        R=None,
+        P0=None,
+        noise_matrix=None,
     ) -> None:
         self._model = model
         n = model.n_x
-        l = model.C.size[0]
+        l = model.C.size[0]  # model.C is cvxopt
 
-        # Noise covariances
-        self._Q: matrix = Q if Q is not None else matrix(0.0, (n, n))
-        if Q is None:
-            for i in range(n):
-                self._Q[i, i] = 0.01
+        # Noise covariances (numpy)
+        self._Q_np: np.ndarray = _any_to_np2d(Q) if Q is not None else 0.01 * np.eye(n)
+        self._R_np: np.ndarray = _any_to_np2d(R) if R is not None else 0.1 * np.eye(l)
 
-        self._R: matrix = R if R is not None else matrix(0.0, (l, l))
-        if R is None:
-            for i in range(l):
-                self._R[i, i] = 0.1
+        # Noise input matrix G (M.Sc. Ch. 5.4); None means standard form
+        self._G_np: np.ndarray | None = _any_to_np2d(noise_matrix) if noise_matrix is not None else None
 
-        # Noise input matrix G (M.Sc. Ch. 5.4); None means use standard form
-        self._G: matrix | None = noise_matrix
+        # State error covariance (numpy)
+        self._P_np: np.ndarray = _any_to_np2d(P0) if P0 is not None else np.eye(n)
 
-        # State covariance
-        self._P: matrix = P0 if P0 is not None else _eye(n)
+        # State estimate x̂ (numpy; initialised from the model)
+        self._x_np: np.ndarray = np.array(list(model.x), dtype=float)
 
-        # State estimate x̂  (initialised from the model)
-        x0 = model.x
-        self._x_hat: matrix = matrix(list(x0), (n, 1))
-
-        # Memory for previous input and disturbance
-        self._u_prev: matrix = _zeros(model.n_u, 1)
-        self._d_prev: matrix = _zeros(model.n_d, 1)
+        # Memory for previous input and disturbance (numpy)
+        self._u_prev_np: np.ndarray = np.zeros(model.n_u)
+        self._d_prev_np: np.ndarray = np.zeros(model.n_d)
 
         self._first: bool = True
 
         # Last Kalman innovation ν = y − C x̂⁻  (set after each filtering step)
-        self._last_innovation: Optional[matrix] = None
+        self._last_innovation_np: Optional[np.ndarray] = None
 
     # ── Public properties ────────────────────────────────────────────────
 
     @property
-    def x_hat(self) -> matrix:
-        """Current state estimate x̂[k] ∈ ℝⁿ (column vector, copy)."""
-        return matrix(self._x_hat)
+    def x_hat(self) -> np.ndarray:
+        """Current state estimate x̂[k] ∈ ℝⁿ (1-D array, copy)."""
+        return self._x_np.copy()
 
     @property
-    def P(self) -> matrix:
-        """Current covariance P[k] ∈ ℝⁿˣⁿ (copy)."""
-        return matrix(self._P)
+    def P(self) -> np.ndarray:
+        """Current covariance P[k] ∈ ℝⁿˣⁿ (2-D array, copy)."""
+        return self._P_np.copy()
 
     @property
     def last_innovation(self) -> Optional[List[float]]:
@@ -144,19 +136,18 @@ class KalmanFilter:
         Returns ``None`` until the first filtering step has been completed
         (i.e. until the second call to :meth:`update`).
         """
-        if self._last_innovation is None:
+        if self._last_innovation_np is None:
             return None
-        n = self._last_innovation.size[0]
-        return [float(self._last_innovation[i]) for i in range(n)]
+        return [float(v) for v in self._last_innovation_np]
 
     # ── Prediction step ──────────────────────────────────────────────────
 
     def predict(
         self,
-        A: matrix,
-        B: matrix,
-        E: matrix,
-    ) -> tuple[matrix, matrix]:
+        A_np: np.ndarray,
+        B_np: np.ndarray,
+        E_np: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Time update (prediction).
 
@@ -166,27 +157,38 @@ class KalmanFilter:
             x̂⁻  = A x̂ + B u + E d
             P⁻   = A P Aᵀ + Q
 
+        Parameters
+        ----------
+        A_np : (n, n) ndarray  — state transition matrix.
+        B_np : (n, m) ndarray  — input matrix.
+        E_np : (n, p) ndarray  — disturbance matrix.
+
         Returns
         -------
-        x_pred : (n, 1) predicted state estimate.
+        x_pred : (n,) predicted state estimate.
         P_pred : (n, n) predicted covariance.
         """
-        x_pred = A * self._x_hat + B * self._u_prev + E * self._d_prev
-        if self._G is None:
-            P_pred = A * self._P * A.T + self._Q
+        x_pred_np = (
+            A_np @ self._x_np
+            + B_np @ self._u_prev_np
+            + E_np @ self._d_prev_np
+        )
+        if self._G_np is None:
+            P_pred_np = A_np @ self._P_np @ A_np.T + self._Q_np
         else:
-            P_pred = A * self._P * A.T + self._G * self._Q * self._G.T
-        return x_pred, P_pred
+            P_pred_np = A_np @ self._P_np @ A_np.T + self._G_np @ self._Q_np @ self._G_np.T
+
+        return x_pred_np, P_pred_np
 
     # ── Filtering step (Joseph form) ─────────────────────────────────────
 
     def filter(
         self,
-        y: matrix,
-        x_pred: matrix,
-        P_pred: matrix,
-        C: matrix,
-    ) -> tuple[matrix, matrix]:
+        y_np: np.ndarray,
+        x_pred_np: np.ndarray,
+        P_pred_np: np.ndarray,
+        C_np: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
         Measurement update (filtering) using the Joseph stabilised form.
 
@@ -200,49 +202,49 @@ class KalmanFilter:
             I_KC = I − K C
             P    = I_KC P⁻ I_KCᵀ + K R Kᵀ   (Joseph form)
 
+        Parameters
+        ----------
+        y_np      : (l,) ndarray  — measurement vector.
+        x_pred_np : (n,) ndarray  — predicted state estimate.
+        P_pred_np : (n, n) ndarray — predicted covariance.
+        C_np      : (l, n) ndarray — output matrix.
+
         Returns
         -------
-        x_hat : (n, 1) corrected state estimate.
-        P     : (n, n) corrected covariance (symmetric, PSD).
+        x_hat_np : (n,) corrected state estimate.
+        P_np     : (n, n) corrected covariance (symmetric, PSD).
         """
-        from cvxopt import lapack
-        n = P_pred.size[0]
+        n = P_pred_np.shape[0]
+        R_np = self._R_np
 
         # Innovation covariance  S = C P⁻ Cᵀ + R
-        S = C * P_pred * C.T + self._R
+        S_np = C_np @ P_pred_np @ C_np.T + R_np
 
-        # Solve  S Kᵀ = (P⁻ Cᵀ)ᵀ  for Kᵀ  via Cholesky factorisation
-        # (S is symmetric positive-definite).  Equivalent to K = P⁻ Cᵀ S⁻¹.
-        Kt = matrix(P_pred * C.T)      # n × l, will be overwritten
-        S_copy = matrix(S)              # posv overwrites S
-        lapack.posv(S_copy, Kt)
-        K = Kt                          # n × l
+        # Kalman gain  K = P⁻ Cᵀ S⁻¹  via  S Kᵀ = C P⁻
+        K_np = np.linalg.solve(S_np, C_np @ P_pred_np).T  # (n, l)
 
         # Innovation  ν = y − C x̂⁻
-        nu = y - C * x_pred
+        nu_np = y_np - C_np @ x_pred_np
 
         # Corrected state  x̂ = x̂⁻ + K ν
-        x_hat = x_pred + K * nu
+        x_hat_np = x_pred_np + K_np @ nu_np
 
-        # Joseph form covariance  P = (I−KC) P⁻ (I−KC)ᵀ + K R Kᵀ
-        I_n = _eye(n)
-        I_KC = I_n - K * C
-        P = I_KC * P_pred * I_KC.T + K * self._R * K.T
-        P = _symmetrise(P)
+        # Joseph form  P = (I−KC) P⁻ (I−KC)ᵀ + K R Kᵀ
+        I_KC = np.eye(n) - K_np @ C_np
+        P_np = I_KC @ P_pred_np @ I_KC.T + K_np @ R_np @ K_np.T
+        P_np = (P_np + P_np.T) * 0.5
 
-        # Store innovation for external inspection (e.g. diagnostics sensors)
-        self._last_innovation = matrix(nu)
-
-        return x_hat, P
+        self._last_innovation_np = nu_np
+        return x_hat_np, P_np
 
     # ── Combined update ──────────────────────────────────────────────────
 
     def update(
         self,
-        y: matrix,
-        d: matrix,
+        y,
+        d,
         mask: list[bool] | None = None,
-    ) -> matrix:
+    ) -> np.ndarray:
         """
         Assimilate measurement y[k] and return corrected estimate x̂[k].
 
@@ -252,8 +254,8 @@ class KalmanFilter:
 
         Parameters
         ----------
-        y : (l, 1) measurement vector.
-        d : (p, 1) current disturbance vector.
+        y : (l,) numpy or cvxopt — measurement vector.
+        d : (p,) numpy or cvxopt — current disturbance vector.
         mask : list of bool, length l, optional
             When provided, only outputs where ``mask[i] is True`` are used
             in the measurement update.  If all entries are ``False`` the
@@ -262,64 +264,60 @@ class KalmanFilter:
 
         Returns
         -------
-        x_hat : (n, 1) corrected state estimate (copy).
+        x_hat : (n,) corrected state estimate (copy).
         """
-        from cvxopt import lapack
-        C = self._model.C
-        l = C.size[0]
+        C_np = _cvx_to_np(self._model.C)  # model.C is always cvxopt
+        y_np = _any_to_np1d(y)
+        l = C_np.shape[0]
+        n = self._model.n_x
 
-        # Build active-output submatrices when a mask is provided
         if mask is not None:
             active = [i for i, m in enumerate(mask) if m]
         else:
             active = list(range(l))
 
         if self._first:
-            # Bootstrap:  x̂ = C⁺ y  (Moore–Penrose pseudoinverse for C
-            # with full column rank; for C = I this reduces to x̂ = y).
-            CtC = C.T * C
-            Cty = C.T * y
-            lapack.posv(CtC, Cty)
-            self._x_hat = Cty
+            # Bootstrap:  x̂ = C⁺ y  (left pseudo-inverse)
+            CtC = C_np.T @ C_np
+            Cty = C_np.T @ y_np
+            self._x_np = np.linalg.solve(CtC, Cty)
             self._first = False
         else:
-            # Discretise at previous disturbance
-            A, B, E = self._model.discretize(self._d_prev)
+            # Discretise at previous disturbance (model.discretize expects cvxopt)
+            d_prev_cvx = _np_to_cvx(self._d_prev_np.reshape(-1, 1))
+            A_cvx, B_cvx, E_cvx = self._model.discretize(d_prev_cvx)
+            A_np = _cvx_to_np(A_cvx)
+            B_np = _cvx_to_np(B_cvx)
+            E_np = _cvx_to_np(E_cvx)
 
-            # Prediction step
-            x_pred, P_pred = self.predict(A, B, E)
+            x_pred_np, P_pred_np = self.predict(A_np, B_np, E_np)
 
             if not active:
                 # All outputs masked — skip measurement update (M.Sc. Ch. 5.5)
-                self._x_hat = x_pred
-                self._P = P_pred
+                self._x_np = x_pred_np
+                self._P_np = P_pred_np
             elif len(active) == l:
                 # All outputs available — full update
-                self._x_hat, self._P = self.filter(y, x_pred, P_pred, C)
+                x_hat_np, P_np = self.filter(y_np, x_pred_np, P_pred_np, C_np)
+                self._x_np = x_hat_np
+                self._P_np = P_np
             else:
                 # Partial update: restrict C, R, y to active rows
-                n = P_pred.size[0]
-                C_sub = matrix([C[i, j] for j in range(n) for i in active],
-                               (len(active), n))
-                R_sub = matrix(
-                    [self._R[i, j] for j in range(l) for i in active
-                     if j in active],
-                    (len(active), len(active)),
-                )
-                y_sub = matrix([y[i] for i in active], (len(active), 1))
-                # Temporarily swap noise covariance for the filter call
-                R_orig = self._R
-                self._R = R_sub
-                self._x_hat, self._P = self.filter(
-                    y_sub, x_pred, P_pred, C_sub
-                )
-                self._R = R_orig
+                C_sub = C_np[np.ix_(active, list(range(n)))]
+                R_sub = self._R_np[np.ix_(active, active)]
+                y_sub = y_np[active]
+                R_orig = self._R_np
+                self._R_np = R_sub
+                x_hat_np, P_np = self.filter(y_sub, x_pred_np, P_pred_np, C_sub)
+                self._R_np = R_orig
+                self._x_np = x_hat_np
+                self._P_np = P_np
 
-        self._d_prev = matrix(d)
-        return matrix(self._x_hat)
+        self._d_prev_np = _any_to_np1d(d)
+        return self._x_np.copy()
 
     # ── Action recording ─────────────────────────────────────────────────
 
-    def record_action(self, u: matrix) -> None:
+    def record_action(self, u) -> None:
         """Record the applied control action u[k] for the next prediction."""
-        self._u_prev = matrix(u)
+        self._u_prev_np = _any_to_np1d(u)
