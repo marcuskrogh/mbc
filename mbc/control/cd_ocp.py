@@ -48,9 +48,11 @@ from __future__ import annotations
 
 from typing import Tuple, TYPE_CHECKING
 
+import numpy as np
 from cvxopt import matrix
 
 from .ocp import OptimalControlProblem
+from .._utils import _np_to_cvx
 
 if TYPE_CHECKING:
     from ..models import LinearContinuousDiscreteModel
@@ -62,19 +64,18 @@ class _CDModelAdapter:
     the cvxopt-compatible interface expected by ``OptimalControlProblem``.
 
     ``OptimalControlProblem.solve`` accesses:
-      - ``model.n_x``, ``model.n_u``, ``model.n_d``  (underscore form, int)
+      - ``model.nx``, ``model.nu``, ``model.nd``  (int)
       - ``model.C``         (cvxopt matrix, for output prediction)
       - ``model.u_bounds``  (tuple of cvxopt column vectors)
       - ``model.discretize(d)``  (returns cvxopt matrices)
 
-    This adapter satisfies all four requirements by delegating to the
+    This adapter satisfies all requirements by delegating to the
     appropriate numpy → cvxopt conversion properties on the CD model.
     """
 
     def __init__(self, model: "LinearContinuousDiscreteModel") -> None:
         self._m = model
 
-    # Dimensions — both forms for compatibility
     @property
     def nx(self) -> int:
         return self._m.nx
@@ -87,26 +88,18 @@ class _CDModelAdapter:
     def nd(self) -> int:
         return self._m.nd
 
-    @property
-    def n_x(self) -> int:
-        return self._m.nx
-
-    @property
-    def n_u(self) -> int:
-        return self._m.nu
-
-    @property
-    def n_d(self) -> int:
-        return self._m.nd
-
     # cvxopt-format matrices
     @property
     def C(self) -> matrix:
-        return self._m.C_cvx
+        return _np_to_cvx(self._m.Cm)
 
     @property
     def u_bounds(self) -> Tuple[matrix, matrix]:
-        return self._m.u_bounds_cvx
+        lo, hi = self._m.u_bounds
+        return (
+            _np_to_cvx(np.asarray(lo, dtype=float).reshape(-1, 1)),
+            _np_to_cvx(np.asarray(hi, dtype=float).reshape(-1, 1)),
+        )
 
     # Discretisation — delegates directly (already returns cvxopt)
     def discretize(self, d: matrix) -> Tuple[matrix, matrix, matrix]:

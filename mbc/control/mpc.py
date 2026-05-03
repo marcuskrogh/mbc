@@ -47,7 +47,7 @@ class MPCController:
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
-        self._u_prev: matrix = matrix(0.0, (model.n_u, 1))
+        self._u_prev: matrix = matrix(0.0, (model.nu, 1))
 
     def step(
         self,
@@ -68,8 +68,8 @@ class MPCController:
         U_seq : (N·m, 1) full optimal input sequence.
         X_seq : (N·n, 1) predicted state trajectory.
         """
-        n_u = self._model.n_u
-        n_d = self._model.n_d
+        n_u = self._model.nu
+        n_d = self._model.nd
         d0 = D[:n_d]
         x_hat = self._estimator.update(y, d0)
         U_seq, X_seq = self._ocp.solve(

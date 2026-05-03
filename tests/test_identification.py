@@ -50,15 +50,15 @@ class _ScalarModel:
         self._e = e
 
     @property
-    def n_x(self) -> int:
+    def nx(self) -> int:
         return 1
 
     @property
-    def n_u(self) -> int:
+    def nu(self) -> int:
         return 1
 
     @property
-    def n_d(self) -> int:
+    def nd(self) -> int:
         return 1
 
     def discretize(self, d_cvx):

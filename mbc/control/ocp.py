@@ -186,7 +186,7 @@ class OptimalControlProblem:
         self._rho = rho
         self._y_offset = y_offset
 
-        n_u = model.n_u
+        n_u = model.nu
         # Pre-compute constant structures
         self._D_diff: matrix | None = None
         self._S_bar: matrix | None = None
