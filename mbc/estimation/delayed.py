@@ -320,7 +320,7 @@ class DelayedObservationFilter:
         n = len(x0_np)
 
         if isinstance(est, KalmanFilter):
-            C_full_np = _cvx_to_np(est._model.C)   # (ny, n) from cvxopt
+            C_full_np = est._model.C   # (ny, n) numpy ndarray
         elif isinstance(est, CDKalmanFilter):
             C_full_np = _cvx_to_np(est._model.C_cvx)  # (ny, n) from cvxopt
         else:
