@@ -176,10 +176,10 @@ class ContinuousDiscreteUKF:
             diff = sigma_prop[i] - x_pred
             P_pred += self._Wc[i] * np.outer(diff, diff)
 
-        # Add integrated process noise: G @ Q_c @ G^T = Q_c (when g() = I).
+        # Add integrated process noise: sigma @ sigma^T * dt
         # Evaluated at x_pred (end of interval).
-        G = model.g(x_pred, u, d, p, t)
-        P_pred += G @ model.Q_c @ G.T * self._dt
+        sigma_val = model.sigma(x_pred, u, d, p, t)
+        P_pred += sigma_val @ sigma_val.T * self._dt
 
         # Symmetrise to prevent numerical drift
         P_pred = 0.5 * (P_pred + P_pred.T)

@@ -83,32 +83,32 @@ class _TwoStateModel(LinearDiscreteModel):
         return 1
 
     @property
-    def C(self) -> np.ndarray:
-        """Output matrix C = I₂ (numpy)."""
+    def Cm(self) -> np.ndarray:
+        """Output matrix Cm = I₂ (numpy)."""
         return np.eye(2)
 
     @property
-    def A_d(self) -> np.ndarray:
+    def Ad(self) -> np.ndarray:
         """Discrete state-transition matrix."""
         return np.array([[0.9, 0.0], [0.0, 0.85]])
 
     @property
-    def B_d(self) -> np.ndarray:
+    def Bd(self) -> np.ndarray:
         """Discrete input matrix."""
         return np.array([[0.1], [0.1]])
 
     @property
-    def E_d(self) -> np.ndarray:
+    def Ed(self) -> np.ndarray:
         """Discrete disturbance matrix (unused)."""
         return np.zeros((2, 1))
 
     @property
-    def Q_d(self) -> np.ndarray:
+    def Qd(self) -> np.ndarray:
         """Process noise covariance."""
         return 0.01 * np.eye(2)
 
     @property
-    def R(self) -> np.ndarray:
+    def Rm(self) -> np.ndarray:
         """Measurement noise covariance."""
         return 0.1 * np.eye(2)
 
@@ -170,7 +170,7 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return 0
 
     @property
-    def ny(self) -> int:
+    def nym(self) -> int:
         return 2
 
     @property
@@ -182,7 +182,7 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return self._Q_c_val.copy()
 
     @property
-    def R(self) -> np.ndarray:
+    def Rm(self) -> np.ndarray:
         return self._R_val.copy()
 
     def f(self, x, u, d, p, t):
@@ -192,10 +192,10 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         dc_B = -c_B * D + self._k1 * c_A - self._k2 * c_B
         return np.array([dc_A, dc_B])
 
-    def g(self, x, u, d, p, t):
+    def sigma(self, x, u, d, p, t):
         return np.eye(2)
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p, t):
         return x.copy()  # observe both states
 
 

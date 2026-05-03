@@ -63,7 +63,6 @@ class ContinuousDiscreteEKF:
         self._dt = dt
         self._n_steps = n_steps
         self._h = dt / n_steps
-        self._Q_c: np.ndarray = model.Q_c
 
     # ── Public properties ─────────────────────────────────────────────────
 
@@ -107,16 +106,15 @@ class ContinuousDiscreteEKF:
         x = self._x_np.copy()
         P = self._P_np.copy()
         h = self._h
-        Q_c = self._Q_c
         model = self._model
 
         t_j = t
         for _ in range(self._n_steps):
             F_j = model.dfdx(x, u, d, p, t_j)
-            G_j = model.g(x, u, d, p, t_j)
+            G_j = model.sigma(x, u, d, p, t_j)
             f_j = model.f(x, u, d, p, t_j)
 
-            P_dot = F_j @ P + P @ F_j.T + G_j @ Q_c @ G_j.T
+            P_dot = F_j @ P + P @ F_j.T + G_j @ G_j.T
             x = x + h * f_j
             P = P + h * P_dot
             # Symmetrise at every sub-step to prevent numerical drift to non-PD

@@ -66,12 +66,6 @@ class SDESimulator:
         self._n_steps = n_steps
         self._scheme = scheme
         self._rng = np.random.default_rng(seed)
-        # Pre-compute Cholesky factor of Q_c for noise generation: L L^T = Q_c
-        Q_c = np.asarray(model.Q_c, dtype=float)
-        try:
-            self._L = np.linalg.cholesky(Q_c)
-        except np.linalg.LinAlgError:
-            self._L = np.linalg.cholesky(Q_c + 1e-14 * np.eye(Q_c.shape[0]))
 
     def step(
         self,
@@ -102,21 +96,17 @@ class SDESimulator:
         """
         h = self._dt / self._n_steps
         sqrt_h = np.sqrt(h)
-        L = self._L
-        nw = L.shape[0]
         nx = x.shape[0]
 
         x_cur = x.copy()
         t_cur = t
 
         for _ in range(self._n_steps):
-            # Stochastic increment: dW ~ N(0, Q_c * h)
-            # Generated as  L @ z * sqrt(h)  where z ~ N(0, I_nw)
+            # Diffusion: sigma encodes full noise magnitude, sigma @ sigma^T = Q
+            sigma_val = self._model.sigma(x_cur, u, d, p, t_cur)  # (nx, nw)
+            nw = sigma_val.shape[1]
             z = self._rng.standard_normal(nw)
-            dW = L @ z * sqrt_h
-
-            g_val = self._model.g(x_cur, u, d, p, t_cur)  # (nx, nw)
-            noise = g_val @ dW                              # (nx,)
+            noise = sigma_val @ z * sqrt_h
 
             if self._scheme == "EE":
                 f_val = self._model.f(x_cur, u, d, p, t_cur)

@@ -153,15 +153,12 @@ class ContinuousDiscreteParticleFilter:
         model = self._model
         h = self._h_sub
         sqrt_h = np.sqrt(h)
-        Q_c = model.Q_c
-        nw = Q_c.shape[0]
         N = self._N
 
-        # Diffusion: GQ = G @ chol(Q_c) so that GQ @ GQ^T = G @ Q_c @ G^T
+        # Diffusion: sigma encodes full noise magnitude, sigma @ sigma^T = Q
         x_mean0 = self._X.mean(axis=1)
-        G = model.g(x_mean0, u, d, p, t)
-        L_Q = np.linalg.cholesky(Q_c)
-        GQ = G @ L_Q
+        sigma_val = model.sigma(x_mean0, u, d, p, t)  # (nx, nw)
+        nw = sigma_val.shape[1]
 
         t_j = t
         for _ in range(self._n_steps):
@@ -170,7 +167,7 @@ class ContinuousDiscreteParticleFilter:
             F = np.column_stack([
                 model.f(self._X[:, i], u, d, p, t_j) for i in range(N)
             ])
-            self._X = self._X + h * F + GQ @ (sqrt_h * W)
+            self._X = self._X + h * F + sigma_val @ (sqrt_h * W)
             t_j += h
 
         return self.x_hat, self.P
