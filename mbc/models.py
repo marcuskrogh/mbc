@@ -1187,10 +1187,10 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
         Default: forward finite differences.  Override with analytic form.
         """
         h0 = self.hm(x, y, u, d, p, t)
-        nyal = y.shape[0]
+        ny = y.shape[0]
         nym = h0.shape[0]
-        J = np.empty((nym, nyal))
-        for k in range(nyal):
+        J = np.empty((nym, ny))
+        for k in range(ny):
             y_fwd = y.copy()
             y_fwd[k] += _H_FD
             J[:, k] = (self.hm(x, y_fwd, u, d, p, t) - h0) / _H_FD
@@ -1259,10 +1259,10 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
         Default: forward finite differences.  Override with analytic form.
         """
         h0 = self.h(x, y, u, d, p, t)
-        nyal = y.shape[0]
+        ny = y.shape[0]
         ny_out = h0.shape[0]
-        J = np.empty((ny_out, nyal))
-        for k in range(nyal):
+        J = np.empty((ny_out, ny))
+        for k in range(ny):
             y_fwd = y.copy()
             y_fwd[k] += _H_FD
             J[:, k] = (self.h(x, y_fwd, u, d, p, t) - h0) / _H_FD
