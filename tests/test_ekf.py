@@ -285,8 +285,8 @@ class TestVanDeVusseModel:
         G = vdv_model.sigma(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert G.shape == (2, 2)
 
-    def test_h_shape(self, vdv_model):
-        y = vdv_model.h(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
+    def test_hm_shape(self, vdv_model):
+        y = vdv_model.hm(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert y.shape == (1,)
         assert float(y[0]) == pytest.approx(_VDV_SS[1])
 

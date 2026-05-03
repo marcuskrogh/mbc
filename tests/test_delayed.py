@@ -196,7 +196,7 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return np.eye(2)
 
     def hm(self, x, u, d, p, t):
-        return x.copy()  # observe both states
+        return x.copy()  # full-state observation (both states)
 
 
 _VDV_SS = np.array([0.097141, 0.048329])
