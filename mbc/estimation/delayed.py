@@ -174,13 +174,8 @@ class DelayedObservationFilter:
         from .pf import ContinuousDiscreteParticleFilter
 
         est = self._est
-        if isinstance(est, KalmanFilter):
-            est._x_hat = _to_cvx_col(x_np)
-            est._P = _to_cvx_mat(P_np)
-        elif isinstance(est, CDKalmanFilter):
-            est._x_np = x_np.copy()
-            est._P_np = P_np.copy()
-        elif isinstance(est, ContinuousDiscreteEKF):
+        if isinstance(est, (KalmanFilter, CDKalmanFilter, ContinuousDiscreteEKF)):
+            # All three store state as numpy _x_np / _P_np.
             est._x_np = x_np.copy()
             est._P_np = P_np.copy()
         elif isinstance(est, ContinuousDiscreteUKF):
@@ -220,7 +215,7 @@ class DelayedObservationFilter:
         self, u_np: np.ndarray | None, d_np: np.ndarray
     ) -> None:
         """
-        Set ``_u_prev`` / ``_d_prev`` on discrete-time estimators so that
+        Set ``_u_prev_np`` / ``_d_prev_np`` on discrete-time estimators so that
         the next ``update`` call uses the correct prior inputs for its
         internal predict step.
         """
@@ -228,11 +223,8 @@ class DelayedObservationFilter:
         from .cd_kalman import CDKalmanFilter
 
         est = self._est
-        if isinstance(est, KalmanFilter):
-            if u_np is not None:
-                est._u_prev = _to_cvx_col(u_np)
-            est._d_prev = _to_cvx_col(d_np)
-        elif isinstance(est, CDKalmanFilter):
+        if isinstance(est, (KalmanFilter, CDKalmanFilter)):
+            # Both now store previous inputs as numpy arrays.
             if u_np is not None:
                 est._u_prev_np = u_np.copy()
             est._d_prev_np = d_np.copy()
