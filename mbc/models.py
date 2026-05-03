@@ -375,7 +375,7 @@ class ContinuousDiscreteModel(ABC):
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
-        """Controlled output (default: hm). Deprecated diffusion alias."""
+        """Controlled output g(x, u, d, p, t).  Default implementation returns hm."""
         return self.hm(x, u, d, p, t)
 
     def h(
@@ -1254,14 +1254,14 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
 
         Default: forward finite differences.  Override with analytic form.
         """
-        h0 = self.h(x, z, u, d, p)
+        h0 = self.hm(x, z, u, d, p, t)
         nx = x.shape[0]
         ny = h0.shape[0]
         J = np.empty((ny, nx))
         for k in range(nx):
             x_fwd = x.copy()
             x_fwd[k] += _H_FD
-            J[:, k] = (self.h(x_fwd, z, u, d, p) - h0) / _H_FD
+            J[:, k] = (self.hm(x_fwd, z, u, d, p, t) - h0) / _H_FD
         return J
 
     def dhdx(
@@ -1289,14 +1289,14 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
 
         Default: forward finite differences.  Override with analytic form.
         """
-        h0 = self.h(x, z, u, d, p)
+        h0 = self.hm(x, z, u, d, p, t)
         nz = z.shape[0]
         ny = h0.shape[0]
         J = np.empty((ny, nz))
         for k in range(nz):
             z_fwd = z.copy()
             z_fwd[k] += _H_FD
-            J[:, k] = (self.h(x, z_fwd, u, d, p) - h0) / _H_FD
+            J[:, k] = (self.hm(x, z_fwd, u, d, p, t) - h0) / _H_FD
         return J
 
     def dhdz(
@@ -1324,14 +1324,14 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
 
         Default: forward finite differences.  Override with analytic form.
         """
-        h0 = self.h(x, z, u, d, p)
+        h0 = self.hm(x, z, u, d, p, t)
         nu = u.shape[0]
         ny = h0.shape[0]
         J = np.empty((ny, nu))
         for k in range(nu):
             u_fwd = u.copy()
             u_fwd[k] += _H_FD
-            J[:, k] = (self.h(x, z, u_fwd, d, p) - h0) / _H_FD
+            J[:, k] = (self.hm(x, z, u_fwd, d, p, t) - h0) / _H_FD
         return J
 
     def dhdu(
@@ -1455,14 +1455,14 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
 
         Default: forward finite differences.  Override with analytic form.
         """
-        h0 = self.h(x, z, u, d, p)
+        h0 = self.hm(x, z, u, d, p, t)
         nd = d.shape[0]
         ny = h0.shape[0]
         J = np.empty((ny, nd))
         for k in range(nd):
             d_fwd = d.copy()
             d_fwd[k] += _H_FD
-            J[:, k] = (self.h(x, z, u, d_fwd, p) - h0) / _H_FD
+            J[:, k] = (self.hm(x, z, u, d_fwd, p, t) - h0) / _H_FD
         return J
 
     def dhdd(
@@ -1570,12 +1570,12 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
         ny = self.nym
         if nparams == 0:
             return np.empty((ny, 0))
-        h0 = self.h(x, z, u, d, p)
+        h0 = self.hm(x, z, u, d, p, t)
         J = np.empty((ny, nparams))
         for k in range(nparams):
             p_fwd = p.copy()
             p_fwd[k] += _H_FD
-            J[:, k] = (self.h(x, z, u, d, p_fwd) - h0) / _H_FD
+            J[:, k] = (self.hm(x, z, u, d, p_fwd, t) - h0) / _H_FD
         return J
 
     def dhdp(
