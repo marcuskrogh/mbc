@@ -184,7 +184,7 @@ class LinearDiscreteModel(ABC):
 
         Default: zeros (no direct feedthrough from inputs to controlled outputs).
         """
-        return np.zeros((self.nym, self.nu))
+        return np.zeros((self.nz, self.nu))
 
     @property
     def Fz(self) -> np.ndarray:
@@ -193,7 +193,7 @@ class LinearDiscreteModel(ABC):
 
         Default: zeros (no direct feedthrough from disturbances to controlled outputs).
         """
-        return np.zeros((self.nym, self.nd))
+        return np.zeros((self.nz, self.nd))
 
     @property
     def Dm(self) -> np.ndarray:
@@ -767,7 +767,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
 
         Default: zeros.  Subclasses may override.
         """
-        return np.zeros((self.nym, self.nu))
+        return np.zeros((self.nz, self.nu))
 
     @property
     def Fz(self) -> np.ndarray:
@@ -776,7 +776,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
 
         Default: zeros.  Subclasses may override.
         """
-        return np.zeros((self.nym, self.nd))
+        return np.zeros((self.nz, self.nd))
 
     @property
     def Dm(self) -> np.ndarray:
