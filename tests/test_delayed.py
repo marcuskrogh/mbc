@@ -154,7 +154,7 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return 0
 
     @property
-    def ny(self) -> int:
+    def n_ym(self) -> int:
         return 2
 
     @property
@@ -176,10 +176,10 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         dc_B = -c_B * D + self._k1 * c_A - self._k2 * c_B
         return np.array([dc_A, dc_B])
 
-    def g(self, x, u, d, p, t):
+    def sigma(self, x, u, d, p, t):
         return np.eye(2)
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p):
         return x.copy()  # observe both states
 
 

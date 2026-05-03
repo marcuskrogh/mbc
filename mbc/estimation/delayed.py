@@ -322,7 +322,7 @@ class DelayedObservationFilter:
         if isinstance(est, KalmanFilter):
             C_full_np = _cvx_to_np(est._model.C)   # (ny, n) from cvxopt
         elif isinstance(est, CDKalmanFilter):
-            C_full_np = _cvx_to_np(est._model.C_cvx)  # (ny, n) from cvxopt
+            C_full_np = _cvx_to_np(est._model.Cm_cvx)  # (ny, n) from cvxopt
         else:
             raise TypeError(
                 f"_correction_discrete: unexpected estimator type {type(est)!r}"

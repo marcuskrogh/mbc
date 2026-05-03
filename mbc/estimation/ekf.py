@@ -113,7 +113,7 @@ class ContinuousDiscreteEKF:
         t_j = t
         for _ in range(self._n_steps):
             F_j = model.dfdx(x, u, d, p, t_j)
-            G_j = model.g(x, u, d, p, t_j)
+            G_j = model.sigma(x, u, d, p, t_j)
             f_j = model.f(x, u, d, p, t_j)
 
             P_dot = F_j @ P + P @ F_j.T + G_j @ Q_c @ G_j.T
@@ -158,8 +158,8 @@ class ContinuousDiscreteEKF:
         nx = x.shape[0]
         R = self._model.R
 
-        H = self._model.dhdx(x, u, d, p)               # (ny, nx)
-        y_hat = self._model.h(x, u, d, p)               # (ny,)
+        H = self._model.dhmdx(x, u, d, p)               # (ny, nx)
+        y_hat = self._model.hm(x, u, d, p)              # (ny,)
 
         if mask is not None:
             active = np.where(mask)[0]

@@ -178,7 +178,7 @@ class ContinuousDiscreteUKF:
 
         # Add integrated process noise: G @ Q_c @ G^T = Q_c (when g() = I).
         # Evaluated at x_pred (end of interval).
-        G = model.g(x_pred, u, d, p, t)
+        G = model.sigma(x_pred, u, d, p, t)
         P_pred += G @ model.Q_c @ G.T * self._dt
 
         # Symmetrise to prevent numerical drift
@@ -221,7 +221,7 @@ class ContinuousDiscreteUKF:
 
         # Map sigma points through observation function
         Upsilon = np.array([
-            model.h(sigma[i], u, d, p) for i in range(2 * nx + 1)
+            model.hm(sigma[i], u, d, p) for i in range(2 * nx + 1)
         ])   # (2nx+1, ny)
 
         # Apply mask

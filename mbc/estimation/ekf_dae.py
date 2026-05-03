@@ -4,19 +4,19 @@ Continuous-Discrete EKF for Stochastic DAE Systems (Ph.D. Ch. 8).
 Extends ``ContinuousDiscreteEKF`` to handle differential-algebraic
 systems of the form:
 
-    dx = f(x, z, u, d, t) dt + g(x, z, u, d, t) dw
-    0  = l(x, z, u, d, t)
-    y_k = h(x_k, z_k, d_k) + v_k
+    dx = f(x, y, u, d, t) dt + sigma(x, y, u, d, t) dw
+    0  = h(x, y, u, d, t)
+    y_m[k] = hm(x_k, y_k, d_k) + v_k
 
 At each Euler integration sub-step the algebraic constraint is
-enforced by solving ``l(x, z, u, d, t) = 0`` for z using Newton
-iteration initialised from the previous z.
+enforced by solving ``h(x, y, u, d, t) = 0`` for y using Newton
+iteration initialised from the previous y.
 
 The linearised system matrices are:
 
-    F_x = ∂f/∂x + (∂f/∂z)(∂z/∂x)   where ∂z/∂x = -(∂l/∂z)⁻¹ (∂l/∂x)
+    F_x = ∂f/∂x + (∂f/∂y)(∂y/∂x)   where ∂y/∂x = -(∂h/∂y)⁻¹ (∂h/∂x)
 
-which are evaluated at the current (x_hat, z_hat) via finite differences
+which are evaluated at the current (x_hat, y_hat) via finite differences
 or analytic Jacobians provided by the model.
 
 Reference:  Ph.D. thesis, Ch. 8.
@@ -36,12 +36,12 @@ class ContinuousDiscreteDAEEKF:
     Parameters
     ----------
     model : ContinuousDiscreteDAEModel
-        Nonlinear SDAE system providing ``f``, ``g``, ``h``, ``l``,
-        ``Q_c``, and ``R``.
+        Nonlinear SDAE system providing ``f``, ``sigma``, ``hm``, ``h``
+        (constraint), ``Q_c``, and ``R``.
     x0 : (nx,) ndarray
         Initial differential state estimate.
-    z0 : (nz,) ndarray
-        Initial algebraic state (consistent with the constraint l = 0).
+    y0 : (ny,) ndarray
+        Initial algebraic state (consistent with the constraint h = 0).
     P0 : (nx, nx) ndarray
         Initial state covariance (over differential states only).
     dt : float
@@ -49,7 +49,7 @@ class ContinuousDiscreteDAEEKF:
     n_steps : int, optional
         Number of integration sub-steps per interval.  Default: 10.
     newton_tol : float, optional
-        Convergence tolerance for the Newton solver on ``l = 0``.
+        Convergence tolerance for the Newton solver on ``h = 0``.
         Default: 1e-10.
     newton_max_iter : int, optional
         Maximum Newton iterations per sub-step.  Default: 50.
@@ -59,7 +59,7 @@ class ContinuousDiscreteDAEEKF:
         self,
         model: ContinuousDiscreteDAEModel,
         x0: np.ndarray,
-        z0: np.ndarray,
+        y0: np.ndarray,
         P0: np.ndarray,
         dt: float,
         n_steps: int = 10,
@@ -76,8 +76,8 @@ class ContinuousDiscreteDAEEKF:
         raise NotImplementedError
 
     @property
-    def z_hat(self) -> np.ndarray:
-        """Current algebraic state estimate ẑ ∈ ℝⁿᶻ (copy)."""
+    def y_hat(self) -> np.ndarray:
+        """Current algebraic state estimate ŷ ∈ ℝⁿʸ (copy)."""
         raise NotImplementedError
 
     @property
@@ -106,7 +106,7 @@ class ContinuousDiscreteDAEEKF:
         Returns
         -------
         x_pred : (nx,) predicted differential state estimate.
-        z_pred : (nz,) consistent algebraic state at t + dt.
+        z_pred : (ny,) consistent algebraic state at t + dt.
         P_pred : (nx, nx) predicted covariance.
 
         Raises
@@ -136,7 +136,7 @@ class ContinuousDiscreteDAEEKF:
         Returns
         -------
         x_hat : (nx,) corrected differential state estimate.
-        z_hat : (nz,) consistent algebraic state.
+        y_hat : (ny,) consistent algebraic state.
         P     : (nx, nx) corrected covariance.
 
         Raises
@@ -162,7 +162,7 @@ class ContinuousDiscreteDAEEKF:
         Returns
         -------
         x_hat : (nx,) corrected differential state.
-        z_hat : (nz,) consistent algebraic state.
+        y_hat : (ny,) consistent algebraic state.
         P     : (nx, nx) corrected covariance.
 
         Raises

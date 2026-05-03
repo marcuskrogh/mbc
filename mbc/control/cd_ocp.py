@@ -90,7 +90,7 @@ class _CDModelAdapter:
     # cvxopt-format matrices
     @property
     def C(self) -> matrix:
-        return self._m.C_cvx
+        return self._m.Cm_cvx
 
     @property
     def u_bounds(self) -> Tuple[matrix, matrix]:

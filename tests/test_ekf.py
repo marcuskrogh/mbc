@@ -130,7 +130,7 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     def nd(self) -> int: return 0
 
     @property
-    def ny(self) -> int: return 1
+    def n_ym(self) -> int: return 1
 
     @property
     def nw(self) -> int: return 2
@@ -148,10 +148,10 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
         dc_B = -c_B * D + self._k1 * c_A - self._k2 * c_B
         return np.array([dc_A, dc_B])
 
-    def g(self, x, u, d, p, t):
+    def sigma(self, x, u, d, p, t):
         return np.eye(2)  # (2, nw=2)
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p):
         return np.array([x[1]])  # measure c_B
 
 
@@ -197,7 +197,7 @@ class MonodBioreactor(ContinuousDiscreteModel):
     def nd(self) -> int: return 1
 
     @property
-    def ny(self) -> int: return 1
+    def n_ym(self) -> int: return 1
 
     @property
     def nw(self) -> int: return 2
@@ -222,10 +222,10 @@ class MonodBioreactor(ContinuousDiscreteModel):
         dX = mu * X - X * FV
         return np.array([dS, dX])
 
-    def g(self, x, u, d, p, t):
+    def sigma(self, x, u, d, p, t):
         return np.eye(2)
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p):
         return np.array([x[1]])  # measure biomass X
 
 
@@ -274,19 +274,19 @@ class TestVanDeVusseModel:
         assert m.nx == 2
         assert m.nu == 1
         assert m.nd == 0
-        assert m.ny == 1
+        assert m.n_ym == 1
         assert m.nw == 2
 
     def test_f_shape(self, vdv_model):
         fx = vdv_model.f(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert fx.shape == (2,)
 
-    def test_g_shape(self, vdv_model):
-        G = vdv_model.g(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
+    def test_sigma_shape(self, vdv_model):
+        G = vdv_model.sigma(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert G.shape == (2, 2)
 
-    def test_h_shape(self, vdv_model):
-        y = vdv_model.h(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
+    def test_hm_shape(self, vdv_model):
+        y = vdv_model.hm(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
         assert y.shape == (1,)
         assert float(y[0]) == pytest.approx(_VDV_SS[1])
 
@@ -316,16 +316,16 @@ class TestVanDeVusseModel:
             J_ref[:, k] = (vdv_model.f(xh, u, _VDV_D, _VDV_P, 0.0) - f0) / h
         np.testing.assert_allclose(J, J_ref, atol=1e-4)
 
-    def test_dhdx_fd_vs_default(self, vdv_model):
-        """dhdx FD Jacobian rows and columns match expectation (C = [0,1])."""
-        H = vdv_model.dhdx(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
+    def test_dhmdx_fd_vs_default(self, vdv_model):
+        """dhmdx FD Jacobian rows and columns match expectation (C = [0,1])."""
+        H = vdv_model.dhmdx(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
         assert H.shape == (1, 2)
         np.testing.assert_allclose(H[0, 0], 0.0, atol=1e-8)
         np.testing.assert_allclose(H[0, 1], 1.0, atol=1e-4)
 
-    def test_dhdu_zero_for_linear_output(self, vdv_model):
-        """h = c_B does not depend on u, so dhdu should be ~ 0."""
-        Hu = vdv_model.dhdu(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
+    def test_dhmdu_zero(self, vdv_model):
+        """hm = c_B does not depend on u, so dhmdu should be ~ 0."""
+        Hu = vdv_model.dhmdu(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
         assert Hu.shape == (1, 1)
         np.testing.assert_allclose(Hu, 0.0, atol=1e-6)
 
@@ -338,7 +338,7 @@ class TestMonodModel:
         assert m.nx == 2
         assert m.nu == 1
         assert m.nd == 1
-        assert m.ny == 1
+        assert m.n_ym == 1
 
     def test_f_shape(self, monod_model):
         fx = monod_model.f(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE, 0.0)
@@ -368,8 +368,8 @@ class TestMonodModel:
         Jp = monod_model.dfdp(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE, 0.0)
         assert Jp.shape == (2, 2)
 
-    def test_dhdp_shape(self, monod_model):
-        Jhp = monod_model.dhdp(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE)
+    def test_dhmdp_shape(self, monod_model):
+        Jhp = monod_model.dhmdp(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE)
         assert Jhp.shape == (1, 2)
 
 
@@ -532,7 +532,7 @@ class TestVanDeVusseTracking:
         R_std = np.sqrt(model.R[0, 0])
         X_est = [ekf.x_hat.copy()]
         for k in range(self._T):
-            y_true = model.h(X_true[k + 1], U[k], D[k] if D.shape[1] > 0 else np.zeros(0), _VDV_P)
+            y_true = model.hm(X_true[k + 1], U[k], D[k] if D.shape[1] > 0 else np.zeros(0), _VDV_P)
             y_noisy = y_true + R_std * rng.standard_normal(1)
             ekf.step(y_noisy, U[k], D[k] if D.shape[1] > 0 else np.zeros(0), _VDV_P, k * self._dt)
             X_est.append(ekf.x_hat.copy())
@@ -559,7 +559,7 @@ class TestVanDeVusseTracking:
         errors_second = []
         half = self._T // 2
         for k in range(self._T):
-            y_true = model.h(X_true[k + 1], U[k], np.zeros(0), _VDV_P)
+            y_true = model.hm(X_true[k + 1], U[k], np.zeros(0), _VDV_P)
             y = y_true + R_std * rng.standard_normal(1)
             ekf.step(y, U[k], np.zeros(0), _VDV_P, k * self._dt)
             err_k = np.linalg.norm(ekf.x_hat - X_true[k + 1])
@@ -602,7 +602,7 @@ class TestMonodTracking:
         R_std = np.sqrt(model.R[0, 0])
         X_est = [ekf.x_hat.copy()]
         for k in range(self._T):
-            y_true = model.h(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
+            y_true = model.hm(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
             y = y_true + R_std * rng.standard_normal(1)
             ekf.step(y, U[k], D[k], _MONOD_P_TRUE, k * self._dt)
             X_est.append(ekf.x_hat.copy())
@@ -625,7 +625,7 @@ class TestMonodTracking:
         rng = np.random.default_rng(55)
         R_std = np.sqrt(model.R[0, 0])
         for k in range(self._T):
-            y_true = model.h(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
+            y_true = model.hm(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
             y = y_true + R_std * rng.standard_normal(1)
             ekf.step(y, U[k], D[k], _MONOD_P_TRUE, k * self._dt)
 
@@ -649,7 +649,7 @@ class TestMonodTracking:
             R_std = np.sqrt(model.R[0, 0])
             errors = []
             for k in range(self._T):
-                y_true = model.h(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
+                y_true = model.hm(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
                 y = y_true + R_std * rng.standard_normal(1)
                 ekf.step(y, U[k], D[k], p_param, k * self._dt)
                 errors.append(np.linalg.norm(ekf.x_hat - X_true[k + 1]))

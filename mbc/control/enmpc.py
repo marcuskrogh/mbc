@@ -81,7 +81,7 @@ class EconomicOptimalControlProblem:
     state_weight : float, optional
         Penalty weight for soft state constraint violations.  Default: 1.0.
     output_lb : (n_out,) array-like or None, optional
-        Soft lower bounds on the controlled output ``model.output(x, u, d, p)``
+        Soft lower bounds on the controlled output ``model.g(x, u, d, p)``
         at each prediction step.
     output_ub : (n_out,) array-like or None, optional
         Soft upper bounds on the controlled output at each prediction step.
@@ -205,7 +205,7 @@ class EconomicOptimalControlProblem:
             penalty += 0.5 * self._state_weight * float(np.dot(viol, viol))
         # ── Output soft constraints ───────────────────────────────────────
         if self._output_lb is not None or self._output_ub is not None:
-            z = self._model.output(x, u, d, p)
+            z = self._model.g(x, u, d, p)
             if self._output_lb is not None:
                 viol = np.maximum(0.0, self._output_lb - z)
                 penalty += 0.5 * self._output_weight * float(np.dot(viol, viol))
@@ -420,6 +420,4 @@ class CDNMPCController:
         return u0
 
 
-#: Backward-compatible alias.  Use :class:`CDNMPCController` for new code.
-EconomicNMPCController = CDNMPCController
 

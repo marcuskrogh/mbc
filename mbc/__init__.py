@@ -96,7 +96,6 @@ from .control import (
     CDMPCController,
     EconomicOptimalControlProblem,
     CDNMPCController,
-    EconomicNMPCController,
 )
 from .identification.estimator import ParameterEstimator, EstimationResult
 from .identification.likelihood import (
@@ -128,7 +127,6 @@ __all__ = [
     "CDMPCController",
     "EconomicOptimalControlProblem",
     "CDNMPCController",
-    "EconomicNMPCController",
     # Identification
     "ParameterEstimator",
     "EstimationResult",

@@ -159,7 +159,7 @@ class ContinuousDiscreteParticleFilter:
 
         # Diffusion: GQ = G @ chol(Q_c) so that GQ @ GQ^T = G @ Q_c @ G^T
         x_mean0 = self._X.mean(axis=1)
-        G = model.g(x_mean0, u, d, p, t)
+        G = model.sigma(x_mean0, u, d, p, t)
         L_Q = np.linalg.cholesky(Q_c)
         GQ = G @ L_Q
 
@@ -206,7 +206,7 @@ class ContinuousDiscreteParticleFilter:
 
         # Predicted observations for each particle
         HX = np.column_stack([
-            model.h(self._X[:, i], u, d, p) for i in range(N)
+            model.hm(self._X[:, i], u, d, p) for i in range(N)
         ])   # (ny, N)
 
         # Apply mask

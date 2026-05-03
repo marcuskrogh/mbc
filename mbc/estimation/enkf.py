@@ -125,7 +125,7 @@ class ContinuousDiscreteEnKF:
 
         # Diffusion matrix: G @ G^T = Q_c  (Cholesky factor of Q_c)
         x_mean0 = self._X.mean(axis=1)
-        G = model.g(x_mean0, u, d, p, t)
+        G = model.sigma(x_mean0, u, d, p, t)
         # G may be identity (state-independent); compose with L_Q = chol(Q_c)
         # so that the per-step noise covariance is G @ Q_c @ G^T * h = Q_c * h.
         # Pre-compute once per step since G is state-independent here.
@@ -176,7 +176,7 @@ class ContinuousDiscreteEnKF:
 
         # Map ensemble through observation function — shape (ny, N)
         HX = np.column_stack([
-            model.h(self._X[:, i], u, d, p) for i in range(N)
+            model.hm(self._X[:, i], u, d, p) for i in range(N)
         ])
 
         # Apply mask

@@ -115,8 +115,8 @@ class SDESimulator:
             z = self._rng.standard_normal(nw)
             dW = L @ z * sqrt_h
 
-            g_val = self._model.g(x_cur, u, d, p, t_cur)  # (nx, nw)
-            noise = g_val @ dW                              # (nx,)
+            sigma_val = self._model.sigma(x_cur, u, d, p, t_cur)  # (nx, nw)
+            noise = sigma_val @ dW                                 # (nx,)
 
             if self._scheme == "EE":
                 f_val = self._model.f(x_cur, u, d, p, t_cur)

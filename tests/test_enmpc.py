@@ -10,15 +10,13 @@ as the test model.  The economic stage cost is  l_e(x, u, d) = x^2 + 0.1*u^2
 
 Test coverage
 -------------
-- ``output()`` default (falls back to ``h``) and custom override.
-- ``n_out`` property.
+- ``g()`` default (falls back to ``hm``) and custom override, and ``nz`` property.
 - Soft state and output constraint penalties: zero when feasible, positive
   when violated, and quadratically scaling with violation magnitude.
 - ``EconomicOptimalControlProblem.solve`` returns a finite cost and a
   (N, nu) array.
 - ``CDNMPCController.step`` returns a scalar input.
-- Backward-compat: ``EconomicNMPCController`` is the same class as
-  ``CDNMPCController``.
+
 """
 
 from __future__ import annotations
@@ -28,7 +26,7 @@ import pytest
 
 import mbc
 from mbc.models import ContinuousDiscreteModel
-from mbc.control import EconomicOptimalControlProblem, CDNMPCController, EconomicNMPCController
+from mbc.control import EconomicOptimalControlProblem, CDNMPCController
 
 
 # ── Minimal CD model ──────────────────────────────────────────────────────────
@@ -52,7 +50,7 @@ class ScalarModel(ContinuousDiscreteModel):
         return 0
 
     @property
-    def ny(self) -> int:
+    def n_ym(self) -> int:
         return 1
 
     @property
@@ -60,7 +58,7 @@ class ScalarModel(ContinuousDiscreteModel):
         return 1
 
     @property
-    def n_out(self) -> int:
+    def nz(self) -> int:
         return 1
 
     @property
@@ -74,13 +72,13 @@ class ScalarModel(ContinuousDiscreteModel):
     def f(self, x, u, d, p, t):
         return np.array([-x[0] + u[0]])
 
-    def g(self, x, u, d, p, t):
+    def sigma(self, x, u, d, p, t):
         return np.array([[0.1]])
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p):
         return x.copy()
 
-    def output(self, x, u, d, p):
+    def g(self, x, u, d, p):
         """Controlled output: sum of state and input."""
         return np.array([x[0] + u[0]])
 
@@ -103,7 +101,7 @@ class ScalarModelDefaultOutput(ContinuousDiscreteModel):
         return 0
 
     @property
-    def ny(self) -> int:
+    def n_ym(self) -> int:
         return 1
 
     @property
@@ -121,10 +119,10 @@ class ScalarModelDefaultOutput(ContinuousDiscreteModel):
     def f(self, x, u, d, p, t):
         return np.array([-x[0] + u[0]])
 
-    def g(self, x, u, d, p, t):
+    def sigma(self, x, u, d, p, t):
         return np.array([[0.1]])
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p):
         return x.copy()
 
 
@@ -154,31 +152,31 @@ def model_default():
 # ── output() and n_out ────────────────────────────────────────────────────────
 
 
-def test_output_custom_override(model):
+def test_g_custom_override(model):
     x = np.array([1.0])
     u = np.array([0.5])
     d = np.zeros(0)
     p = np.zeros(0)
-    z = model.output(x, u, d, p)
+    z = model.g(x, u, d, p)
     assert z.shape == (1,)
     np.testing.assert_allclose(z, np.array([1.5]))
 
 
-def test_output_default_falls_back_to_h(model_default):
+def test_g_default_falls_back_to_hm(model_default):
     x = np.array([2.0])
     u = np.array([1.0])
     d = np.zeros(0)
     p = np.zeros(0)
-    # default output should equal h(x) = x
-    np.testing.assert_array_equal(model_default.output(x, u, d, p), model_default.h(x, u, d, p))
+    # default g should equal hm(x) = x
+    np.testing.assert_array_equal(model_default.g(x, u, d, p), model_default.hm(x, u, d, p))
 
 
-def test_n_out_custom(model):
-    assert model.n_out == 1
+def test_nz_custom(model):
+    assert model.nz == 1
 
 
-def test_n_out_default(model_default):
-    assert model_default.n_out == model_default.ny
+def test_nz_default(model_default):
+    assert model_default.nz == model_default.n_ym
 
 
 # ── Soft constraint penalties ─────────────────────────────────────────────────
@@ -343,14 +341,8 @@ def test_cdnmpc_multiple_steps(model):
         assert np.isfinite(u[0])
 
 
-# ── Backward-compat alias ─────────────────────────────────────────────────────
-
-
-def test_economic_nmpc_controller_is_alias():
-    assert EconomicNMPCController is CDNMPCController
+# ── Top-level exports ─────────────────────────────────────────────────────────
 
 
 def test_top_level_exports():
     assert hasattr(mbc, "CDNMPCController")
-    assert hasattr(mbc, "EconomicNMPCController")
-    assert mbc.CDNMPCController is mbc.EconomicNMPCController
