@@ -149,6 +149,7 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
         return np.array([dc_A, dc_B])
 
     def sigma(self, x, u, d, p, t):
+        # sigma sigma^T = Q_c = diag([0.01, 0.005]); so sigma = diag([sqrt(0.01), sqrt(0.005)])
         return np.diag([0.1, np.sqrt(0.005)])
 
     def hm(self, x, u, d, p, t):
@@ -223,6 +224,7 @@ class MonodBioreactor(ContinuousDiscreteModel):
         return np.array([dS, dX])
 
     def sigma(self, x, u, d, p, t):
+        # sigma sigma^T = Q_c = diag([1e-4, 1e-4]); so sigma = 0.01 * I
         return 0.01 * np.eye(2)
 
     def hm(self, x, u, d, p, t):
