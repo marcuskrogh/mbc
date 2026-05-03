@@ -1,5 +1,5 @@
 """
-Economic Nonlinear Optimal Control Problem and MPC Controller (Ph.D. Ch. 9).
+Economic Nonlinear Optimal Control Problem and CD-NMPC Controller (Ph.D. Ch. 9).
 
 Unlike tracking MPC (which minimises a quadratic distance to a setpoint),
 the economic optimal control problem minimises an economic stage cost
@@ -10,22 +10,33 @@ cost, yield, or profit.
     Solves the finite-horizon NLP at each step:
 
         min_{u_0, …, u_{N-1}}   Σ_{k=0}^{N-1} l_e(x_k, u_k, d_k) + V_f(x_N)
+                               + soft constraint penalties on x and output(x, u, d)
 
         subject to:
             x_{k+1} = f̄(x_k, u_k, d_k)    (discretised model dynamics)
-            u_k ∈ U,  x_k ∈ X              (input / state constraints)
+            u_k ∈ U                         (hard input constraints via scipy)
 
     where ``f̄`` is obtained by explicit Euler integration of the mean
     dynamics over one sampling interval (no noise).  The NLP is solved by
     ``scipy.optimize.minimize`` with the SLSQP method (default).
 
-``EconomicNMPCController``
-    Closed-loop receding-horizon controller.  Composes a state estimator
-    with an ``EconomicOptimalControlProblem``:
+    Soft constraints on states and controlled outputs are penalised via a
+    quadratic term added to the objective:
+
+        penalty = (1/2) w ‖max(0, lb − z)‖² + (1/2) w ‖max(0, z − ub)‖²
+
+``CDNMPCController``
+    Closed-loop receding-horizon controller for continuous-discrete (CD)
+    models.  Composes a state estimator with any OCP exposing a
+    ``step(x0, d_trajectory, u_prev, p, t0)`` interface:
 
       1. **Estimate**   x̂[k] ← estimator.step(y[k], u[k−1], d[k], p, t_k)
       2. **Optimise**   U*   ← ocp.solve(x̂[k], d_trajectory, u_seq_prev, p)
       3. **Apply**      u[k] = U*[0]
+
+    This controller is general: it works with both economic OCPs
+    (``EconomicOptimalControlProblem``) and any tracking OCP that follows
+    the same numpy-based interface.
 
 Reference:  Ph.D. thesis, Ch. 9.
 """
@@ -59,9 +70,23 @@ class EconomicOptimalControlProblem:
     terminal_cost : Callable[[np.ndarray], float] or None, optional
         Terminal cost ``V_f(x_N)``.  ``None`` means no terminal cost.
     constraints : list of dict or None, optional
-        Additional constraints in ``scipy.optimize.minimize`` format
-        (``{"type": "ineq"/"eq", "fun": ...}``).  Input and state box
-        constraints should be supplied here.
+        Hard input constraints in ``scipy.optimize.minimize`` format
+        (``{"type": "ineq"/"eq", "fun": ...}``).  These are enforced as
+        hard constraints by the NLP solver.
+    state_lb : (nx,) array-like or None, optional
+        Soft lower bounds on the state vector at each prediction step.
+        Violations are penalised quadratically with weight ``state_weight``.
+    state_ub : (nx,) array-like or None, optional
+        Soft upper bounds on the state vector at each prediction step.
+    state_weight : float, optional
+        Penalty weight for soft state constraint violations.  Default: 1.0.
+    output_lb : (n_out,) array-like or None, optional
+        Soft lower bounds on the controlled output ``model.output(x, u, d, p)``
+        at each prediction step.
+    output_ub : (n_out,) array-like or None, optional
+        Soft upper bounds on the controlled output at each prediction step.
+    output_weight : float, optional
+        Penalty weight for soft output constraint violations.  Default: 1.0.
     n_steps : int, optional
         Explicit-Euler integration sub-steps per sampling interval.
         Default: 10.
@@ -78,6 +103,12 @@ class EconomicOptimalControlProblem:
         stage_cost: Callable[[np.ndarray, np.ndarray, np.ndarray], float],
         terminal_cost: Callable[[np.ndarray], float] | None = None,
         constraints: list | None = None,
+        state_lb: np.ndarray | None = None,
+        state_ub: np.ndarray | None = None,
+        state_weight: float = 1.0,
+        output_lb: np.ndarray | None = None,
+        output_ub: np.ndarray | None = None,
+        output_weight: float = 1.0,
         n_steps: int = 10,
         solver: str = "SLSQP",
         solver_options: dict | None = None,
@@ -87,6 +118,12 @@ class EconomicOptimalControlProblem:
         self._stage_cost = stage_cost
         self._terminal_cost = terminal_cost
         self._constraints = constraints if constraints is not None else []
+        self._state_lb = np.asarray(state_lb, dtype=float) if state_lb is not None else None
+        self._state_ub = np.asarray(state_ub, dtype=float) if state_ub is not None else None
+        self._state_weight = float(state_weight)
+        self._output_lb = np.asarray(output_lb, dtype=float) if output_lb is not None else None
+        self._output_ub = np.asarray(output_ub, dtype=float) if output_ub is not None else None
+        self._output_weight = float(output_weight)
         self._n_steps = n_steps
         self._solver = solver
         self._solver_options = solver_options
@@ -132,6 +169,51 @@ class EconomicOptimalControlProblem:
             t_cur += h
         return x_cur
 
+    def _soft_penalty(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+    ) -> float:
+        """
+        Compute the soft-constraint penalty for state and output violations.
+
+        Violations of the form ``max(0, lb − z)`` and ``max(0, z − ub)``
+        are penalised quadratically:
+
+            penalty = (1/2) w ‖max(0, lb − z)‖² + (1/2) w ‖max(0, z − ub)‖²
+
+        Parameters
+        ----------
+        x : (nx,) current state.
+        u : (nu,) current input.
+        d : (nd,) current disturbance.
+        p : (nparams,) parameter vector.
+
+        Returns
+        -------
+        float — total soft penalty at this prediction step.
+        """
+        penalty = 0.0
+        # ── State soft constraints ────────────────────────────────────────
+        if self._state_lb is not None:
+            viol = np.maximum(0.0, self._state_lb - x)
+            penalty += 0.5 * self._state_weight * float(np.dot(viol, viol))
+        if self._state_ub is not None:
+            viol = np.maximum(0.0, x - self._state_ub)
+            penalty += 0.5 * self._state_weight * float(np.dot(viol, viol))
+        # ── Output soft constraints ───────────────────────────────────────
+        if self._output_lb is not None or self._output_ub is not None:
+            z = self._model.output(x, u, d, p)
+            if self._output_lb is not None:
+                viol = np.maximum(0.0, self._output_lb - z)
+                penalty += 0.5 * self._output_weight * float(np.dot(viol, viol))
+            if self._output_ub is not None:
+                viol = np.maximum(0.0, z - self._output_ub)
+                penalty += 0.5 * self._output_weight * float(np.dot(viol, viol))
+        return penalty
+
     def solve(
         self,
         x0: np.ndarray,
@@ -163,7 +245,7 @@ class EconomicOptimalControlProblem:
         u_opt : (N, nu) ndarray
             Optimal input sequence.
         cost : float
-            Optimal economic cost.
+            Optimal economic cost (including soft-constraint penalties).
         """
         from scipy.optimize import minimize
 
@@ -188,6 +270,7 @@ class EconomicOptimalControlProblem:
             total = 0.0
             for k in range(N):
                 total += float(self._stage_cost(x, U[k], d_trajectory[k]))
+                total += self._soft_penalty(x, U[k], d_trajectory[k], p_)
                 x = self._predict_mean(x, U[k], d_trajectory[k], p_, t)
                 t += self._dt
             if self._terminal_cost is not None:
@@ -242,18 +325,23 @@ class EconomicOptimalControlProblem:
         return u_opt[0]
 
 
-class EconomicNMPCController:
+class CDNMPCController:
     """
-    Economic Nonlinear MPC controller (Ph.D. Ch. 9).
+    Continuous-Discrete Nonlinear MPC Controller (Ph.D. Ch. 9).
 
-    Composes a state estimator and an :class:`EconomicOptimalControlProblem`
-    into a closed-loop receding-horizon controller.
+    A general receding-horizon controller for continuous-discrete (CD) models.
+    Composes a state estimator with any optimal control problem that exposes
+    a ``step(x0, d_trajectory, u_prev, p, t0) → u0`` interface.
 
     At each measurement time t_k the following steps are executed:
 
       1. **Estimate**  x̂[k] ← ``estimator.step(y[k], u[k−1], d[k], p, t_k)``
-      2. **Optimise**  U*   ← ``ocp.solve(x̂[k], d_trajectory, u_seq_prev, p, t_k)``
-      3. **Apply**     u[k] = U*[0]   (receding horizon)
+      2. **Optimise**  u[k]  ← ``ocp.step(x̂[k], d_trajectory, u_seq_prev, p, t_k)``
+      3. **Apply**     u[k]   (receding horizon)
+
+    This controller is agnostic to the type of OCP: it works equally with
+    economic OCPs (:class:`EconomicOptimalControlProblem`) and any tracking
+    OCP that follows the same numpy-based calling convention.
 
     The estimator is expected to expose a ``step(y, u, d, p, t)`` method that
     performs a combined predict-and-update and returns ``(x_hat, P)``.
@@ -267,23 +355,22 @@ class EconomicNMPCController:
     estimator : object with ``step(y, u, d, p, t) → (x_hat, P)``
         State estimator.  Typically a
         :class:`~mbc.estimation.ContinuousDiscreteEKF`.
-    ocp : EconomicOptimalControlProblem
-        Economic optimal control problem (NLP solver).
+    ocp : object with ``step(x0, d_trajectory, u_prev, p, t0) → u0`` and ``N``
+        Optimal control problem.  Typically an
+        :class:`EconomicOptimalControlProblem`.
     """
 
     def __init__(
         self,
         model: ContinuousDiscreteModel,
         estimator,
-        ocp: EconomicOptimalControlProblem,
+        ocp,
     ) -> None:
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
-        nu = model.nu
-        N = ocp.N
         self._u_seq_prev: np.ndarray | None = None
-        self._u_prev: np.ndarray = np.zeros(nu)
+        self._u_prev: np.ndarray = np.zeros(model.nu)
 
     def step(
         self,
@@ -293,7 +380,7 @@ class EconomicNMPCController:
         t: float = 0.0,
     ) -> np.ndarray:
         """
-        Execute one Economic NMPC step.
+        Execute one CD-NMPC step.
 
         Parameters
         ----------
@@ -331,3 +418,8 @@ class EconomicNMPCController:
 
         self._u_prev = u0
         return u0
+
+
+#: Backward-compatible alias.  Use :class:`CDNMPCController` for new code.
+EconomicNMPCController = CDNMPCController
+

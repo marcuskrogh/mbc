@@ -13,6 +13,12 @@ model-based control, estimation, identification, and simulation.
       * ``ContinuousDiscreteModel``          – nonlinear SDE (Ph.D. Ch. 5).
       * ``ContinuousDiscreteDAEModel``       – nonlinear SDAE (Ph.D. Ch. 6).
 
+      All ``ContinuousDiscreteModel`` subclasses expose two output functions:
+
+      * ``h(x, u, d, p)``      – sensor measurements (used by state estimators).
+      * ``output(x, u, d, p)`` – controlled outputs (used by OCPs for cost and
+                                  output constraints).  Defaults to ``h``.
+
   mbc.estimation
       State-estimation algorithms:
 
@@ -35,7 +41,11 @@ model-based control, estimation, identification, and simulation.
       * ``CDOptimalControlProblem`` – receding-horizon QP for linear CD systems.
       * ``CDMPCController``         – CDKalmanFilter + CDOptimalControlProblem.
       * ``EconomicOptimalControlProblem`` – economic nonlinear OCP (Ph.D. Ch. 9).
-      * ``EconomicNMPCController``      – estimator + EconomicOptimalControlProblem.
+        Supports soft state and output constraints via quadratic penalties.
+      * ``CDNMPCController``        – general CD-NMPC: any CD estimator +
+                                      any numpy-based OCP (including economic
+                                      and tracking formulations).
+      * ``EconomicNMPCController``  – alias for ``CDNMPCController``.
 
   mbc.identification
       System-identification / parameter-estimation utilities:
@@ -85,6 +95,7 @@ from .control import (
     CDOptimalControlProblem,
     CDMPCController,
     EconomicOptimalControlProblem,
+    CDNMPCController,
     EconomicNMPCController,
 )
 from .identification.estimator import ParameterEstimator, EstimationResult
@@ -116,6 +127,7 @@ __all__ = [
     "CDOptimalControlProblem",
     "CDMPCController",
     "EconomicOptimalControlProblem",
+    "CDNMPCController",
     "EconomicNMPCController",
     # Identification
     "ParameterEstimator",

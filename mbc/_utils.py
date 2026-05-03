@@ -19,6 +19,10 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
+# cvxopt is used by the linear model/estimator stack:
+# _eye, _zeros, _symmetrise produce cvxopt matrices consumed by KalmanFilter,
+# CDKalmanFilter, OptimalControlProblem, and CDOptimalControlProblem.
+# The nonlinear (CD-SDE/SDAE) pipeline is numpy-only.
 from cvxopt import matrix
 
 

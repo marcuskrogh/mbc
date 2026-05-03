@@ -332,7 +332,9 @@ class ContinuousDiscreteModel(ABC):
         p: np.ndarray,
     ) -> np.ndarray:
         """
-        Observation function h(x_k, u_k, d_k, p).
+        Measurement function h(x_k, u_k, d_k, p).
+
+        Maps the state to the sensor measurements used by state estimators.
 
         Parameters
         ----------
@@ -343,8 +345,52 @@ class ContinuousDiscreteModel(ABC):
 
         Returns
         -------
-        (ny,) predicted observation.
+        (ny,) predicted measurement.
         """
+
+    def output(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Output function output(x_k, u_k, d_k, p).
+
+        Maps the state to the controlled output variables used by optimal
+        control problems for objectives and output constraints.  The output
+        variables need not coincide with the sensor measurements returned by
+        ``h``; for example, one may measure temperature but optimise over
+        energy cost (a nonlinear function of state and input).
+
+        The default implementation returns ``h(x, u, d, p)`` so that existing
+        subclasses work without modification.  Override to decouple outputs
+        from measurements.
+
+        Parameters
+        ----------
+        x : (nx,) state vector.
+        u : (nu,) input vector.
+        d : (nd,) disturbance vector.
+        p : (nparams,) parameter vector.
+
+        Returns
+        -------
+        (n_out,) controlled output vector.
+        """
+        return self.h(x, u, d, p)
+
+    @property
+    def n_out(self) -> int:
+        """
+        Controlled output dimension.
+
+        Returns the number of outputs produced by ``output()``.  Defaults to
+        ``ny`` (same as the measurement dimension).  Override when the output
+        dimension differs from the measurement dimension.
+        """
+        return self.ny
 
     @property
     @abstractmethod
@@ -568,6 +614,52 @@ class ContinuousDiscreteModel(ABC):
             p_fwd = p.copy()
             p_fwd[k] += _H_FD
             J[:, k] = (self.h(x, u, d, p_fwd) - h0) / _H_FD
+        return J
+
+    # ── Output Jacobians (default: forward finite differences) ──────────
+
+    def doutputdx(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Jacobian ∂output/∂x evaluated at (x, u, d, p)  →  (n_out, nx) ndarray.
+
+        Default: forward finite differences.  Subclasses may override.
+        """
+        z0 = self.output(x, u, d, p)
+        nx = x.shape[0]
+        n_out = z0.shape[0]
+        J = np.empty((n_out, nx))
+        for k in range(nx):
+            x_fwd = x.copy()
+            x_fwd[k] += _H_FD
+            J[:, k] = (self.output(x_fwd, u, d, p) - z0) / _H_FD
+        return J
+
+    def doutputdu(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Jacobian ∂output/∂u evaluated at (x, u, d, p)  →  (n_out, nu) ndarray.
+
+        Default: forward finite differences.  Subclasses may override.
+        """
+        z0 = self.output(x, u, d, p)
+        nu = u.shape[0]
+        n_out = z0.shape[0]
+        J = np.empty((n_out, nu))
+        for k in range(nu):
+            u_fwd = u.copy()
+            u_fwd[k] += _H_FD
+            J[:, k] = (self.output(x, u_fwd, d, p) - z0) / _H_FD
         return J
 
     # ── Parameters ────────────────────────────────────────────────────────
@@ -855,6 +947,26 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
     ) -> np.ndarray:
         """Analytic Jacobian ∂h/∂p = 0  (h = Cx does not depend on p)."""
         return np.zeros((self.ny, p.shape[0]))
+
+    def doutputdx(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+    ) -> np.ndarray:
+        """Analytic Jacobian ∂output/∂x = C  (output = Cx for linear model)."""
+        return self.C.copy()
+
+    def doutputdu(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+    ) -> np.ndarray:
+        """Analytic Jacobian ∂output/∂u = 0  (output = Cx does not depend on u)."""
+        return np.zeros((self.ny, self.nu))
 
     # ── Backward-compatible dimension aliases ─────────────────────────────
 
