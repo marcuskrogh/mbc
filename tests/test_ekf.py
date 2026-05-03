@@ -130,7 +130,7 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     def nd(self) -> int: return 0
 
     @property
-    def n_ym(self) -> int: return 1
+    def nym(self) -> int: return 1
 
     @property
     def nw(self) -> int: return 2
@@ -197,7 +197,7 @@ class MonodBioreactor(ContinuousDiscreteModel):
     def nd(self) -> int: return 1
 
     @property
-    def n_ym(self) -> int: return 1
+    def nym(self) -> int: return 1
 
     @property
     def nw(self) -> int: return 2
@@ -274,7 +274,7 @@ class TestVanDeVusseModel:
         assert m.nx == 2
         assert m.nu == 1
         assert m.nd == 0
-        assert m.n_ym == 1
+        assert m.nym == 1
         assert m.nw == 2
 
     def test_f_shape(self, vdv_model):
@@ -338,7 +338,7 @@ class TestMonodModel:
         assert m.nx == 2
         assert m.nu == 1
         assert m.nd == 1
-        assert m.n_ym == 1
+        assert m.nym == 1
 
     def test_f_shape(self, monod_model):
         fx = monod_model.f(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE, 0.0)

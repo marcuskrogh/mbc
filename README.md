@@ -268,7 +268,7 @@ x_hat, P = filt.predict(u, d, t)
 x_hat, P = filt.update(y, d, mask=None, delay=None)
 ```
 
-**`delay` argument**: a `(n_ym,)` integer `ndarray` where `delay[i]` is the number
+**`delay` argument**: a `(nym,)` integer `ndarray` where `delay[i]` is the number
 of sampling steps by which output channel `i` arrived late.  `delay[i] = 0`
 means a current-step observation (no delay).  `None` is equivalent to all zeros
 — the filter behaves identically to the unwrapped estimator.
@@ -523,13 +523,13 @@ All arrays use `numpy.ndarray`.  This ABC is accepted by all nonlinear estimator
 |--------|-----------------|-------------|
 | `f` | `(x, u, d, p, t) → (nx,) ndarray` | Drift function |
 | `sigma` | `(x, u, d, p, t) → (nx, nw) ndarray` | Diffusion matrix |
-| `hm` | `(x, u, d, p) → (n_ym,) ndarray` | Measurement function |
+| `hm` | `(x, u, d, p) → (nym,) ndarray` | Measurement function |
 | `Q_c` | `(nw, nw) ndarray` | Continuous process-noise covariance |
-| `R` | `(n_ym, n_ym) ndarray` | Measurement noise covariance |
+| `R` | `(nym, nym) ndarray` | Measurement noise covariance |
 | `nx` | `int` | State dimension |
 | `nu` | `int` | Input dimension |
 | `nd` | `int` | Disturbance dimension |
-| `n_ym` | `int` | Measurement output dimension |
+| `nym` | `int` | Measurement output dimension |
 | `nw` | `int` | Process-noise / diffusion dimension (columns of `sigma`'s output) |
 
 #### `LinearContinuousDiscreteModel` — `mbc.models`
@@ -557,15 +557,15 @@ sampling interval `[t_k, t_{k+1}]`.
 | `nx` | `int` | State dimension |
 | `nu` | `int` | Input dimension |
 | `nd` | `int` | Disturbance dimension |
-| `n_ym` | `int` | Measurement output dimension (derived: `Cm.shape[0]`) |
+| `nym` | `int` | Measurement output dimension (derived: `Cm.shape[0]`) |
 | `nw` | `int` | Process-noise dimension (derived: `G.shape[1]`) |
 | `A_c` | `(nx, nx)` | Continuous state matrix |
 | `B_c` | `(nx, nu)` | Continuous input matrix |
 | `E_c` | `(nx, nd)` | Continuous disturbance matrix |
 | `G` | `(nx, nw)` | Noise input matrix |
 | `Q_c` | `(nw, nw)` | Continuous process-noise covariance |
-| `Cm` | `(n_ym, nx)` | Measurement output matrix (time-invariant) |
-| `R` | `(n_ym, n_ym)` | Measurement noise covariance |
+| `Cm` | `(nym, nx)` | Measurement output matrix (time-invariant) |
+| `R` | `(nym, nym)` | Measurement noise covariance |
 | `dt` | `float` | Sampling interval |
 
 **Abstract interface** — subclasses must implement:
@@ -574,8 +574,8 @@ sampling interval `[t_k, t_{k+1}]`.
 |--------|------|-------------|
 | `nx`, `nu`, `nd` | `int` | Dimensions (inherited abstracts) |
 | `A_c`, `B_c`, `E_c`, `G`, `Q_c` | `ndarray` | Continuous-time matrices |
-| `Cm` | `(n_ym, nx) ndarray` | Measurement output matrix |
-| `R` | `(n_ym, n_ym) ndarray` | Measurement noise covariance |
+| `Cm` | `(nym, nx) ndarray` | Measurement output matrix |
+| `R` | `(nym, nym) ndarray` | Measurement noise covariance |
 | `dt` | `float` | Sampling interval |
 | `x` | `list[float]` | Current state (read/write) |
 | `x_ref` | `(nx,) ndarray` | State reference / setpoint |
@@ -588,7 +588,7 @@ sampling interval `[t_k, t_{k+1}]`.
 | `f(x, u, d, p, t)` | `A_c @ x + B_c @ u + E_c @ d` |
 | `sigma(x, u, d, p, t)` | `G` (constant; arguments ignored) |
 | `hm(x, u, d, p)` | `Cm @ x` (u, d, p ignored for LTI) |
-| `n_ym` | `Cm.shape[0]` |
+| `nym` | `Cm.shape[0]` |
 | `nw` | `G.shape[1]` |
 
 **Concrete utility methods** (provided by the ABC):
@@ -667,9 +667,9 @@ class CSTRLinear(LinearContinuousDiscreteModel):
     @property
     def Q_c(self): return np.diag([1e-4, 1e-4])
     @property
-    def Cm(self):  return np.array([[1.0, 0.0]])       # (n_ym=1, nx=2)
+    def Cm(self):  return np.array([[1.0, 0.0]])       # (nym=1, nx=2)
     @property
-    def R(self):   return np.array([[0.05]])            # (n_ym=1, n_ym=1)
+    def R(self):   return np.array([[0.05]])            # (nym=1, nym=1)
     @property
     def dt(self):  return 60.0                         # 1-minute sampling
     @property
@@ -681,9 +681,9 @@ class CSTRLinear(LinearContinuousDiscreteModel):
     @property
     def u_bounds(self): return np.array([0.0]), np.array([2.0])
 
-# n_ym and nw are derived automatically
+# nym and nw are derived automatically
 m = CSTRLinear()
-print(m.n_ym)  # 1  (= Cm.shape[0])
+print(m.nym)  # 1  (= Cm.shape[0])
 print(m.nw)   # 2  (= G.shape[1])
 print(isinstance(m, LinearContinuousDiscreteModel))  # True
 ```
@@ -898,7 +898,7 @@ def fd_jacobian_f(model, x, u, d, t, h_fd=1e-5):
         J[:, k] = (model.f(x_fwd, u, d, t) - f0) / h_fd
     return J
 
-# Observation Jacobian  H = ∂hm/∂x  (n_ym × nx)
+# Observation Jacobian  H = ∂hm/∂x  (nym × nx)
 def fd_jacobian_hm(model, x, u, d, p, h_fd=1e-5):
     hm0 = model.hm(x, u, d, p)
     J = np.zeros((len(hm0), len(x)))
@@ -911,7 +911,7 @@ def fd_jacobian_hm(model, x, u, d, p, h_fd=1e-5):
 For `ContinuousDiscreteDAEModel`, additional Jacobians are needed:
 
 ```python
-# ∂f/∂y  (nx × ny),  ∂h/∂x  (ny × nx),  ∂h/∂y  (ny × ny),  ∂hm/∂y  (n_ym × ny)
+# ∂f/∂y  (nx × ny),  ∂h/∂x  (ny × nx),  ∂h/∂y  (ny × ny),  ∂hm/∂y  (nym × ny)
 # Each follows the same forward-FD pattern, perturbing y or x respectively.
 ```
 
@@ -939,7 +939,7 @@ Kalman-gain computations.  For the EnKF and PF, only the active rows of
 Measurements with a per-channel reporting delay (e.g. laboratory assays) are
 handled by `DelayedObservationFilter` — see §1.2 for the full class description.
 The wrapper works with all CD estimators listed below by accepting the same
-`step`/`update`/`predict` interface and adding a `delay=(n_ym,) int ndarray`
+`step`/`update`/`predict` interface and adding a `delay=(nym,) int ndarray`
 argument.  The buffer, retrospective correction, and replay logic are fully
 encapsulated inside the wrapper; the wrapped CD estimator is called only through
 its standard `predict` and `update` methods.
@@ -1059,7 +1059,7 @@ by forward finite differences.
 **Filtering** — standard EKF linearised measurement update:
 
 ```
-H   = ∂hm/∂x evaluated at (x̂⁻, u, d, p)           (observation Jacobian, n_ym × nx)
+H   = ∂hm/∂x evaluated at (x̂⁻, u, d, p)           (observation Jacobian, nym × nx)
 ŷ⁻  = hm(x̂⁻, u, d, p)                              (predicted observation)
 e   = y − ŷ⁻                                     (innovation)
 R_e = H P⁻ Hᵀ + R                               (innovation covariance)
@@ -1409,7 +1409,7 @@ supplied analytically):
 | `∂h/∂x` | `(ny, nx)` | perturb `x` in `h(x, y, u, d, p, t)` |
 | `∂h/∂y` | `(ny, ny)` | perturb `y` in `h(x, y, u, d, p, t)` |
 
-If `hm` depends on `y`, also compute `∂hm/∂y` (shape `n_ym × ny`) and use the
+If `hm` depends on `y`, also compute `∂hm/∂y` (shape `nym × ny`) and use the
 extended observation Jacobian `H_eff = ∂hm/∂x − (∂hm/∂y)(∂h/∂y)⁻¹ (∂h/∂x)`.
 
 `(∂h/∂y)⁻¹` is solved via `np.linalg.solve(J_hy, rhs)` rather than explicit

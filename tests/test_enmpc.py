@@ -50,7 +50,7 @@ class ScalarModel(ContinuousDiscreteModel):
         return 0
 
     @property
-    def n_ym(self) -> int:
+    def nym(self) -> int:
         return 1
 
     @property
@@ -101,7 +101,7 @@ class ScalarModelDefaultOutput(ContinuousDiscreteModel):
         return 0
 
     @property
-    def n_ym(self) -> int:
+    def nym(self) -> int:
         return 1
 
     @property
@@ -176,7 +176,7 @@ def test_nz_custom(model):
 
 
 def test_nz_default(model_default):
-    assert model_default.nz == model_default.n_ym
+    assert model_default.nz == model_default.nym
 
 
 # ── Soft constraint penalties ─────────────────────────────────────────────────

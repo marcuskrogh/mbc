@@ -154,7 +154,7 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return 0
 
     @property
-    def n_ym(self) -> int:
+    def nym(self) -> int:
         return 2
 
     @property
