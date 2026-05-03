@@ -289,7 +289,7 @@ def test_solve_returns_correct_shapes(model):
     assert np.isfinite(cost)
 
 
-def test_solve_cost_decreases_with_soft_constraint(model):
+def test_solve_cost_increases_with_soft_constraint(model):
     """Adding an active soft output lower-bound must increase the cost."""
     N = 3
     x0 = np.array([0.1])
