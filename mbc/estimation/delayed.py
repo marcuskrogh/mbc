@@ -53,6 +53,8 @@ from typing import Any
 
 import numpy as np
 
+from .._utils import _cvx_to_np
+
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
 
@@ -316,34 +318,30 @@ class DelayedObservationFilter:
 
         est = self._est
         n = len(x0_np)
-        x0_cvx = _to_cvx_col(x0_np)
-        P0_cvx = _to_cvx_mat(P0_np)
 
         if isinstance(est, KalmanFilter):
-            C_full = est._model.C  # (ny, n) cvxopt
+            C_full_np = _cvx_to_np(est._model.C)   # (ny, n) from cvxopt
         elif isinstance(est, CDKalmanFilter):
-            C_full = est._model.C_cvx  # (ny, n) cvxopt
+            C_full_np = _cvx_to_np(est._model.C_cvx)  # (ny, n) from cvxopt
         else:
             raise TypeError(
                 f"_correction_discrete: unexpected estimator type {type(est)!r}"
             )
 
-        # Single-row C_i : (1, n) cvxopt
-        C_i = _to_cvx_mat(
-            np.array([float(C_full[ch_idx, j]) for j in range(n)]).reshape(1, n)
-        )
-        y_i = _to_cvx_col(np.array([y_np[ch_idx]]))
+        # Single-row C_i : (1, n) numpy
+        C_i_np = C_full_np[[ch_idx], :]
+        y_i_np = np.array([y_np[ch_idx]])
 
         # Temporarily replace R with the 1×1 sub-block R[i, i].
-        R_orig = est._R
-        R_i = _to_cvx_mat(np.array([[float(R_orig[ch_idx, ch_idx])]]))
-        est._R = R_i
+        R_orig = est._R_np
+        R_i_np = np.array([[R_orig[ch_idx, ch_idx]]])
+        est._R_np = R_i_np
         try:
-            x_upd_cvx, P_upd_cvx = est.filter(y_i, x0_cvx, P0_cvx, C_i)
+            x_upd, P_upd = est.filter(y_i_np, x0_np, P0_np, C_i_np)
         finally:
-            est._R = R_orig
+            est._R_np = R_orig
 
-        return _as_np1d(x_upd_cvx), _as_np2d(P_upd_cvx)
+        return x_upd, P_upd
 
     def _correction_cd(
         self,
@@ -407,10 +405,8 @@ class DelayedObservationFilter:
             )
             self._set_discrete_prev(u_for_prev, prev_d)
 
-            # Full predict + filter step.
-            y_r = _to_cvx_col(entry["y"])
-            d_r = _to_cvx_col(entry["d"])
-            self._est.update(y_r, d_r, mask=entry["mask"])
+            # Full predict + filter step — update() accepts numpy directly.
+            self._est.update(entry["y"], entry["d"], mask=entry["mask"])
 
             # Snapshot the new posterior.
             x_np, P_np = self._get_state()

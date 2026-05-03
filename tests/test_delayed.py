@@ -277,7 +277,7 @@ def _run_kf_no_delay(kf, Y, U, D_val=0.0):
         y_cvx = _np_to_cvx_col(y_np)
         kf.update(y_cvx, d_cvx)
         kf.record_action(_np_to_cvx_col(u_np))
-        X_est.append(_cvx_col_to_np(kf.x_hat))
+        X_est.append(kf.x_hat)
     return np.array(X_est)
 
 
@@ -296,7 +296,7 @@ def _run_delayed_kf(delayed_kf, Y, U, delay, D_val=0.0):
         y_cvx = _np_to_cvx_col(y_np)
         delayed_kf.update(y_cvx, d_cvx, delay=delay_arr)
         delayed_kf.record_action(_np_to_cvx_col(u_np))
-        X_est.append(_cvx_col_to_np(delayed_kf.x_hat))
+        X_est.append(delayed_kf.x_hat)
     return np.array(X_est)
 
 
@@ -328,8 +328,8 @@ class TestTransparency:
             kf_wrapped.record_action(u_cvx)
 
             np.testing.assert_allclose(
-                _cvx_col_to_np(x_bare),
-                _cvx_col_to_np(x_wrapped),
+                np.asarray(x_bare).ravel(),
+                np.asarray(x_wrapped).ravel(),
                 atol=1e-12,
                 err_msg="Wrapped KF diverged from bare KF with delay=None",
             )
@@ -357,8 +357,8 @@ class TestTransparency:
             kf_wrapped.record_action(u_cvx)
 
             np.testing.assert_allclose(
-                _cvx_col_to_np(x_bare),
-                _cvx_col_to_np(x_wrapped),
+                np.asarray(x_bare).ravel(),
+                np.asarray(x_wrapped).ravel(),
                 atol=1e-12,
                 err_msg="delay=zeros must match delay=None",
             )
@@ -373,13 +373,13 @@ class TestTransparency:
 
         # x_hat from wrapper and from inner estimator must be the same object or equal value
         np.testing.assert_allclose(
-            _cvx_col_to_np(delayed_kf.x_hat),
-            _cvx_col_to_np(two_state_kf.x_hat),
+            delayed_kf.x_hat,
+            two_state_kf.x_hat,
             atol=1e-12,
         )
         # P comparison
-        P_wrap = np.array(list(delayed_kf.P), dtype=float).reshape(2, 2, order="F")
-        P_inner = np.array(list(two_state_kf.P), dtype=float).reshape(2, 2, order="F")
+        P_wrap = delayed_kf.P
+        P_inner = two_state_kf.P
         np.testing.assert_allclose(P_wrap, P_inner, atol=1e-12)
 
 
@@ -486,12 +486,12 @@ class TestSingleDelayedChannel:
             y_ch0 = _np_to_cvx_col(np.array([y_np[0], 0.0]))
             kf_ignore.update(y_ch0, d_cvx, mask=[True, False])
             kf_ignore.record_action(u_cvx)
-            X_ignore.append(_cvx_col_to_np(kf_ignore.x_hat))
+            X_ignore.append(kf_ignore.x_hat)
 
             # Filter with delayed channel 1
             filt.update(y_cvx, d_cvx, delay=delay_arr)
             filt.record_action(u_cvx)
-            X_delayed.append(_cvx_col_to_np(filt.x_hat))
+            X_delayed.append(filt.x_hat)
 
         X_ignore = np.array(X_ignore)
         X_delayed = np.array(X_delayed)
@@ -531,7 +531,7 @@ class TestSingleDelayedChannel:
             y_cvx = _np_to_cvx_col(y_np)
             kf_a.update(y_cvx, d_cvx, mask=[True, False])
             kf_a.record_action(_np_to_cvx_col(u_np))
-            X_a.append(_cvx_col_to_np(kf_a.x_hat))
+            X_a.append(kf_a.x_hat)
         X_a = np.array(X_a)
 
         # Filter B: channel 0 immediate + channel 1 delayed by tau
@@ -542,7 +542,7 @@ class TestSingleDelayedChannel:
             y_cvx = _np_to_cvx_col(y_np)
             kf_b.update(y_cvx, d_cvx, delay=delay_arr)
             kf_b.record_action(_np_to_cvx_col(u_np))
-            X_b.append(_cvx_col_to_np(kf_b.x_hat))
+            X_b.append(kf_b.x_hat)
         X_b = np.array(X_b)
 
         rmse_a = np.sqrt(np.mean((X_a[tau:] - X_true[tau:]) ** 2))
@@ -578,7 +578,7 @@ class TestMultipleDelayedChannels:
             y_cvx = _np_to_cvx_col(y_np)
             filt.update(y_cvx, d_cvx, delay=delay_arr)
             filt.record_action(_np_to_cvx_col(u_np))
-            X_delayed.append(_cvx_col_to_np(filt.x_hat))
+            X_delayed.append(filt.x_hat)
 
         X_delayed = np.array(X_delayed)
 
@@ -600,7 +600,7 @@ class TestMultipleDelayedChannels:
             y_cvx = _np_to_cvx_col(y_np)
             x_hat = filt.update(y_cvx, d_cvx, delay=delay_arr)
             filt.record_action(_np_to_cvx_col(u_np))
-            x_np = _cvx_col_to_np(x_hat)
+            x_np = np.asarray(x_hat).ravel()
             assert np.all(np.isfinite(x_np))
 
     def test_covariance_positive_definite(self, two_state_model):
@@ -619,7 +619,7 @@ class TestMultipleDelayedChannels:
             filt.update(y_cvx, d_cvx, delay=delay_arr)
             filt.record_action(_np_to_cvx_col(u_np))
 
-        P_np = np.array(list(filt.P), dtype=float).reshape(2, 2, order="F")
+        P_np = filt.P
         eigvals = np.linalg.eigvalsh(P_np)
         assert np.all(eigvals > 0), f"P must be positive-definite; eigenvalues: {eigvals}"
         np.testing.assert_allclose(P_np, P_np.T, atol=1e-10)
