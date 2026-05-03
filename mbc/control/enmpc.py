@@ -72,9 +72,50 @@ class EconomicNMPC:
         solver: str = "SLSQP",
         solver_options: dict | None = None,
     ) -> None:
-        raise NotImplementedError(
-            "EconomicNMPC.__init__ is not yet implemented."
-        )
+        self._model = model
+        self._N = N
+        self._stage_cost = stage_cost
+        self._terminal_cost = terminal_cost
+        self._constraints = constraints if constraints is not None else []
+        self._n_steps = n_steps
+        self._solver = solver
+        self._solver_options = solver_options
+        # Sampling interval: taken from model.dt if available, else 1.0
+        self._dt: float = float(getattr(model, "dt", 1.0))
+
+    def _predict_mean(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """
+        Integrate mean dynamics over one sampling interval (no noise).
+
+        Uses ``n_steps`` explicit Euler sub-steps of size
+        ``h = dt / n_steps``.
+
+        Parameters
+        ----------
+        x : (nx,) state at the start of the interval.
+        u : (nu,) input applied over the interval (ZOH).
+        d : (nd,) disturbance applied over the interval (ZOH).
+        p : (nparams,) parameter vector.
+        t : float — start time of the interval.
+
+        Returns
+        -------
+        x_next : (nx,) state at the end of the interval.
+        """
+        h = self._dt / self._n_steps
+        x_cur = x.copy()
+        t_cur = t
+        for _ in range(self._n_steps):
+            x_cur = x_cur + self._model.f(x_cur, u, d, p, t_cur) * h
+            t_cur += h
+        return x_cur
 
     def solve(
         self,
@@ -102,15 +143,48 @@ class EconomicNMPC:
             Optimal input sequence.
         cost : float
             Optimal economic cost.
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
-        raise NotImplementedError(
-            "EconomicNMPC.solve is not yet implemented."
+        from scipy.optimize import minimize
+
+        N = self._N
+        nu = self._model.nu
+        p = self._model.params
+
+        # ── Warm start ───────────────────────────────────────────────────
+        if u_prev is not None:
+            u0 = np.empty_like(u_prev)
+            u0[:-1] = u_prev[1:]   # shift forward by one step
+            u0[-1] = u_prev[-1]    # repeat last element
+        else:
+            u0 = np.zeros((N, nu))
+        u0_flat = u0.ravel()
+
+        # ── Objective function ───────────────────────────────────────────
+        def objective(u_flat: np.ndarray) -> float:
+            U = u_flat.reshape(N, nu)
+            x = x0.copy()
+            t = 0.0
+            total = 0.0
+            for k in range(N):
+                total += float(self._stage_cost(x, U[k], d_trajectory[k]))
+                x = self._predict_mean(x, U[k], d_trajectory[k], p, t)
+                t += self._dt
+            if self._terminal_cost is not None:
+                total += float(self._terminal_cost(x))
+            return total
+
+        # ── Solve NLP ────────────────────────────────────────────────────
+        result = minimize(
+            objective,
+            u0_flat,
+            method=self._solver,
+            constraints=self._constraints,
+            options=self._solver_options,
         )
+
+        u_opt = result.x.reshape(N, nu)
+        cost = float(result.fun)
+        return u_opt, cost
 
     def step(
         self,
@@ -136,12 +210,6 @@ class EconomicNMPC:
         -------
         u0 : (nu,) ndarray
             First element of the optimal input sequence.
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
-        raise NotImplementedError(
-            "EconomicNMPC.step is not yet implemented."
-        )
+        u_opt, _ = self.solve(x0, d_trajectory, u_prev)
+        return u_opt[0]

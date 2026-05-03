@@ -58,9 +58,45 @@ class SDAESimulator:
         newton_max_iter: int = 50,
         seed: int | None = None,
     ) -> None:
-        raise NotImplementedError(
-            "SDAESimulator.__init__ is not yet implemented."
-        )
+        if scheme not in ("EE", "IE"):
+            raise ValueError(f"Unknown scheme '{scheme}'; choose 'EE' or 'IE'.")
+        self._model = model
+        self._dt = dt
+        self._n_steps = n_steps
+        self._scheme = scheme
+        self._newton_tol = newton_tol
+        self._newton_max_iter = newton_max_iter
+        self._rng = np.random.default_rng(seed)
+        # Pre-compute Cholesky factor of Q_c for noise generation: L L^T = Q_c
+        Q_c = np.asarray(model.Q_c, dtype=float)
+        try:
+            self._L = np.linalg.cholesky(Q_c)
+        except np.linalg.LinAlgError:
+            self._L = np.linalg.cholesky(Q_c + 1e-14 * np.eye(Q_c.shape[0]))
+
+    def _solve_constraint(
+        self,
+        x: np.ndarray,
+        z: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """
+        Solve l(x, z, u, d, p, t) = 0 for z via Newton iteration.
+
+        Uses the initial guess ``z`` and iterates up to ``newton_max_iter``
+        steps.  Convergence is declared when ``‖l‖ < newton_tol``.
+        """
+        z_cur = z.copy()
+        for _ in range(self._newton_max_iter):
+            residual = self._model.l(x, z_cur, u, d, p, t)
+            if np.linalg.norm(residual) < self._newton_tol:
+                break
+            J = self._model.dldz(x, z_cur, u, d, p, t)
+            z_cur = z_cur - np.linalg.solve(J, residual)
+        return z_cur
 
     def step(
         self,
@@ -87,15 +123,57 @@ class SDAESimulator:
         -------
         x_next : (nx,) differential state at t + dt.
         z_next : (nz,) algebraic state at t + dt (consistent).
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
-        raise NotImplementedError(
-            "SDAESimulator.step is not yet implemented."
-        )
+        h = self._dt / self._n_steps
+        sqrt_h = np.sqrt(h)
+        L = self._L
+        nw = L.shape[0]
+        nx = x.shape[0]
+
+        x_cur = x.copy()
+        z_cur = z.copy()
+        t_cur = t
+
+        for _ in range(self._n_steps):
+            # Stochastic increment: dW ~ N(0, Q_c * h)
+            z_rng = self._rng.standard_normal(nw)
+            dW = L @ z_rng * sqrt_h
+
+            if self._scheme == "EE":
+                # 1. Euler drift step on x
+                f_val = self._model.f(x_cur, z_cur, u, d, p, t_cur)
+                x_next = x_cur + f_val * h
+                # 2. Solve algebraic constraint at the new x
+                z_next = self._solve_constraint(x_next, z_cur, u, d, p, t_cur + h)
+                # 3. Add diffusion noise
+                g_val = self._model.g(x_cur, z_cur, u, d, p, t_cur)  # (nx, nw)
+                x_next = x_next + g_val @ dW
+                # Re-solve constraint after noise perturbation
+                z_next = self._solve_constraint(x_next, z_next, u, d, p, t_cur + h)
+            else:  # IE — implicit drift, explicit diffusion
+                # Noise term first (explicit)
+                g_val = self._model.g(x_cur, z_cur, u, d, p, t_cur)
+                noise = g_val @ dW
+                # Newton on: x_next - x_cur - f(x_next, z_next, ...) * h - noise = 0
+                # with simultaneous constraint l(x_next, z_next, ...) = 0
+                x_next = x_cur.copy()
+                z_next = z_cur.copy()
+                for _ in range(self._newton_max_iter):
+                    # Update z to satisfy constraint at current x_next
+                    z_next = self._solve_constraint(x_next, z_next, u, d, p, t_cur + h)
+                    f_val = self._model.f(x_next, z_next, u, d, p, t_cur + h)
+                    F = x_next - x_cur - f_val * h - noise
+                    if np.linalg.norm(F) < self._newton_tol:
+                        break
+                    J = (np.eye(nx)
+                         - h * self._model.dfdx(x_next, z_next, u, d, p, t_cur + h))
+                    x_next = x_next - np.linalg.solve(J, F)
+
+            x_cur = x_next
+            z_cur = z_next
+            t_cur += h
+
+        return x_cur, z_cur
 
     def simulate(
         self,
@@ -128,12 +206,16 @@ class SDAESimulator:
         -------
         X : (T+1, nx) ndarray  — differential state trajectory.
         Z : (T+1, nz) ndarray  — algebraic state trajectory.
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
-        raise NotImplementedError(
-            "SDAESimulator.simulate is not yet implemented."
-        )
+        T = U.shape[0]
+        nx = x0.shape[0]
+        nz = z0.shape[0]
+        X = np.empty((T + 1, nx))
+        Z = np.empty((T + 1, nz))
+        X[0] = x0.copy()
+        Z[0] = z0.copy()
+        t_cur = t0
+        for k in range(T):
+            X[k + 1], Z[k + 1] = self.step(X[k], Z[k], U[k], D[k], P[k], t_cur)
+            t_cur += self._dt
+        return X, Z
