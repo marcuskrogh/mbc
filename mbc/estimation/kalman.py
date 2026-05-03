@@ -52,36 +52,10 @@ from typing import List, Optional, TYPE_CHECKING
 
 import numpy as np
 
-from .._utils import _np_to_cvx, _cvx_to_np, _cvx_col_to_np
+from .._utils import _np_to_cvx, _cvx_to_np, _cvx_col_to_np, _any_to_np1d, _any_to_np2d
 
 if TYPE_CHECKING:
     from ..models import LinearDiscreteModel
-
-
-def _to_np(v) -> np.ndarray:
-    """Convert a cvxopt column vector or numpy array/list to a 1-D numpy float array."""
-    if v is None:
-        raise ValueError("_to_np: received None")
-    try:
-        from cvxopt import matrix as _cvx_matrix
-        if isinstance(v, _cvx_matrix):
-            return _cvx_col_to_np(v)
-    except ImportError:
-        pass
-    return np.asarray(v, dtype=float).ravel()
-
-
-def _to_np_mat(v) -> np.ndarray:
-    """Convert a cvxopt matrix or numpy 2-D array to a 2-D numpy float array."""
-    if v is None:
-        raise ValueError("_to_np_mat: received None")
-    try:
-        from cvxopt import matrix as _cvx_matrix
-        if isinstance(v, _cvx_matrix):
-            return _cvx_to_np(v)
-    except ImportError:
-        pass
-    return np.asarray(v, dtype=float)
 
 
 # ── Kalman Filter ────────────────────────────────────────────────────────
@@ -121,14 +95,14 @@ class KalmanFilter:
         l = model.C.size[0]  # model.C is cvxopt
 
         # Noise covariances (numpy)
-        self._Q_np: np.ndarray = _to_np_mat(Q) if Q is not None else 0.01 * np.eye(n)
-        self._R_np: np.ndarray = _to_np_mat(R) if R is not None else 0.1 * np.eye(l)
+        self._Q_np: np.ndarray = _any_to_np2d(Q) if Q is not None else 0.01 * np.eye(n)
+        self._R_np: np.ndarray = _any_to_np2d(R) if R is not None else 0.1 * np.eye(l)
 
         # Noise input matrix G (M.Sc. Ch. 5.4); None means standard form
-        self._G_np: np.ndarray | None = _to_np_mat(noise_matrix) if noise_matrix is not None else None
+        self._G_np: np.ndarray | None = _any_to_np2d(noise_matrix) if noise_matrix is not None else None
 
         # State error covariance (numpy)
-        self._P_np: np.ndarray = _to_np_mat(P0) if P0 is not None else np.eye(n)
+        self._P_np: np.ndarray = _any_to_np2d(P0) if P0 is not None else np.eye(n)
 
         # State estimate x̂ (numpy; initialised from the model)
         self._x_np: np.ndarray = np.array(list(model.x), dtype=float)
@@ -293,7 +267,7 @@ class KalmanFilter:
         x_hat : (n,) corrected state estimate (copy).
         """
         C_np = _cvx_to_np(self._model.C)  # model.C is always cvxopt
-        y_np = _to_np(y)
+        y_np = _any_to_np1d(y)
         l = C_np.shape[0]
         n = self._model.n_x
 
@@ -339,11 +313,11 @@ class KalmanFilter:
                 self._x_np = x_hat_np
                 self._P_np = P_np
 
-        self._d_prev_np = _to_np(d)
+        self._d_prev_np = _any_to_np1d(d)
         return self._x_np.copy()
 
     # ── Action recording ─────────────────────────────────────────────────
 
     def record_action(self, u) -> None:
         """Record the applied control action u[k] for the next prediction."""
-        self._u_prev_np = _to_np(u)
+        self._u_prev_np = _any_to_np1d(u)

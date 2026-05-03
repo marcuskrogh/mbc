@@ -55,21 +55,10 @@ from typing import Optional, List, TYPE_CHECKING
 
 import numpy as np
 
-from .._utils import _np_to_cvx, _cvx_to_np
+from .._utils import _np_to_cvx, _cvx_to_np, _any_to_np1d
 
 if TYPE_CHECKING:
     from ..models import LinearContinuousDiscreteModel
-
-
-def _col_to_np(v) -> np.ndarray:
-    """Convert a cvxopt column vector or numpy array to a 1-D numpy float array."""
-    try:
-        from cvxopt import matrix as _cvx_matrix
-        if isinstance(v, _cvx_matrix):
-            return np.array(list(v), dtype=float)
-    except ImportError:
-        pass
-    return np.asarray(v, dtype=float).ravel()
 
 
 class CDKalmanFilter:
@@ -297,7 +286,7 @@ class CDKalmanFilter:
         x_hat : (n,) corrected state estimate (copy).
         """
         C_np = _cvx_to_np(self._model.C_cvx)
-        y_np = _col_to_np(y)
+        y_np = _any_to_np1d(y)
         l = self._model.ny
         n = self._model.nx
 
@@ -335,11 +324,11 @@ class CDKalmanFilter:
                 self._P_np = P_np
 
         # Update stored disturbance for next prediction
-        self._d_prev_np = _col_to_np(d)
+        self._d_prev_np = _any_to_np1d(d)
         return self._x_np.copy()
 
     # ── Action recording ──────────────────────────────────────────────────
 
     def record_action(self, u) -> None:
         """Record the applied control action u[k] for use in the next prediction."""
-        self._u_prev_np = _col_to_np(u)
+        self._u_prev_np = _any_to_np1d(u)

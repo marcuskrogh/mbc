@@ -4,6 +4,7 @@ Shared utility functions for numpy/cvxopt conversions and discretisation.
 Provides helpers used across the mbc sub-packages:
 
   - ``_np_to_cvx`` / ``_cvx_to_np`` / ``_cvx_col_to_np``  – array conversion
+  - ``_any_to_np1d`` / ``_any_to_np2d``                   – accept cvxopt or numpy
   - ``_eye`` / ``_zeros`` / ``_symmetrise``                 – cvxopt matrix construction
   - ``_expm`` / ``_zoh``                                    – matrix exponential and
                                                               zero-order-hold discretisation
@@ -40,6 +41,29 @@ def _cvx_to_np(m: matrix) -> np.ndarray:
 def _cvx_col_to_np(m: matrix) -> np.ndarray:
     """Convert a cvxopt column vector to a 1-D numpy array."""
     return np.array(list(m), dtype=float)
+
+
+def _any_to_np1d(v) -> np.ndarray:
+    """Convert a cvxopt column vector, list, or numpy array to a 1-D float array."""
+    try:
+        from cvxopt import matrix as _cvx_matrix
+        if isinstance(v, _cvx_matrix):
+            return np.array(list(v), dtype=float)
+    except ImportError:
+        pass
+    return np.asarray(v, dtype=float).ravel()
+
+
+def _any_to_np2d(v) -> np.ndarray:
+    """Convert a cvxopt matrix, list-of-lists, or numpy array to a 2-D float array."""
+    try:
+        from cvxopt import matrix as _cvx_matrix
+        if isinstance(v, _cvx_matrix):
+            rows, cols = v.size
+            return np.array(list(v), dtype=float).reshape((rows, cols), order="F")
+    except ImportError:
+        pass
+    return np.asarray(v, dtype=float)
 
 
 # ── cvxopt matrix construction ────────────────────────────────────────────
