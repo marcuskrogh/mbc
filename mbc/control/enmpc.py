@@ -93,6 +93,11 @@ class EconomicOptimalControlProblem:
         # Sampling interval: taken from model.dt if available, else 1.0
         self._dt: float = float(getattr(model, "dt", 1.0))
 
+    @property
+    def N(self) -> int:
+        """Prediction horizon (number of sampling intervals)."""
+        return self._N
+
     def _predict_mean(
         self,
         x: np.ndarray,
@@ -276,7 +281,7 @@ class EconomicNMPCController:
         self._estimator = estimator
         self._ocp = ocp
         nu = model.nu
-        N = ocp._N
+        N = ocp.N
         self._u_seq_prev: np.ndarray | None = None
         self._u_prev: np.ndarray = np.zeros(nu)
 
@@ -318,7 +323,7 @@ class EconomicNMPCController:
 
         # Update warm-start storage
         nu = self._model.nu
-        N = self._ocp._N
+        N = self._ocp.N
         if self._u_seq_prev is None:
             self._u_seq_prev = np.zeros((N, nu))
         self._u_seq_prev[:-1] = self._u_seq_prev[1:]
