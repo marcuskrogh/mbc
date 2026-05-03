@@ -45,7 +45,6 @@ model-based control, estimation, identification, and simulation.
       * ``CDNMPCController``        – general CD-NMPC: any CD estimator +
                                       any numpy-based OCP (including economic
                                       and tracking formulations).
-      * ``EconomicNMPCController``  – alias for ``CDNMPCController``.
 
   mbc.identification
       System-identification / parameter-estimation utilities:
