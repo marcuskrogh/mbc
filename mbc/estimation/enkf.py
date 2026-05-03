@@ -118,19 +118,13 @@ class ContinuousDiscreteEnKF:
         model = self._model
         h = self._h_sub
         sqrt_h = np.sqrt(h)
-        Q_c = model.Q_c
-        nw = Q_c.shape[0]
         nx = self._nx
         N = self._N
 
-        # Diffusion matrix: G @ G^T = Q_c  (Cholesky factor of Q_c)
+        # Diffusion: sigma encodes continuous-time noise magnitude; dw ~ N(0, I dt)
         x_mean0 = self._X.mean(axis=1)
-        G = model.g(x_mean0, u, d, p, t)
-        # G may be identity (state-independent); compose with L_Q = chol(Q_c)
-        # so that the per-step noise covariance is G @ Q_c @ G^T * h = Q_c * h.
-        # Pre-compute once per step since G is state-independent here.
-        L_Q = np.linalg.cholesky(Q_c)
-        GQ = G @ L_Q  # (nx, nw): GQ @ GQ^T = G @ Q_c @ G^T
+        sigma_val = model.sigma(x_mean0, u, d, p, t)  # (nx, nw)
+        nw = sigma_val.shape[1]
 
         t_j = t
         for _ in range(self._n_steps):
@@ -140,8 +134,8 @@ class ContinuousDiscreteEnKF:
             F = np.column_stack([
                 model.f(self._X[:, i], u, d, p, t_j) for i in range(N)
             ])
-            # Euler-Maruyama: noise ~ N(0, Q_c * h) via GQ @ W
-            self._X = self._X + h * F + GQ @ (sqrt_h * W)
+            # Euler-Maruyama: noise ~ N(0, Q * h) via sigma @ W
+            self._X = self._X + h * F + sigma_val @ (sqrt_h * W)
             t_j += h
 
         return self.x_hat, self.P
@@ -172,11 +166,11 @@ class ContinuousDiscreteEnKF:
         """
         model = self._model
         N = self._N
-        R = model.R
+        R = model.Rm
 
         # Map ensemble through observation function — shape (ny, N)
         HX = np.column_stack([
-            model.h(self._X[:, i], u, d, p) for i in range(N)
+            model.hm(self._X[:, i], u, d, p, 0.0) for i in range(N)
         ])
 
         # Apply mask

@@ -65,12 +65,6 @@ class SDAESimulator:
         self._newton_tol = newton_tol
         self._newton_max_iter = newton_max_iter
         self._rng = np.random.default_rng(seed)
-        # Pre-compute Cholesky factor of Q_c for noise generation: L L^T = Q_c
-        Q_c = np.asarray(model.Q_c, dtype=float)
-        try:
-            self._L = np.linalg.cholesky(Q_c)
-        except np.linalg.LinAlgError:
-            self._L = np.linalg.cholesky(Q_c + 1e-14 * np.eye(Q_c.shape[0]))
 
     def _solve_constraint(
         self,
@@ -123,8 +117,6 @@ class SDAESimulator:
         """
         h = self._dt / self._n_steps
         sqrt_h = np.sqrt(h)
-        L = self._L
-        nw = L.shape[0]
         nx = x.shape[0]
 
         x_cur = x.copy()
@@ -132,9 +124,11 @@ class SDAESimulator:
         t_cur = t
 
         for _ in range(self._n_steps):
-            # Stochastic increment: dW ~ N(0, Q_c * h)
+            # Diffusion: sigma encodes continuous-time noise magnitude; dw ~ N(0, I dt)
+            sigma_val = self._model.sigma(x_cur, z_cur, u, d, p, t_cur)  # (nx, nw)
+            nw = sigma_val.shape[1]
             xi = self._rng.standard_normal(nw)
-            dW = L @ xi * sqrt_h
+            dW = sigma_val @ xi * sqrt_h
 
             if self._scheme == "EE":
                 # 1. Euler drift step on x
@@ -143,14 +137,12 @@ class SDAESimulator:
                 # 2. Solve algebraic constraint at the new x
                 z_next = self._solve_constraint(x_next, z_cur, u, d, p, t_cur + h)
                 # 3. Add diffusion noise
-                g_val = self._model.g(x_cur, z_cur, u, d, p, t_cur)  # (nx, nw)
-                x_next = x_next + g_val @ dW
+                x_next = x_next + dW
                 # Re-solve constraint after noise perturbation
                 z_next = self._solve_constraint(x_next, z_next, u, d, p, t_cur + h)
             else:  # IE — implicit drift, explicit diffusion
                 # Noise term first (explicit)
-                g_val = self._model.g(x_cur, z_cur, u, d, p, t_cur)
-                noise = g_val @ dW
+                noise = dW
                 # Solve coupled system:
                 #   F(x_next) = x_next − (x_cur + noise) − f(x_next, z_next,…) h = 0
                 #   l(x_next, z_next, …) = 0

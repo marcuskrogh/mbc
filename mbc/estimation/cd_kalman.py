@@ -94,10 +94,11 @@ class CDKalmanFilter:
         n = model.nx
 
         # Continuous-time matrices (numpy, cached for speed)
-        self._A_c: np.ndarray = model.A_c
-        self._B_c: np.ndarray = model.B_c
-        self._E_c: np.ndarray = model.E_c
-        self._GQcGT: np.ndarray = model.G @ model.Q_c @ model.G.T
+        self._A_c: np.ndarray = model.A
+        self._B_c: np.ndarray = model.B
+        self._E_c: np.ndarray = model.E
+        G = np.asarray(model.G, dtype=float)
+        self._GQcGT: np.ndarray = G @ G.T
 
         # ODE integration parameters
         self._dt: float = model.dt
@@ -287,7 +288,7 @@ class CDKalmanFilter:
         """
         C_np = _cvx_to_np(self._model.C_cvx)
         y_np = _any_to_np1d(y)
-        l = self._model.ny
+        l = self._model.nym
         n = self._model.nx
 
         active = list(range(l)) if mask is None else [i for i, m in enumerate(mask) if m]

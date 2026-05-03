@@ -67,7 +67,7 @@ from typing import TYPE_CHECKING
 
 from cvxopt import matrix, spmatrix, solvers
 
-from .._utils import _eye, _zeros
+from .._utils import _eye, _zeros, _np_to_cvx
 
 if TYPE_CHECKING:
     from ..models import LinearDiscreteModel
@@ -217,15 +217,23 @@ class OptimalControlProblem:
         X : (N·n, 1) predicted state trajectory x[1], …, x[N].
         """
         N = self._N
-        n_x = self._model.n_x
-        n_u = self._model.n_u
-        n_d = self._model.n_d
-        C = self._model.C
+        n_x = self._model.nx
+        n_u = self._model.nu
+        n_d = self._model.nd
+        C = _np_to_cvx(self._model.Cm)  # convert numpy Cm to cvxopt
         l = C.size[0]  # output dimension
 
-        # ── Discretise at current operating point ────────────────────────
-        d0 = D[:n_d]
-        A, B, E = self._model.discretize(d0)
+        # ── Convert numpy inputs to cvxopt if needed ────────────────────
+        import numpy as _np
+        if isinstance(x0, _np.ndarray):
+            x0 = _np_to_cvx(x0.reshape(-1, 1))
+        if isinstance(x_ref, _np.ndarray):
+            x_ref = _np_to_cvx(x_ref.reshape(-1, 1))
+
+        # ── Constant discrete-time matrices (no LPV) ────────────────────
+        A = _np_to_cvx(self._model.Ad)
+        B = _np_to_cvx(self._model.Bd)
+        E = _np_to_cvx(self._model.Ed)
 
         # ── Powers of A ──────────────────────────────────────────────────
         A_pow = [_eye(n_x)]
@@ -314,7 +322,9 @@ class OptimalControlProblem:
         #
         # 3) Slack non-negativity:  ε ≥ 0   →  -ε ≤ 0
 
-        u_min, u_max = self._model.u_bounds
+        u_min_np, u_max_np = self._model.u_bounds
+        u_min = _np_to_cvx(u_min_np.reshape(-1, 1))
+        u_max = _np_to_cvx(u_max_np.reshape(-1, 1))
         u_min_tiled = _tile_column(u_min, N)   # (N·m, 1)
         u_max_tiled = _tile_column(u_max, N)   # (N·m, 1)
 

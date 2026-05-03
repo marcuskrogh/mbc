@@ -130,7 +130,7 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     def nd(self) -> int: return 0
 
     @property
-    def ny(self) -> int: return 1
+    def nym(self) -> int: return 1
 
     @property
     def nw(self) -> int: return 2
@@ -139,7 +139,7 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     def Q_c(self) -> np.ndarray: return self._Q_c_val.copy()
 
     @property
-    def R(self) -> np.ndarray: return self._R_val.copy()
+    def Rm(self) -> np.ndarray: return self._R_val.copy()
 
     def f(self, x, u, d, p, t):
         c_A, c_B = x
@@ -148,10 +148,11 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
         dc_B = -c_B * D + self._k1 * c_A - self._k2 * c_B
         return np.array([dc_A, dc_B])
 
-    def g(self, x, u, d, p, t):
-        return np.eye(2)  # (2, nw=2)
+    def sigma(self, x, u, d, p, t):
+        # sigma sigma^T = Q_c = diag([0.01, 0.005]); so sigma = diag([sqrt(0.01), sqrt(0.005)])
+        return np.diag([0.1, np.sqrt(0.005)])
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p, t):
         return np.array([x[1]])  # measure c_B
 
 
@@ -197,7 +198,7 @@ class MonodBioreactor(ContinuousDiscreteModel):
     def nd(self) -> int: return 1
 
     @property
-    def ny(self) -> int: return 1
+    def nym(self) -> int: return 1
 
     @property
     def nw(self) -> int: return 2
@@ -206,7 +207,7 @@ class MonodBioreactor(ContinuousDiscreteModel):
     def Q_c(self) -> np.ndarray: return self._Q_c_val.copy()
 
     @property
-    def R(self) -> np.ndarray: return self._R_val.copy()
+    def Rm(self) -> np.ndarray: return self._R_val.copy()
 
     def _mu(self, S, p):
         mu_max, K_s = p[0], p[1]
@@ -222,10 +223,11 @@ class MonodBioreactor(ContinuousDiscreteModel):
         dX = mu * X - X * FV
         return np.array([dS, dX])
 
-    def g(self, x, u, d, p, t):
-        return np.eye(2)
+    def sigma(self, x, u, d, p, t):
+        # sigma sigma^T = Q_c = diag([1e-4, 1e-4]); so sigma = 0.01 * I
+        return 0.01 * np.eye(2)
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p, t):
         return np.array([x[1]])  # measure biomass X
 
 
@@ -281,12 +283,12 @@ class TestVanDeVusseModel:
         fx = vdv_model.f(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert fx.shape == (2,)
 
-    def test_g_shape(self, vdv_model):
-        G = vdv_model.g(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
+    def test_sigma_shape(self, vdv_model):
+        G = vdv_model.sigma(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert G.shape == (2, 2)
 
-    def test_h_shape(self, vdv_model):
-        y = vdv_model.h(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
+    def test_hm_shape(self, vdv_model):
+        y = vdv_model.hm(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert y.shape == (1,)
         assert float(y[0]) == pytest.approx(_VDV_SS[1])
 

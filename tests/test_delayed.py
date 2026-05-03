@@ -71,21 +71,46 @@ class _TwoStateModel(LinearDiscreteModel):
         self._x = [0.0, 0.0]
 
     @property
-    def n_x(self) -> int:
+    def nx(self) -> int:
         return 2
 
     @property
-    def n_u(self) -> int:
+    def nu(self) -> int:
         return 1
 
     @property
-    def n_d(self) -> int:
+    def nd(self) -> int:
         return 1
 
     @property
-    def C(self):
-        """Output matrix C = I₂ (cvxopt, column-major)."""
-        return cvx_matrix([1.0, 0.0, 0.0, 1.0], (2, 2))
+    def Cm(self) -> np.ndarray:
+        """Output matrix Cm = I₂ (numpy)."""
+        return np.eye(2)
+
+    @property
+    def Ad(self) -> np.ndarray:
+        """Discrete state-transition matrix."""
+        return np.array([[0.9, 0.0], [0.0, 0.85]])
+
+    @property
+    def Bd(self) -> np.ndarray:
+        """Discrete input matrix."""
+        return np.array([[0.1], [0.1]])
+
+    @property
+    def Ed(self) -> np.ndarray:
+        """Discrete disturbance matrix (unused)."""
+        return np.zeros((2, 1))
+
+    @property
+    def Qd(self) -> np.ndarray:
+        """Process noise covariance."""
+        return 0.01 * np.eye(2)
+
+    @property
+    def Rm(self) -> np.ndarray:
+        """Measurement noise covariance."""
+        return 0.1 * np.eye(2)
 
     @property
     def x(self) -> list:
@@ -97,21 +122,12 @@ class _TwoStateModel(LinearDiscreteModel):
         self._x = list(val)
 
     @property
-    def x_ref(self):
-        return cvx_matrix([0.0, 0.0], (2, 1))
+    def x_ref(self) -> np.ndarray:
+        return np.zeros(2)
 
     @property
     def u_bounds(self):
-        u_min = cvx_matrix([-1.0], (1, 1))
-        u_max = cvx_matrix([1.0], (1, 1))
-        return u_min, u_max
-
-    def discretize(self, d_cvx):
-        """Return (A, B, E) as cvxopt matrices; E is not used (E*d ≈ 0)."""
-        A = cvx_matrix([0.9, 0.0, 0.0, 0.85], (2, 2))  # column-major
-        B = cvx_matrix([0.1, 0.1], (2, 1))
-        E = cvx_matrix([0.0, 0.0], (2, 1))
-        return A, B, E
+        return np.array([-1.0]), np.array([1.0])
 
     def predict_offset(self, d_np: np.ndarray) -> np.ndarray:
         return np.zeros(2)
@@ -154,7 +170,7 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return 0
 
     @property
-    def ny(self) -> int:
+    def nym(self) -> int:
         return 2
 
     @property
@@ -166,7 +182,7 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return self._Q_c_val.copy()
 
     @property
-    def R(self) -> np.ndarray:
+    def Rm(self) -> np.ndarray:
         return self._R_val.copy()
 
     def f(self, x, u, d, p, t):
@@ -176,11 +192,11 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         dc_B = -c_B * D + self._k1 * c_A - self._k2 * c_B
         return np.array([dc_A, dc_B])
 
-    def g(self, x, u, d, p, t):
+    def sigma(self, x, u, d, p, t):
         return np.eye(2)
 
-    def h(self, x, u, d, p):
-        return x.copy()  # observe both states
+    def hm(self, x, u, d, p, t):
+        return x.copy()  # full-state observation (both states)
 
 
 _VDV_SS = np.array([0.097141, 0.048329])
