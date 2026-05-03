@@ -375,8 +375,8 @@ class ContinuousDiscreteModel(ABC):
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
-        """Controlled output g(x, u, d, p, t).  Default implementation returns hm."""
-        return self.hm(x, u, d, p, t)
+        """Deprecated: use ``sigma``. Calls sigma(x, u, d, p, t)."""
+        return self.sigma(x, u, d, p, t)
 
     def h(
         self,
@@ -831,8 +831,8 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
-        """Controlled output g(x, u, d, p, t) = Cm x."""
-        return self.Cm @ x
+        """Deprecated: use ``sigma``. Returns sigma(x, u, d, p, t) = G."""
+        return self.sigma(x, u, d, p, t)
 
     def hm(
         self,
