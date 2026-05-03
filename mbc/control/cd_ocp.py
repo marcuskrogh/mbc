@@ -74,7 +74,19 @@ class _CDModelAdapter:
     def __init__(self, model: "LinearContinuousDiscreteModel") -> None:
         self._m = model
 
-    # Dimensions — underscore form as expected by OptimalControlProblem
+    # Dimensions — both forms for compatibility
+    @property
+    def nx(self) -> int:
+        return self._m.nx
+
+    @property
+    def nu(self) -> int:
+        return self._m.nu
+
+    @property
+    def nd(self) -> int:
+        return self._m.nd
+
     @property
     def n_x(self) -> int:
         return self._m.nx

@@ -52,7 +52,7 @@ from typing import List, Optional, TYPE_CHECKING
 
 import numpy as np
 
-from .._utils import _np_to_cvx, _cvx_to_np, _cvx_col_to_np, _any_to_np1d, _any_to_np2d
+from .._utils import _any_to_np1d, _any_to_np2d
 
 if TYPE_CHECKING:
     from ..models import LinearDiscreteModel
@@ -91,8 +91,8 @@ class KalmanFilter:
         noise_matrix=None,
     ) -> None:
         self._model = model
-        n = model.n_x
-        l = model.C.size[0]  # model.C is cvxopt
+        n = model.nx
+        l = model.C.shape[0]  # model.C is numpy
 
         # Noise covariances (numpy)
         self._Q_np: np.ndarray = _any_to_np2d(Q) if Q is not None else 0.01 * np.eye(n)
@@ -108,8 +108,8 @@ class KalmanFilter:
         self._x_np: np.ndarray = np.array(list(model.x), dtype=float)
 
         # Memory for previous input and disturbance (numpy)
-        self._u_prev_np: np.ndarray = np.zeros(model.n_u)
-        self._d_prev_np: np.ndarray = np.zeros(model.n_d)
+        self._u_prev_np: np.ndarray = np.zeros(model.nu)
+        self._d_prev_np: np.ndarray = np.zeros(model.nd)
 
         self._first: bool = True
 
@@ -266,10 +266,10 @@ class KalmanFilter:
         -------
         x_hat : (n,) corrected state estimate (copy).
         """
-        C_np = _cvx_to_np(self._model.C)  # model.C is always cvxopt
+        C_np = self._model.C  # model.C is numpy
         y_np = _any_to_np1d(y)
         l = C_np.shape[0]
-        n = self._model.n_x
+        n = self._model.nx
 
         if mask is not None:
             active = [i for i, m in enumerate(mask) if m]
@@ -283,12 +283,10 @@ class KalmanFilter:
             self._x_np = np.linalg.solve(CtC, Cty)
             self._first = False
         else:
-            # Discretise at previous disturbance (model.discretize expects cvxopt)
-            d_prev_cvx = _np_to_cvx(self._d_prev_np.reshape(-1, 1))
-            A_cvx, B_cvx, E_cvx = self._model.discretize(d_prev_cvx)
-            A_np = _cvx_to_np(A_cvx)
-            B_np = _cvx_to_np(B_cvx)
-            E_np = _cvx_to_np(E_cvx)
+            # Use constant discrete-time matrices (no LPV scheduling)
+            A_np = self._model.A_d
+            B_np = self._model.B_d
+            E_np = self._model.E_d
 
             x_pred_np, P_pred_np = self.predict(A_np, B_np, E_np)
 
