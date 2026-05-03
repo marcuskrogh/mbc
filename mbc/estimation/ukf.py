@@ -214,14 +214,14 @@ class ContinuousDiscreteUKF:
         """
         model = self._model
         nx = self._nx
-        R = model.R
+        R = model.Rm
 
         # Regenerate sigma points from predicted (x̂⁻, P⁻)
         sigma = self._sigma_points(self._x, self._P)
 
         # Map sigma points through observation function
         Upsilon = np.array([
-            model.h(sigma[i], u, d, p) for i in range(2 * nx + 1)
+            model.hm(sigma[i], u, d, p, 0.0) for i in range(2 * nx + 1)
         ])   # (2nx+1, ny)
 
         # Apply mask

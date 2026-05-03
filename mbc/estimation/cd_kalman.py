@@ -288,7 +288,7 @@ class CDKalmanFilter:
         """
         C_np = _cvx_to_np(self._model.C_cvx)
         y_np = _any_to_np1d(y)
-        l = self._model.ny
+        l = self._model.nym
         n = self._model.nx
 
         active = list(range(l)) if mask is None else [i for i, m in enumerate(mask) if m]

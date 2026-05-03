@@ -92,7 +92,7 @@ class KalmanFilter:
     ) -> None:
         self._model = model
         n = model.nx
-        l = model.C.shape[0]  # model.C is numpy
+        l = model.Cm.shape[0]  # model.Cm is numpy
 
         # Noise covariances (numpy)
         self._Q_np: np.ndarray = _any_to_np2d(Q) if Q is not None else 0.01 * np.eye(n)
@@ -266,7 +266,7 @@ class KalmanFilter:
         -------
         x_hat : (n,) corrected state estimate (copy).
         """
-        C_np = self._model.C  # model.C is numpy
+        C_np = self._model.Cm  # model.Cm is numpy
         y_np = _any_to_np1d(y)
         l = C_np.shape[0]
         n = self._model.nx
@@ -284,9 +284,9 @@ class KalmanFilter:
             self._first = False
         else:
             # Use constant discrete-time matrices (no LPV scheduling)
-            A_np = self._model.A_d
-            B_np = self._model.B_d
-            E_np = self._model.E_d
+            A_np = self._model.Ad
+            B_np = self._model.Bd
+            E_np = self._model.Ed
 
             x_pred_np, P_pred_np = self.predict(A_np, B_np, E_np)
 

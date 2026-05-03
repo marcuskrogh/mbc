@@ -329,7 +329,7 @@ class ContinuousDiscreteModel(ABC):
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
-        t: float,
+        t: float = 0.0,
     ) -> np.ndarray:
         """
         Measurement function hm(x, u, d, p, t) → (nym,) predicted observation.
@@ -840,7 +840,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
-        t: float,
+        t: float = 0.0,
     ) -> np.ndarray:
         """Measurement hm(x, u, d, p, t) = Cm x  (u, d, p, t ignored for LTI)."""
         return self.Cm @ x

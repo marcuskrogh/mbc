@@ -166,11 +166,11 @@ class ContinuousDiscreteEnKF:
         """
         model = self._model
         N = self._N
-        R = model.R
+        R = model.Rm
 
         # Map ensemble through observation function — shape (ny, N)
         HX = np.column_stack([
-            model.h(self._X[:, i], u, d, p) for i in range(N)
+            model.hm(self._X[:, i], u, d, p, 0.0) for i in range(N)
         ])
 
         # Apply mask

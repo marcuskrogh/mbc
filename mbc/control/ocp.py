@@ -220,7 +220,7 @@ class OptimalControlProblem:
         n_x = self._model.nx
         n_u = self._model.nu
         n_d = self._model.nd
-        C = _np_to_cvx(self._model.C)  # convert numpy C to cvxopt
+        C = _np_to_cvx(self._model.Cm)  # convert numpy Cm to cvxopt
         l = C.size[0]  # output dimension
 
         # ── Convert numpy inputs to cvxopt if needed ────────────────────
@@ -231,9 +231,9 @@ class OptimalControlProblem:
             x_ref = _np_to_cvx(x_ref.reshape(-1, 1))
 
         # ── Constant discrete-time matrices (no LPV) ────────────────────
-        A = _np_to_cvx(self._model.A_d)
-        B = _np_to_cvx(self._model.B_d)
-        E = _np_to_cvx(self._model.E_d)
+        A = _np_to_cvx(self._model.Ad)
+        B = _np_to_cvx(self._model.Bd)
+        E = _np_to_cvx(self._model.Ed)
 
         # ── Powers of A ──────────────────────────────────────────────────
         A_pow = [_eye(n_x)]

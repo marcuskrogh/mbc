@@ -199,11 +199,11 @@ class ContinuousDiscreteParticleFilter:
         """
         model = self._model
         N = self._N
-        R = model.R
+        R = model.Rm
 
         # Predicted observations for each particle
         HX = np.column_stack([
-            model.h(self._X[:, i], u, d, p) for i in range(N)
+            model.hm(self._X[:, i], u, d, p, 0.0) for i in range(N)
         ])   # (ny, N)
 
         # Apply mask

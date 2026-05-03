@@ -154,10 +154,10 @@ class ContinuousDiscreteEKF:
         x = self._x_np
         P = self._P_np
         nx = x.shape[0]
-        R = self._model.R
+        R = self._model.Rm
 
-        H = self._model.dhdx(x, u, d, p)               # (ny, nx)
-        y_hat = self._model.h(x, u, d, p)               # (ny,)
+        H = self._model.dhmdx(x, u, d, p, 0.0)               # (ny, nx)
+        y_hat = self._model.hm(x, u, d, p, 0.0)               # (ny,)
 
         if mask is not None:
             active = np.where(mask)[0]
