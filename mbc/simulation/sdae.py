@@ -136,8 +136,8 @@ class SDAESimulator:
 
         for _ in range(self._n_steps):
             # Stochastic increment: dW ~ N(0, Q_c * h)
-            z_rng = self._rng.standard_normal(nw)
-            dW = L @ z_rng * sqrt_h
+            xi = self._rng.standard_normal(nw)
+            dW = L @ xi * sqrt_h
 
             if self._scheme == "EE":
                 # 1. Euler drift step on x
