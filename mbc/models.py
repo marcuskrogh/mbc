@@ -5,33 +5,38 @@ Linear discrete-time interface
 -------------------------------
 ``LinearDiscreteModel`` — abstract base for linear discrete-time systems:
 
-    x[k+1] = Ad x[k] + Bd u[k] + Ed d[k],   y[k] = Cm x[k]
+    x[k+1] = Ad x[k] + Bd u[k] + Ed d[k] + Gd w[k],   w[k] ~ N(0, Qd)
+    z[k]   = Cz x[k] + Dz u[k] + Fz d[k]
+    ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
 
-    x ∈ ℝⁿˣ  state,  u ∈ ℝⁿᵘ  input,
-    d ∈ ℝⁿᵈ  disturbance,    y ∈ ℝⁿʸᵐ  output.
+    x ∈ ℝⁿˣ state, u ∈ ℝⁿᵘ input, d ∈ ℝⁿᵈ disturbance,
+    z ∈ ℝⁿᶻ controlled output, ym ∈ ℝⁿʸᵐ measurement.
 
-    Matrices Ad, Bd, Ed and Cm are constant (LTI).
-
-Continuous-discrete SDE interface (Ph.D. Ch. 5–6)
+Continuous-discrete SDE interface
 --------------------------------------------------
 ``ContinuousDiscreteModel`` — abstract base for continuous-discrete
 stochastic systems:
 
-    dx = f(x, u, d, t) dt + sigma(x, u, d, t) dw,   w ~ N(0, I dt)
-    y_k = hm(x_k, u_k, d_k) + v_k,                  v_k ~ N(0, Rm)
+    dx(t)   = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
+    z(t)    = g(x, u, d, p, t)
+    ym(tk)  = hm(x, u, d, p, tk) + v(tk),                         v(tk) ~ N(0, Rm)
 
 ``LinearContinuousDiscreteModel`` — extends ``ContinuousDiscreteModel`` for
-linear systems where the drift, diffusion, and observation functions take
-the specific forms:
+linear systems where the drift, diffusion, output, and observation functions
+take the specific forms:
 
-    f(x, u, d, t)     = A x + B u + E d
-    sigma(x, u, d, t) = G            (constant diffusion)
-    hm(x, u, d)       = Cm x         (linear output; u ignored)
+    f(x, u, d, p, t)     = A x + B u + E d
+    sigma(x, u, d, p, t) = G                          (constant diffusion)
+    g(x, u, d, p, t)     = Cz x + Dz u + Fz d
+    hm(x, u, d, p, t)    = Cm x + Dm u + Fm d
 
 ``ContinuousDiscreteDAEModel`` — extends ``ContinuousDiscreteModel`` with an
-algebraic constraint:
+algebraic constraint and algebraic states y:
 
-    0 = l(x, z, u, d, t)
+    dx(t)   = f(x, y, u, d, p, t) dt + sigma(x, y, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
+    0       = h(x, y, u, d, p, t)
+    z(t)    = g(x, y, u, d, p, t)
+    ym(tk)  = hm(x, y, u, d, p, tk) + v(tk),                            v(tk) ~ N(0, Rm)
 """
 
 from __future__ import annotations
@@ -52,9 +57,11 @@ class LinearDiscreteModel(ABC):
     """
     Abstract interface for a linear discrete-time system:
 
-        x[k+1] = Ad x[k] + Bd u[k] + Ed d[k],   y[k] = Cm x[k]
+        x[k+1] = Ad x[k] + Bd u[k] + Ed d[k] + Gd w[k],   w[k] ~ N(0, Qd)
+        z[k]   = Cz x[k] + Dz u[k] + Fz d[k]
+        ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
 
-    The system matrices Ad, Bd, Ed and the output matrix Cm are constant
+    The system matrices Ad, Bd, Ed, Gd, Cm, Cz, Dm, Dz, Fm, Fz are constant
     (LTI).  This interface is analogous to
     :class:`LinearContinuousDiscreteModel` but for discrete-time systems.
 
@@ -63,7 +70,8 @@ class LinearDiscreteModel(ABC):
         nx   – state dimension              x ∈ ℝⁿˣ
         nu   – input dimension              u ∈ ℝⁿᵘ
         nd   – disturbance dimension        d ∈ ℝⁿᵈ
-        nym  – output dimension             y ∈ ℝⁿʸᵐ  (derived: Cm.shape[0])
+        nym  – measurement output dimension ym ∈ ℝⁿʸᵐ  (derived: Cm.shape[0])
+        nz   – controlled output dimension  z ∈ ℝⁿᶻ   (derived: Cz.shape[0])
 
     Parameter-identification interface
     -----------------------------------
@@ -108,7 +116,7 @@ class LinearDiscreteModel(ABC):
     @property
     @abstractmethod
     def Cm(self) -> np.ndarray:
-        """Output matrix Cm ∈ ℝⁿʸᵐˣⁿˣ (numpy ndarray)."""
+        """Measurement output matrix Cm ∈ ℝⁿʸᵐˣⁿˣ (numpy ndarray)."""
 
     @property
     @abstractmethod
@@ -142,64 +150,73 @@ class LinearDiscreteModel(ABC):
     def u_bounds(self) -> Tuple[np.ndarray, np.ndarray]:
         """Box constraint on inputs (u_min, u_max), each a (nu,) ndarray."""
 
-    # ── Derived ───────────────────────────────────────────────────────────
+    # ── Derived (non-abstract, overridable) ──────────────────────────────
 
     @property
     def nym(self) -> int:
         """Measurement output dimension nym = Cm.shape[0]."""
         return self.Cm.shape[0]
 
-    # ── Deprecated aliases ────────────────────────────────────────────────
+    @property
+    def Gd(self) -> np.ndarray:
+        """
+        Discrete noise input matrix Gd ∈ ℝⁿˣˣⁿˣ.
+
+        Default: identity (direct additive noise on all states).
+        Subclasses may override to use a different noise structure.
+        """
+        return np.eye(self.nx)
 
     @property
-    def A_d(self) -> np.ndarray:
-        """Deprecated: use ``Ad``."""
-        return self.Ad
+    def Cz(self) -> np.ndarray:
+        """
+        Controlled output matrix Cz ∈ ℝⁿᶻˣⁿˣ.
 
-    @property
-    def B_d(self) -> np.ndarray:
-        """Deprecated: use ``Bd``."""
-        return self.Bd
-
-    @property
-    def E_d(self) -> np.ndarray:
-        """Deprecated: use ``Ed``."""
-        return self.Ed
-
-    @property
-    def C(self) -> np.ndarray:
-        """Deprecated: use ``Cm``."""
+        Default: Cm (same output set as measurements).
+        Subclasses may override for a different controlled-output selection.
+        """
         return self.Cm
 
     @property
-    def Q_d(self) -> np.ndarray:
-        """Deprecated: use ``Qd``."""
-        return self.Qd
+    def Dz(self) -> np.ndarray:
+        """
+        Controlled output feedthrough Dz ∈ ℝⁿᶻˣⁿᵘ.
+
+        Default: zeros (no direct feedthrough from inputs to controlled outputs).
+        """
+        return np.zeros((self.nym, self.nu))
 
     @property
-    def R(self) -> np.ndarray:
-        """Deprecated: use ``Rm``."""
-        return self.Rm
+    def Fz(self) -> np.ndarray:
+        """
+        Controlled output disturbance feedthrough Fz ∈ ℝⁿᶻˣⁿᵈ.
+
+        Default: zeros (no direct feedthrough from disturbances to controlled outputs).
+        """
+        return np.zeros((self.nym, self.nd))
 
     @property
-    def ny(self) -> int:
-        """Deprecated: use ``nym``."""
-        return self.nym
+    def Dm(self) -> np.ndarray:
+        """
+        Measurement input feedthrough Dm ∈ ℝⁿʸᵐˣⁿᵘ.
+
+        Default: zeros (no direct feedthrough from inputs to measurements).
+        """
+        return np.zeros((self.nym, self.nu))
 
     @property
-    def n_x(self) -> int:
-        """Deprecated alias for ``nx``.  Use ``nx`` instead."""
-        return self.nx
+    def Fm(self) -> np.ndarray:
+        """
+        Measurement disturbance feedthrough Fm ∈ ℝⁿʸᵐˣⁿᵈ.
+
+        Default: zeros (no direct feedthrough from disturbances to measurements).
+        """
+        return np.zeros((self.nym, self.nd))
 
     @property
-    def n_u(self) -> int:
-        """Deprecated alias for ``nu``.  Use ``nu`` instead."""
-        return self.nu
-
-    @property
-    def n_d(self) -> int:
-        """Deprecated alias for ``nd``.  Use ``nd`` instead."""
-        return self.nd
+    def nz(self) -> int:
+        """Controlled output dimension nz = Cz.shape[0]."""
+        return self.Cz.shape[0]
 
     # ── Parameter-identification interface (non-abstract, overridable) ────
 
@@ -207,7 +224,7 @@ class LinearDiscreteModel(ABC):
         """
         Additive constant term for the one-step prediction:
 
-            x_pred = A_d x + B_d u + E_d d + predict_offset(d)
+            x_pred = Ad x + Bd u + Ed d + predict_offset(d)
 
         The default implementation returns a zero vector.  Subclasses that
         model a known constant disturbance or an estimated bias term should
@@ -262,22 +279,22 @@ class ContinuousDiscreteModel(ABC):
 
     The system is governed by the Itô SDE
 
-        dx = f(x, u, d, t) dt + sigma(x, u, d, t) dw,   w ~ N(0, I dt)
+        dx(t)  = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
+        z(t)   = g(x, u, d, p, t)
+        ym(tk) = hm(x, u, d, p, tk) + v(tk),                         v(tk) ~ N(0, Rm)
 
-    with discrete-time observations
-
-        y_k = hm(x_k, u_k, d_k) + v_k,   v_k ~ N(0, Rm)
-
-    Subclasses must implement the drift ``f``, diffusion ``sigma``,
-    measurement function ``hm``, and the noise covariance property ``Rm``.
+    Subclasses must implement the drift ``f``, diffusion ``sigma``, controlled
+    output ``g``, measurement function ``hm``, and the noise covariance
+    property ``Rm``.
 
     Dimensions
     ----------
         nx   – state dimension              x ∈ ℝⁿˣ
         nu   – input dimension              u ∈ ℝⁿᵘ
         nd   – disturbance dimension        d ∈ ℝⁿᵈ
-        nym  – measurement output dimension y ∈ ℝⁿʸᵐ
         nw   – process-noise dimension      w ∈ ℝⁿʷ  (columns of sigma's output)
+        nz   – controlled output dimension  z ∈ ℝⁿᶻ
+        nym  – measurement output dimension ym ∈ ℝⁿʸᵐ
     """
 
     @abstractmethod
@@ -323,6 +340,31 @@ class ContinuousDiscreteModel(ABC):
         """
 
     @abstractmethod
+    def g(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """
+        Controlled output function g(x, u, d, p, t).
+
+        Parameters
+        ----------
+        x : (nx,) state vector.
+        u : (nu,) input vector.
+        d : (nd,) disturbance vector.
+        p : (nparams,) parameter vector.
+        t : current time.
+
+        Returns
+        -------
+        (nz,) controlled output vector.
+        """
+
+    @abstractmethod
     def hm(
         self,
         x: np.ndarray,
@@ -347,6 +389,11 @@ class ContinuousDiscreteModel(ABC):
 
     @property
     @abstractmethod
+    def nz(self) -> int:
+        """Controlled output dimension."""
+
+    @property
+    @abstractmethod
     def nx(self) -> int:
         """State dimension."""
 
@@ -364,44 +411,6 @@ class ContinuousDiscreteModel(ABC):
     @abstractmethod
     def nw(self) -> int:
         """Process-noise / diffusion dimension nw (columns of sigma's output)."""
-
-    # ── Deprecated non-abstract members ──────────────────────────────────
-
-    def g(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-        t: float,
-    ) -> np.ndarray:
-        """Deprecated: use ``sigma``. Calls sigma(x, u, d, p, t)."""
-        return self.sigma(x, u, d, p, t)
-
-    def h(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``hm``. Calls hm(x, u, d, p, 0.0)."""
-        return self.hm(x, u, d, p, 0.0)
-
-    @property
-    def Q_c(self) -> np.ndarray:
-        """Deprecated: returns np.eye(nw)."""
-        return np.eye(self.nw)
-
-    @property
-    def R(self) -> np.ndarray:
-        """Deprecated: use ``Rm``."""
-        return self.Rm
-
-    @property
-    def ny(self) -> int:
-        """Deprecated: use ``nym``."""
-        return self.nym
 
     # ── Jacobian methods (default: forward finite differences) ────────────
 
@@ -452,16 +461,6 @@ class ContinuousDiscreteModel(ABC):
             J[:, k] = (self.hm(x_fwd, u, d, p, t) - h0) / _H_FD
         return J
 
-    def dhdx(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdx``. Calls dhmdx(x, u, d, p, 0.0)."""
-        return self.dhmdx(x, u, d, p, 0.0)
-
     def dhmdu(
         self,
         x: np.ndarray,
@@ -484,16 +483,6 @@ class ContinuousDiscreteModel(ABC):
             u_fwd[k] += _H_FD
             J[:, k] = (self.hm(x, u_fwd, d, p, t) - h0) / _H_FD
         return J
-
-    def dhdu(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdu``. Calls dhmdu(x, u, d, p, 0.0)."""
-        return self.dhmdu(x, u, d, p, 0.0)
 
     def dfdu(
         self,
@@ -564,16 +553,6 @@ class ContinuousDiscreteModel(ABC):
             J[:, k] = (self.hm(x, u, d_fwd, p, t) - h0) / _H_FD
         return J
 
-    def dhdd(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdd``. Calls dhmdd(x, u, d, p, 0.0)."""
-        return self.dhmdd(x, u, d, p, 0.0)
-
     def dfdp(
         self,
         x: np.ndarray,
@@ -626,16 +605,6 @@ class ContinuousDiscreteModel(ABC):
             J[:, k] = (self.hm(x, u, d, p_fwd, t) - h0) / _H_FD
         return J
 
-    def dhdp(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdp``. Calls dhmdp(x, u, d, p, 0.0)."""
-        return self.dhmdp(x, u, d, p, 0.0)
-
     # ── Parameters ────────────────────────────────────────────────────────
 
     @property
@@ -658,50 +627,41 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
 
     Extends :class:`ContinuousDiscreteModel` with the specific linear forms:
 
-        dx = (A x[t] + B u[t] + E d[t]) dt + G dw[t],
-        w[t] ~ N(0, I dt)
+        dx(t)  = (A x(t) + B u(t) + E d(t)) dt + G dw(t),  dw(t) ~ N(0, I dt)
+        z(t)   = Cz x(t) + Dz u(t) + Fz d(t)
+        ym(tk) = Cm x(tk) + Dm u(tk) + Fm d(tk) + v(tk),   v(tk) ~ N(0, Rm)
 
     with zero-order-hold (ZOH) inputs and disturbances over each sampling
-    interval [t_k, t_{k+1}].  Observations are collected at the discrete
-    measurement times t_k:
+    interval [t_k, t_{k+1}].
 
-        y[k] = Cm x[k] + v[k],   v[k] ~ N(0, Rm)
+    The model exposes the ZOH-discretised matrices via ``discretize`` and the
+    exact discrete process-noise covariance via ``discretize_noise``.
 
-    The model exposes the ZOH-discretised matrices via ``discretize`` so that
-    the existing ``OptimalControlProblem`` (and ``CDOptimalControlProblem``) can
-    be used without modification.
-
-    Notation (M.Sc. thesis, Ch. 5)
-    --------------------------------
+    Dimensions
+    ----------
         nx   – state dimension              x ∈ ℝⁿˣ
         nu   – input dimension              u ∈ ℝⁿᵘ
         nd   – disturbance dimension        d ∈ ℝⁿᵈ
-        nym  – output dimension             y ∈ ℝⁿʸᵐ  (derived: Cm.shape[0])
         nw   – process-noise dimension      w ∈ ℝⁿʷ  (derived: G.shape[1])
+        nz   – controlled output dimension  z ∈ ℝⁿᶻ  (derived: Cz.shape[0])
+        nym  – measurement output dimension ym ∈ ℝⁿʸᵐ (derived: Cm.shape[0])
         A    – continuous state matrix      A ∈ ℝⁿˣˣⁿˣ
         B    – continuous input matrix      B ∈ ℝⁿˣˣⁿᵘ
         E    – continuous disturbance mat.  E ∈ ℝⁿˣˣⁿᵈ
         G    – noise input matrix           G ∈ ℝⁿˣˣⁿʷ
+        Cm   – measurement output matrix    Cm ∈ ℝⁿʸᵐˣⁿˣ
+        Dm   – measurement input D-term     Dm ∈ ℝⁿʸᵐˣⁿᵘ  (default: 0)
+        Fm   – measurement disturbance D    Fm ∈ ℝⁿʸᵐˣⁿᵈ  (default: 0)
+        Cz   – controlled output matrix     Cz ∈ ℝⁿᶻˣⁿˣ   (default: Cm)
+        Dz   – controlled output input D    Dz ∈ ℝⁿᶻˣⁿᵘ   (default: 0)
+        Fz   – controlled output dist D     Fz ∈ ℝⁿᶻˣⁿᵈ   (default: 0)
         Rm   – measurement noise cov.       Rm ∈ ℝⁿʸᵐˣⁿʸᵐ
-        Cm   – output matrix                Cm ∈ ℝⁿʸᵐˣⁿˣ (time-invariant)
         dt   – sampling interval
-
-    Concrete implementations
-    ------------------------
-    The following abstract methods from :class:`ContinuousDiscreteModel` are
-    implemented concretely:
-
-        f(x, u, d, t)     = A x + B u + E d
-        sigma(x, u, d, t) = G            (constant diffusion; arguments ignored)
-        hm(x, u, d, t)    = Cm x         (linear output; u, d, t ignored for LTI)
-        nym               = Cm.shape[0]
-        nw                = G.shape[1]
 
     ZOH discretisation (``discretize``)
     -------------------------------------
     Computed via the augmented-matrix method (no matrix inverse required):
 
-        Ad = expm(A · dt)
         [Ad | Bd | Ed] = expm([[A, B, E], [0, 0, 0], [0, 0, 0]] · dt)[:nx, :]
 
     Discrete process noise (``discretize_noise``)
@@ -709,17 +669,6 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
     Computed by the Van Loan (1978) method:
 
         Qd = ∫₀^{dt} expm(A τ) G Gᵀ expm(A τ)ᵀ dτ
-
-    Backward-compatible aliases
-    ----------------------------
-    The deprecated properties ``n_x``, ``n_u``, ``n_d`` are provided as
-    concrete aliases mapping to ``nx``, ``nu``, ``nd`` respectively.
-    The deprecated properties ``A_c``, ``B_c``, ``E_c``, ``C``, ``R``,
-    ``Q_c``, ``ny`` are provided as aliases for ``A``, ``B``, ``E``,
-    ``Cm``, ``Rm``, ``np.eye(nw)``, ``nym`` respectively.
-
-    Consumers requiring cvxopt-format matrices should use the alias
-    properties ``C_cvx``, ``R_cvx``, ``x_ref_cvx``, and ``u_bounds_cvx``.
     """
 
     # ── Abstract dimensions (inherited from ContinuousDiscreteModel) ──────
@@ -754,7 +703,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
     @property
     @abstractmethod
     def Cm(self) -> np.ndarray:
-        """Output matrix Cm ∈ ℝⁿʸᵐˣⁿˣ (numpy ndarray)."""
+        """Measurement output matrix Cm ∈ ℝⁿʸᵐˣⁿˣ (numpy ndarray)."""
 
     @property
     @abstractmethod
@@ -801,6 +750,57 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         """Process-noise dimension nw = G.shape[1]."""
         return self.G.shape[1]
 
+    @property
+    def Cz(self) -> np.ndarray:
+        """
+        Controlled output matrix Cz ∈ ℝⁿᶻˣⁿˣ.
+
+        Default: Cm (same output set as measurements).
+        Subclasses may override for a different controlled-output selection.
+        """
+        return self.Cm
+
+    @property
+    def Dz(self) -> np.ndarray:
+        """
+        Controlled output input feedthrough Dz ∈ ℝⁿᶻˣⁿᵘ.
+
+        Default: zeros.  Subclasses may override.
+        """
+        return np.zeros((self.nym, self.nu))
+
+    @property
+    def Fz(self) -> np.ndarray:
+        """
+        Controlled output disturbance feedthrough Fz ∈ ℝⁿᶻˣⁿᵈ.
+
+        Default: zeros.  Subclasses may override.
+        """
+        return np.zeros((self.nym, self.nd))
+
+    @property
+    def Dm(self) -> np.ndarray:
+        """
+        Measurement input feedthrough Dm ∈ ℝⁿʸᵐˣⁿᵘ.
+
+        Default: zeros.  Subclasses may override.
+        """
+        return np.zeros((self.nym, self.nu))
+
+    @property
+    def Fm(self) -> np.ndarray:
+        """
+        Measurement disturbance feedthrough Fm ∈ ℝⁿʸᵐˣⁿᵈ.
+
+        Default: zeros.  Subclasses may override.
+        """
+        return np.zeros((self.nym, self.nd))
+
+    @property
+    def nz(self) -> int:
+        """Controlled output dimension nz = Cz.shape[0]."""
+        return self.Cz.shape[0]
+
     def f(
         self,
         x: np.ndarray,
@@ -809,7 +809,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
-        """Drift f(x, u, d, p, t) = A x + B u + E d  (p ignored for linear)."""
+        """Drift f(x, u, d, p, t) = A x + B u + E d  (p, t ignored for LTI)."""
         return self.A @ x + self.B @ u + self.E @ d
 
     def sigma(
@@ -831,8 +831,8 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
-        """Deprecated: use ``sigma``. Returns sigma(x, u, d, p, t) = G."""
-        return self.sigma(x, u, d, p, t)
+        """Controlled output g(x, u, d, p, t) = Cz x + Dz u + Fz d."""
+        return self.Cz @ x + self.Dz @ u + self.Fz @ d
 
     def hm(
         self,
@@ -842,8 +842,8 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         p: np.ndarray,
         t: float = 0.0,
     ) -> np.ndarray:
-        """Measurement hm(x, u, d, p, t) = Cm x  (u, d, p, t ignored for LTI)."""
-        return self.Cm @ x
+        """Measurement hm(x, u, d, p, t) = Cm x + Dm u + Fm d."""
+        return self.Cm @ x + self.Dm @ u + self.Fm @ d
 
     # ── Analytic Jacobian overrides ───────────────────────────────────────
 
@@ -869,16 +869,6 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         """Analytic Jacobian ∂hm/∂x = Cm  (arguments ignored)."""
         return self.Cm.copy()
 
-    def dhdx(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdx``."""
-        return self.dhmdx(x, u, d, p, 0.0)
-
     def dhmdu(
         self,
         x: np.ndarray,
@@ -887,18 +877,8 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         p: np.ndarray,
         t: float = 0.0,
     ) -> np.ndarray:
-        """Analytic Jacobian ∂hm/∂u = 0  (hm = Cm x does not depend on u)."""
-        return np.zeros((self.nym, self.nu))
-
-    def dhdu(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdu``."""
-        return self.dhmdu(x, u, d, p, 0.0)
+        """Analytic Jacobian ∂hm/∂u = Dm."""
+        return self.Dm.copy()
 
     def dfdu(
         self,
@@ -930,18 +910,8 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         p: np.ndarray,
         t: float = 0.0,
     ) -> np.ndarray:
-        """Analytic Jacobian ∂hm/∂d = 0  (hm = Cm x does not depend on d)."""
-        return np.zeros((self.nym, self.nd))
-
-    def dhdd(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdd``."""
-        return self.dhmdd(x, u, d, p, 0.0)
+        """Analytic Jacobian ∂hm/∂d = Fm."""
+        return self.Fm.copy()
 
     def dfdp(
         self,
@@ -962,100 +932,8 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         p: np.ndarray,
         t: float = 0.0,
     ) -> np.ndarray:
-        """Analytic Jacobian ∂hm/∂p = 0  (hm = Cm x does not depend on p)."""
+        """Analytic Jacobian ∂hm/∂p = 0  (hm does not depend on p for LTI)."""
         return np.zeros((self.nym, p.shape[0]))
-
-    def dhdp(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdp``."""
-        return self.dhmdp(x, u, d, p, 0.0)
-
-    # ── Backward-compatible dimension aliases ─────────────────────────────
-
-    @property
-    def n_x(self) -> int:
-        """Deprecated alias for ``nx``.  Use ``nx`` instead."""
-        return self.nx
-
-    @property
-    def n_u(self) -> int:
-        """Deprecated alias for ``nu``.  Use ``nu`` instead."""
-        return self.nu
-
-    @property
-    def n_d(self) -> int:
-        """Deprecated alias for ``nd``.  Use ``nd`` instead."""
-        return self.nd
-
-    @property
-    def A_c(self) -> np.ndarray:
-        """Deprecated: use ``A``."""
-        return self.A
-
-    @property
-    def B_c(self) -> np.ndarray:
-        """Deprecated: use ``B``."""
-        return self.B
-
-    @property
-    def E_c(self) -> np.ndarray:
-        """Deprecated: use ``E``."""
-        return self.E
-
-    @property
-    def C(self) -> np.ndarray:
-        """Deprecated: use ``Cm``."""
-        return self.Cm
-
-    @property
-    def R(self) -> np.ndarray:
-        """Deprecated: use ``Rm``."""
-        return self.Rm
-
-    @property
-    def Q_c(self) -> np.ndarray:
-        """Deprecated: returns np.eye(nw)."""
-        return np.eye(self.nw)
-
-    @property
-    def ny(self) -> int:
-        """Deprecated: use ``nym``."""
-        return self.nym
-
-    # ── cvxopt alias properties (for legacy consumers) ────────────────────
-
-    @property
-    def C_cvx(self) -> "matrix":
-        """Output matrix Cm as a cvxopt dense matrix (for legacy consumers)."""
-        from ._utils import _np_to_cvx
-        return _np_to_cvx(self.Cm)
-
-    @property
-    def R_cvx(self) -> "matrix":
-        """Measurement noise covariance Rm as a cvxopt dense matrix."""
-        from ._utils import _np_to_cvx
-        return _np_to_cvx(self.Rm)
-
-    @property
-    def x_ref_cvx(self) -> "matrix":
-        """Reference setpoint x_ref as a cvxopt (nx, 1) column vector."""
-        from ._utils import _np_to_cvx
-        return _np_to_cvx(np.asarray(self.x_ref, dtype=float).reshape(-1, 1))
-
-    @property
-    def u_bounds_cvx(self) -> Tuple["matrix", "matrix"]:
-        """Input bounds (u_min, u_max) as cvxopt (nu, 1) column vectors."""
-        from ._utils import _np_to_cvx
-        lo, hi = self.u_bounds
-        return (
-            _np_to_cvx(np.asarray(lo, dtype=float).reshape(-1, 1)),
-            _np_to_cvx(np.asarray(hi, dtype=float).reshape(-1, 1)),
-        )
 
     # ── Concrete discretisation methods ───────────────────────────────────
 
@@ -1138,43 +1016,44 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
     """
     Abstract interface for a continuous-discrete stochastic DAE (Ph.D. Ch. 6).
 
-    Extends ``ContinuousDiscreteModel`` with algebraic state z and constraint:
+    Extends ``ContinuousDiscreteModel`` with algebraic states y and constraint:
 
-        dx = f(x, z, u, d, t) dt + g(x, z, u, d, t) dw
-        0  = l(x, z, u, d, t)
-        y_k = h(x_k, z_k, u_k, d_k) + v_k
+        dx(t)  = f(x, y, u, d, p, t) dt + sigma(x, y, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
+        0      = h(x, y, u, d, p, t)
+        z(t)   = g(x, y, u, d, p, t)
+        ym(tk) = hm(x, y, u, d, p, tk) + v(tk),                            v(tk) ~ N(0, Rm)
 
     At each integration step the algebraic constraint is enforced by solving
-    ``l = 0`` for z (typically via Newton iteration in the simulator).
+    ``h = 0`` for y (typically via Newton iteration in the simulator).
 
-    Subclasses must additionally implement ``l`` and ``nz``.  The observation
-    function ``h`` should be overridden to accept ``(x, z, d)`` if the
-    outputs depend on z; the base signature ``h(x, d)`` is retained for
-    compatibility with ``ContinuousDiscreteModel``-typed interfaces.
+    Subclasses must additionally implement ``h``, ``ny``, and override ``g``
+    with the DAE-specific signature.  The ``nz`` abstract property (controlled
+    output dimension) is inherited from ``ContinuousDiscreteModel`` and must
+    also be implemented by concrete subclasses.
 
     The ``nw`` abstract property is inherited from ``ContinuousDiscreteModel``
     and must be implemented by concrete subclasses.
     """
 
     @abstractmethod
-    def l(
+    def h(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Algebraic constraint residual.
+        Algebraic constraint residual h(x, y, u, d, p, t).
 
-        The constraint is satisfied when ``l(x, z, u, d, p, t) = 0``.
+        The constraint is satisfied when ``h(x, y, u, d, p, t) = 0``.
 
         Parameters
         ----------
         x : (nx,) differential state vector.
-        z : (nz,) algebraic state vector.
+        y : (ny,) algebraic state vector.
         u : (nu,) input vector.
         d : (nd,) disturbance vector.
         p : (nparams,) parameter vector.
@@ -1182,361 +1061,344 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
 
         Returns
         -------
-        (nz,) residual vector.
+        (ny,) residual vector.
         """
 
     @property
     @abstractmethod
-    def nz(self) -> int:
+    def ny(self) -> int:
         """Algebraic state dimension."""
+
+    @abstractmethod
+    def g(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """
+        Controlled output function g(x, y, u, d, p, t).
+
+        Parameters
+        ----------
+        x : (nx,) differential state vector.
+        y : (ny,) algebraic state vector.
+        u : (nu,) input vector.
+        d : (nd,) disturbance vector.
+        p : (nparams,) parameter vector.
+        t : current time.
+
+        Returns
+        -------
+        (nz,) controlled output vector.
+        """
 
     # ── Jacobian methods for DAE systems (default: forward FD) ───────────
     #
-    # These override the base-class methods to include the algebraic state z
+    # These override the base-class methods to include the algebraic state y
     # and parameter vector p in their signatures.
 
     def dfdx(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂f/∂x evaluated at (x, z, u, d, p, t)  →  (nx, nx) ndarray.
+        Jacobian ∂f/∂x evaluated at (x, y, u, d, p, t)  →  (nx, nx) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        f0 = self.f(x, z, u, d, p, t)
+        f0 = self.f(x, y, u, d, p, t)
         nx = x.shape[0]
         J = np.empty((nx, nx))
         for k in range(nx):
             x_fwd = x.copy()
             x_fwd[k] += _H_FD
-            J[:, k] = (self.f(x_fwd, z, u, d, p, t) - f0) / _H_FD
+            J[:, k] = (self.f(x_fwd, y, u, d, p, t) - f0) / _H_FD
         return J
 
-    def dfdz(
+    def dfdy(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂f/∂z evaluated at (x, z, u, d, p, t)  →  (nx, nz) ndarray.
+        Jacobian ∂f/∂y evaluated at (x, y, u, d, p, t)  →  (nx, ny) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        f0 = self.f(x, z, u, d, p, t)
-        nz = z.shape[0]
+        f0 = self.f(x, y, u, d, p, t)
+        ny = y.shape[0]
         nx = f0.shape[0]
-        J = np.empty((nx, nz))
-        for k in range(nz):
-            z_fwd = z.copy()
-            z_fwd[k] += _H_FD
-            J[:, k] = (self.f(x, z_fwd, u, d, p, t) - f0) / _H_FD
+        J = np.empty((nx, ny))
+        for k in range(ny):
+            y_fwd = y.copy()
+            y_fwd[k] += _H_FD
+            J[:, k] = (self.f(x, y_fwd, u, d, p, t) - f0) / _H_FD
         return J
 
     def dhmdx(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float = 0.0,
     ) -> np.ndarray:
         """
-        Jacobian ∂hm/∂x at (x, z, u, d, p, t)  →  (ny, nx) ndarray.
+        Jacobian ∂hm/∂x at (x, y, u, d, p, t)  →  (nym, nx) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        h0 = self.hm(x, z, u, d, p, t)
+        h0 = self.hm(x, y, u, d, p, t)
         nx = x.shape[0]
         ny = h0.shape[0]
         J = np.empty((ny, nx))
         for k in range(nx):
             x_fwd = x.copy()
             x_fwd[k] += _H_FD
-            J[:, k] = (self.hm(x_fwd, z, u, d, p, t) - h0) / _H_FD
+            J[:, k] = (self.hm(x_fwd, y, u, d, p, t) - h0) / _H_FD
+        return J
+
+    def dhmdy(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float = 0.0,
+    ) -> np.ndarray:
+        """
+        Jacobian ∂hm/∂y at (x, y, u, d, p, t)  →  (nym, ny) ndarray.
+
+        Default: forward finite differences.  Override with analytic form.
+        """
+        h0 = self.hm(x, y, u, d, p, t)
+        nyal = y.shape[0]
+        nym = h0.shape[0]
+        J = np.empty((nym, nyal))
+        for k in range(nyal):
+            y_fwd = y.copy()
+            y_fwd[k] += _H_FD
+            J[:, k] = (self.hm(x, y_fwd, u, d, p, t) - h0) / _H_FD
+        return J
+
+    def dhmdu(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float = 0.0,
+    ) -> np.ndarray:
+        """
+        Jacobian ∂hm/∂u at (x, y, u, d, p, t)  →  (nym, nu) ndarray.
+
+        Default: forward finite differences.  Override with analytic form.
+        """
+        h0 = self.hm(x, y, u, d, p, t)
+        nu = u.shape[0]
+        nym = h0.shape[0]
+        J = np.empty((nym, nu))
+        for k in range(nu):
+            u_fwd = u.copy()
+            u_fwd[k] += _H_FD
+            J[:, k] = (self.hm(x, y, u_fwd, d, p, t) - h0) / _H_FD
         return J
 
     def dhdx(
         self,
         x: np.ndarray,
-        z: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdx``."""
-        return self.dhmdx(x, z, u, d, p, 0.0)
-
-    def dhmdz(
-        self,
-        x: np.ndarray,
-        z: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-        t: float = 0.0,
-    ) -> np.ndarray:
-        """
-        Jacobian ∂hm/∂z at (x, z, u, d, p, t)  →  (ny, nz) ndarray.
-
-        Default: forward finite differences.  Override with analytic form.
-        """
-        h0 = self.hm(x, z, u, d, p, t)
-        nz = z.shape[0]
-        ny = h0.shape[0]
-        J = np.empty((ny, nz))
-        for k in range(nz):
-            z_fwd = z.copy()
-            z_fwd[k] += _H_FD
-            J[:, k] = (self.hm(x, z_fwd, u, d, p, t) - h0) / _H_FD
-        return J
-
-    def dhdz(
-        self,
-        x: np.ndarray,
-        z: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdz``."""
-        return self.dhmdz(x, z, u, d, p, 0.0)
-
-    def dhmdu(
-        self,
-        x: np.ndarray,
-        z: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-        t: float = 0.0,
-    ) -> np.ndarray:
-        """
-        Jacobian ∂hm/∂u at (x, z, u, d, p, t)  →  (ny, nu) ndarray.
-
-        Default: forward finite differences.  Override with analytic form.
-        """
-        h0 = self.hm(x, z, u, d, p, t)
-        nu = u.shape[0]
-        ny = h0.shape[0]
-        J = np.empty((ny, nu))
-        for k in range(nu):
-            u_fwd = u.copy()
-            u_fwd[k] += _H_FD
-            J[:, k] = (self.hm(x, z, u_fwd, d, p, t) - h0) / _H_FD
-        return J
-
-    def dhdu(
-        self,
-        x: np.ndarray,
-        z: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdu``."""
-        return self.dhmdu(x, z, u, d, p, 0.0)
-
-    def dldx(
-        self,
-        x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂l/∂x evaluated at (x, z, u, d, p, t)  →  (nz, nx) ndarray.
+        Jacobian ∂h/∂x evaluated at (x, y, u, d, p, t)  →  (ny, nx) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        l0 = self.l(x, z, u, d, p, t)
+        h0 = self.h(x, y, u, d, p, t)
         nx = x.shape[0]
-        nz_out = l0.shape[0]
-        J = np.empty((nz_out, nx))
+        ny_out = h0.shape[0]
+        J = np.empty((ny_out, nx))
         for k in range(nx):
             x_fwd = x.copy()
             x_fwd[k] += _H_FD
-            J[:, k] = (self.l(x_fwd, z, u, d, p, t) - l0) / _H_FD
+            J[:, k] = (self.h(x_fwd, y, u, d, p, t) - h0) / _H_FD
         return J
 
-    def dldz(
+    def dhdy(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂l/∂z evaluated at (x, z, u, d, p, t)  →  (nz, nz) ndarray.
+        Jacobian ∂h/∂y evaluated at (x, y, u, d, p, t)  →  (ny, ny) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        l0 = self.l(x, z, u, d, p, t)
-        nz = z.shape[0]
-        nz_out = l0.shape[0]
-        J = np.empty((nz_out, nz))
-        for k in range(nz):
-            z_fwd = z.copy()
-            z_fwd[k] += _H_FD
-            J[:, k] = (self.l(x, z_fwd, u, d, p, t) - l0) / _H_FD
+        h0 = self.h(x, y, u, d, p, t)
+        nyal = y.shape[0]
+        ny_out = h0.shape[0]
+        J = np.empty((ny_out, nyal))
+        for k in range(nyal):
+            y_fwd = y.copy()
+            y_fwd[k] += _H_FD
+            J[:, k] = (self.h(x, y_fwd, u, d, p, t) - h0) / _H_FD
         return J
 
     def dfdu(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂f/∂u evaluated at (x, z, u, d, p, t)  →  (nx, nu) ndarray.
+        Jacobian ∂f/∂u evaluated at (x, y, u, d, p, t)  →  (nx, nu) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        f0 = self.f(x, z, u, d, p, t)
+        f0 = self.f(x, y, u, d, p, t)
         nu = u.shape[0]
         nx = f0.shape[0]
         J = np.empty((nx, nu))
         for k in range(nu):
             u_fwd = u.copy()
             u_fwd[k] += _H_FD
-            J[:, k] = (self.f(x, z, u_fwd, d, p, t) - f0) / _H_FD
+            J[:, k] = (self.f(x, y, u_fwd, d, p, t) - f0) / _H_FD
         return J
 
     def dfdd(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂f/∂d evaluated at (x, z, u, d, p, t)  →  (nx, nd) ndarray.
+        Jacobian ∂f/∂d evaluated at (x, y, u, d, p, t)  →  (nx, nd) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        f0 = self.f(x, z, u, d, p, t)
+        f0 = self.f(x, y, u, d, p, t)
         nd = d.shape[0]
         nx = f0.shape[0]
         J = np.empty((nx, nd))
         for k in range(nd):
             d_fwd = d.copy()
             d_fwd[k] += _H_FD
-            J[:, k] = (self.f(x, z, u, d_fwd, p, t) - f0) / _H_FD
+            J[:, k] = (self.f(x, y, u, d_fwd, p, t) - f0) / _H_FD
         return J
 
     def dhmdd(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float = 0.0,
     ) -> np.ndarray:
         """
-        Jacobian ∂hm/∂d at (x, z, u, d, p, t)  →  (ny, nd) ndarray.
+        Jacobian ∂hm/∂d at (x, y, u, d, p, t)  →  (nym, nd) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        h0 = self.hm(x, z, u, d, p, t)
+        h0 = self.hm(x, y, u, d, p, t)
         nd = d.shape[0]
-        ny = h0.shape[0]
-        J = np.empty((ny, nd))
+        nym = h0.shape[0]
+        J = np.empty((nym, nd))
         for k in range(nd):
             d_fwd = d.copy()
             d_fwd[k] += _H_FD
-            J[:, k] = (self.hm(x, z, u, d_fwd, p, t) - h0) / _H_FD
+            J[:, k] = (self.hm(x, y, u, d_fwd, p, t) - h0) / _H_FD
+        return J
+
+    def dhdu(
+        self,
+        x: np.ndarray,
+        y: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        """
+        Jacobian ∂h/∂u evaluated at (x, y, u, d, p, t)  →  (ny, nu) ndarray.
+
+        Default: forward finite differences.  Override with analytic form.
+        """
+        h0 = self.h(x, y, u, d, p, t)
+        nu = u.shape[0]
+        ny_out = h0.shape[0]
+        J = np.empty((ny_out, nu))
+        for k in range(nu):
+            u_fwd = u.copy()
+            u_fwd[k] += _H_FD
+            J[:, k] = (self.h(x, y, u_fwd, d, p, t) - h0) / _H_FD
         return J
 
     def dhdd(
         self,
         x: np.ndarray,
-        z: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdd``."""
-        return self.dhmdd(x, z, u, d, p, 0.0)
-
-    def dldu(
-        self,
-        x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂l/∂u evaluated at (x, z, u, d, p, t)  →  (nz, nu) ndarray.
+        Jacobian ∂h/∂d evaluated at (x, y, u, d, p, t)  →  (ny, nd) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         """
-        l0 = self.l(x, z, u, d, p, t)
-        nu = u.shape[0]
-        nz_out = l0.shape[0]
-        J = np.empty((nz_out, nu))
-        for k in range(nu):
-            u_fwd = u.copy()
-            u_fwd[k] += _H_FD
-            J[:, k] = (self.l(x, z, u_fwd, d, p, t) - l0) / _H_FD
-        return J
-
-    def dldd(
-        self,
-        x: np.ndarray,
-        z: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-        t: float,
-    ) -> np.ndarray:
-        """
-        Jacobian ∂l/∂d evaluated at (x, z, u, d, p, t)  →  (nz, nd) ndarray.
-
-        Default: forward finite differences.  Override with analytic form.
-        """
-        l0 = self.l(x, z, u, d, p, t)
+        h0 = self.h(x, y, u, d, p, t)
         nd = d.shape[0]
-        nz_out = l0.shape[0]
-        J = np.empty((nz_out, nd))
+        ny_out = h0.shape[0]
+        J = np.empty((ny_out, nd))
         for k in range(nd):
             d_fwd = d.copy()
             d_fwd[k] += _H_FD
-            J[:, k] = (self.l(x, z, u, d_fwd, p, t) - l0) / _H_FD
+            J[:, k] = (self.h(x, y, u, d_fwd, p, t) - h0) / _H_FD
         return J
 
     def dfdp(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂f/∂p evaluated at (x, z, u, d, p, t)  →  (nx, nparams) ndarray.
+        Jacobian ∂f/∂p evaluated at (x, y, u, d, p, t)  →  (nx, nparams) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
         Returns an empty (nx, 0) array when p is empty.
@@ -1545,75 +1407,64 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
         nx = self.nx
         if nparams == 0:
             return np.empty((nx, 0))
-        f0 = self.f(x, z, u, d, p, t)
+        f0 = self.f(x, y, u, d, p, t)
         J = np.empty((nx, nparams))
         for k in range(nparams):
             p_fwd = p.copy()
             p_fwd[k] += _H_FD
-            J[:, k] = (self.f(x, z, u, d, p_fwd, t) - f0) / _H_FD
+            J[:, k] = (self.f(x, y, u, d, p_fwd, t) - f0) / _H_FD
         return J
 
     def dhmdp(
         self,
         x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float = 0.0,
     ) -> np.ndarray:
         """
-        Jacobian ∂hm/∂p at (x, z, u, d, p, t)  →  (ny, nparams) ndarray.
+        Jacobian ∂hm/∂p at (x, y, u, d, p, t)  →  (nym, nparams) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
-        Returns an empty (ny, 0) array when p is empty.
+        Returns an empty (nym, 0) array when p is empty.
         """
         nparams = p.shape[0]
-        ny = self.nym
+        nym = self.nym
         if nparams == 0:
-            return np.empty((ny, 0))
-        h0 = self.hm(x, z, u, d, p, t)
-        J = np.empty((ny, nparams))
+            return np.empty((nym, 0))
+        h0 = self.hm(x, y, u, d, p, t)
+        J = np.empty((nym, nparams))
         for k in range(nparams):
             p_fwd = p.copy()
             p_fwd[k] += _H_FD
-            J[:, k] = (self.hm(x, z, u, d, p_fwd, t) - h0) / _H_FD
+            J[:, k] = (self.hm(x, y, u, d, p_fwd, t) - h0) / _H_FD
         return J
 
     def dhdp(
         self,
         x: np.ndarray,
-        z: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-    ) -> np.ndarray:
-        """Deprecated: use ``dhmdp``."""
-        return self.dhmdp(x, z, u, d, p, 0.0)
-
-    def dldp(
-        self,
-        x: np.ndarray,
-        z: np.ndarray,
+        y: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
         """
-        Jacobian ∂l/∂p evaluated at (x, z, u, d, p, t)  →  (nz, nparams) ndarray.
+        Jacobian ∂h/∂p evaluated at (x, y, u, d, p, t)  →  (ny, nparams) ndarray.
 
         Default: forward finite differences.  Override with analytic form.
-        Returns an empty (nz, 0) array when p is empty.
+        Returns an empty (ny, 0) array when p is empty.
         """
         nparams = p.shape[0]
-        nz_out = self.l(x, z, u, d, p, t).shape[0]
+        ny_out = self.h(x, y, u, d, p, t).shape[0]
         if nparams == 0:
-            return np.empty((nz_out, 0))
-        l0 = self.l(x, z, u, d, p, t)
-        J = np.empty((nz_out, nparams))
+            return np.empty((ny_out, 0))
+        h0 = self.h(x, y, u, d, p, t)
+        J = np.empty((ny_out, nparams))
         for k in range(nparams):
             p_fwd = p.copy()
             p_fwd[k] += _H_FD
-            J[:, k] = (self.l(x, z, u, d, p_fwd, t) - l0) / _H_FD
+            J[:, k] = (self.h(x, y, u, d, p_fwd, t) - h0) / _H_FD
         return J
