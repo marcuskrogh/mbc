@@ -326,7 +326,7 @@ class CDKalmanFilter:
                 # Partial update: restrict C and R to active rows
                 C_sub = C_np[np.ix_(active, list(range(n)))]
                 R_sub = self._R_np[np.ix_(active, active)]
-                y_sub = y_np[np.asarray(active)]
+                y_sub = y_np[active]
                 R_orig = self._R_np
                 self._R_np = R_sub
                 x_hat_np, P_np = self.filter(y_sub, x_pred_np, P_pred_np, C_sub)
