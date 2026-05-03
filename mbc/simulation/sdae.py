@@ -9,11 +9,8 @@ Extends ``SDESimulator`` to handle differential-algebraic systems:
 At each Euler-Maruyama sub-step:
   1. The Euler drift update is applied to x.
   2. The algebraic constraint ``l(x, z, u, d, t) = 0`` is solved for z
-     via Newton iteration initialised from the previous z.
+     via :func:`_newton_solve`.
   3. Diffusion noise is added.
-
-The Newton solve uses finite-difference Jacobians ∂l/∂z by default;
-subclasses may override with analytic Jacobians.
 
 Reference:  Ph.D. thesis, Ch. 6.
 """
@@ -23,6 +20,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..models import ContinuousDiscreteDAEModel
+from .._utils import _newton_solve
 
 
 class SDAESimulator:
@@ -84,19 +82,18 @@ class SDAESimulator:
         t: float,
     ) -> np.ndarray:
         """
-        Solve l(x, z, u, d, p, t) = 0 for z via Newton iteration.
+        Solve l(x, z, u, d, p, t) = 0 for z via :func:`_newton_solve`.
 
-        Uses the initial guess ``z`` and iterates up to ``newton_max_iter``
-        steps.  Convergence is declared when ``‖l‖ < newton_tol``.
+        Uses ``z`` as the initial guess and iterates until
+        ``‖l‖ < newton_tol`` or ``newton_max_iter`` steps have been taken.
         """
-        z_cur = z.copy()
-        for _ in range(self._newton_max_iter):
-            residual = self._model.l(x, z_cur, u, d, p, t)
-            if np.linalg.norm(residual) < self._newton_tol:
-                break
-            J = self._model.dldz(x, z_cur, u, d, p, t)
-            z_cur = z_cur - np.linalg.solve(J, residual)
-        return z_cur
+        return _newton_solve(
+            residual=lambda z_: self._model.l(x, z_, u, d, p, t),
+            jacobian=lambda z_: self._model.dldz(x, z_, u, d, p, t),
+            x0=z,
+            tol=self._newton_tol,
+            max_iter=self._newton_max_iter,
+        )
 
     def step(
         self,
@@ -154,20 +151,27 @@ class SDAESimulator:
                 # Noise term first (explicit)
                 g_val = self._model.g(x_cur, z_cur, u, d, p, t_cur)
                 noise = g_val @ dW
-                # Newton on: x_next - x_cur - f(x_next, z_next, ...) * h - noise = 0
-                # with simultaneous constraint l(x_next, z_next, ...) = 0
-                x_next = x_cur.copy()
-                z_next = z_cur.copy()
-                for _ in range(self._newton_max_iter):
-                    # Update z to satisfy constraint at current x_next
-                    z_next = self._solve_constraint(x_next, z_next, u, d, p, t_cur + h)
-                    f_val = self._model.f(x_next, z_next, u, d, p, t_cur + h)
-                    F = x_next - x_cur - f_val * h - noise
-                    if np.linalg.norm(F) < self._newton_tol:
-                        break
-                    J = (np.eye(nx)
-                         - h * self._model.dfdx(x_next, z_next, u, d, p, t_cur + h))
-                    x_next = x_next - np.linalg.solve(J, F)
+                # Solve coupled system:
+                #   F(x_next) = x_next − (x_cur + noise) − f(x_next, z_next,…) h = 0
+                #   l(x_next, z_next, …) = 0
+                # via alternating Newton: z given x (inner), then x (outer).
+                rhs = x_cur + noise
+                t_next = t_cur + h
+                z_ref = [z_cur.copy()]
+
+                def residual(xn: np.ndarray) -> np.ndarray:
+                    z_ref[0] = self._solve_constraint(xn, z_ref[0], u, d, p, t_next)
+                    return xn - rhs - self._model.f(xn, z_ref[0], u, d, p, t_next) * h
+
+                def jacobian(xn: np.ndarray) -> np.ndarray:
+                    return (np.eye(nx)
+                            - h * self._model.dfdx(xn, z_ref[0], u, d, p, t_next))
+
+                x_next = _newton_solve(
+                    residual, jacobian, x_cur.copy(),
+                    tol=self._newton_tol, max_iter=self._newton_max_iter,
+                )
+                z_next = self._solve_constraint(x_next, z_ref[0], u, d, p, t_next)
 
             x_cur = x_next
             z_cur = z_next

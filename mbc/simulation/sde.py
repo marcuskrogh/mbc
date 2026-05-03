@@ -17,7 +17,7 @@ diffusion evaluated explicitly:
 
 where ``h = dt / n_steps`` is the sub-step size and w_k ~ N(0, Q_c).
 
-The implicit step for IE is solved by fixed-point / Newton iteration.
+The implicit step for IE is solved via :func:`_newton_solve`.
 
 Reference:  Ph.D. thesis, Ch. 5.
 """
@@ -27,6 +27,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..models import ContinuousDiscreteModel
+from .._utils import _newton_solve
 
 
 class SDESimulator:
@@ -121,17 +122,17 @@ class SDESimulator:
                 f_val = self._model.f(x_cur, u, d, p, t_cur)
                 x_cur = x_cur + f_val * h + noise
             else:  # IE — implicit drift, explicit diffusion
-                # Solve: x_next = x_cur + f(x_next, ..., t+h) * h + noise
-                # via Newton:  F(x_next) = x_next - x_cur - f(x_next)*h - noise = 0
-                x_next = x_cur.copy()
-                for _ in range(50):
-                    f_val = self._model.f(x_next, u, d, p, t_cur + h)
-                    F = x_next - x_cur - f_val * h - noise
-                    if np.linalg.norm(F) < 1e-12:
-                        break
-                    J = np.eye(nx) - h * self._model.dfdx(x_next, u, d, p, t_cur + h)
-                    x_next = x_next - np.linalg.solve(J, F)
-                x_cur = x_next
+                # Solve:  F(x_next) = x_next − (x_cur + noise) − f(x_next,…) h = 0
+                rhs = x_cur + noise
+                t_next = t_cur + h
+
+                def residual(xn: np.ndarray) -> np.ndarray:
+                    return xn - rhs - self._model.f(xn, u, d, p, t_next) * h
+
+                def jacobian(xn: np.ndarray) -> np.ndarray:
+                    return np.eye(nx) - h * self._model.dfdx(xn, u, d, p, t_next)
+
+                x_cur = _newton_solve(residual, jacobian, x_cur.copy(), tol=1e-12)
 
             t_cur += h
 
