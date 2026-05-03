@@ -124,7 +124,7 @@ class SDAESimulator:
         t_cur = t
 
         for _ in range(self._n_steps):
-            # Diffusion: sigma encodes full noise magnitude, sigma @ sigma^T = Q
+            # Diffusion: sigma encodes continuous-time noise magnitude; dw ~ N(0, I dt)
             sigma_val = self._model.sigma(x_cur, z_cur, u, d, p, t_cur)  # (nx, nw)
             nw = sigma_val.shape[1]
             xi = self._rng.standard_normal(nw)

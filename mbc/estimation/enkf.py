@@ -121,7 +121,7 @@ class ContinuousDiscreteEnKF:
         nx = self._nx
         N = self._N
 
-        # Diffusion: sigma encodes full noise magnitude, sigma @ sigma^T = Q
+        # Diffusion: sigma encodes continuous-time noise magnitude; dw ~ N(0, I dt)
         x_mean0 = self._X.mean(axis=1)
         sigma_val = model.sigma(x_mean0, u, d, p, t)  # (nx, nw)
         nw = sigma_val.shape[1]
