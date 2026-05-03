@@ -136,9 +136,6 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     def nw(self) -> int: return 2
 
     @property
-    def Q_c(self) -> np.ndarray: return self._Q_c_val.copy()
-
-    @property
     def Rm(self) -> np.ndarray: return self._R_val.copy()
 
     def f(self, x, u, d, p, t):
@@ -149,11 +146,17 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
         return np.array([dc_A, dc_B])
 
     def sigma(self, x, u, d, p, t):
-        # sigma sigma^T = Q_c = diag([0.01, 0.005]); so sigma = diag([sqrt(0.01), sqrt(0.005)])
+        # sigma @ sigma.T = diag([0.01, 0.005]); choose sigma = diag([0.1, sqrt(0.005)])
         return np.diag([0.1, np.sqrt(0.005)])
 
     def hm(self, x, u, d, p, t):
         return np.array([x[1]])  # measure c_B
+
+    def g(self, x, u, d, p, t):
+        return np.array([x[1]])  # controlled output: c_B
+
+    @property
+    def nz(self) -> int: return 1
 
 
 _VDV_SS = np.array([0.097141, 0.048329])  # steady state at D=0.5 h⁻¹
