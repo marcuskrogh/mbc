@@ -17,7 +17,7 @@ diffusion evaluated explicitly:
 
 where ``h = dt / n_steps`` is the sub-step size and w_k ~ N(0, Q_c).
 
-The implicit step for IE is solved by fixed-point / Newton iteration.
+The implicit step for IE is solved via :func:`_newton_solve`.
 
 Reference:  Ph.D. thesis, Ch. 5.
 """
@@ -27,6 +27,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..models import ContinuousDiscreteModel
+from .._utils import _newton_solve
 
 
 class SDESimulator:
@@ -58,9 +59,19 @@ class SDESimulator:
         scheme: str = "EE",
         seed: int | None = None,
     ) -> None:
-        raise NotImplementedError(
-            "SDESimulator.__init__ is not yet implemented."
-        )
+        if scheme not in ("EE", "IE"):
+            raise ValueError(f"Unknown scheme '{scheme}'; choose 'EE' or 'IE'.")
+        self._model = model
+        self._dt = dt
+        self._n_steps = n_steps
+        self._scheme = scheme
+        self._rng = np.random.default_rng(seed)
+        # Pre-compute Cholesky factor of Q_c for noise generation: L L^T = Q_c
+        Q_c = np.asarray(model.Q_c, dtype=float)
+        try:
+            self._L = np.linalg.cholesky(Q_c)
+        except np.linalg.LinAlgError:
+            self._L = np.linalg.cholesky(Q_c + 1e-14 * np.eye(Q_c.shape[0]))
 
     def step(
         self,
@@ -88,15 +99,44 @@ class SDESimulator:
         Returns
         -------
         x_next : (nx,) state at t + dt (one realisation).
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
-        raise NotImplementedError(
-            "SDESimulator.step is not yet implemented."
-        )
+        h = self._dt / self._n_steps
+        sqrt_h = np.sqrt(h)
+        L = self._L
+        nw = L.shape[0]
+        nx = x.shape[0]
+
+        x_cur = x.copy()
+        t_cur = t
+
+        for _ in range(self._n_steps):
+            # Stochastic increment: dW ~ N(0, Q_c * h)
+            # Generated as  L @ z * sqrt(h)  where z ~ N(0, I_nw)
+            z = self._rng.standard_normal(nw)
+            dW = L @ z * sqrt_h
+
+            g_val = self._model.g(x_cur, u, d, p, t_cur)  # (nx, nw)
+            noise = g_val @ dW                              # (nx,)
+
+            if self._scheme == "EE":
+                f_val = self._model.f(x_cur, u, d, p, t_cur)
+                x_cur = x_cur + f_val * h + noise
+            else:  # IE — implicit drift, explicit diffusion
+                # Solve:  F(x_next) = x_next − (x_cur + noise) − f(x_next,…) h = 0
+                rhs = x_cur + noise
+                t_next = t_cur + h
+
+                def residual(xn: np.ndarray) -> np.ndarray:
+                    return xn - rhs - self._model.f(xn, u, d, p, t_next) * h
+
+                def jacobian(xn: np.ndarray) -> np.ndarray:
+                    return np.eye(nx) - h * self._model.dfdx(xn, u, d, p, t_next)
+
+                x_cur = _newton_solve(residual, jacobian, x_cur.copy(), tol=1e-12)
+
+            t_cur += h
+
+        return x_cur
 
     def simulate(
         self,
@@ -125,13 +165,14 @@ class SDESimulator:
         Returns
         -------
         X : (T+1, nx) ndarray
-            State trajectory where X[0] = x0 and X[k+1] = step(X[k], ...).  
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
+            State trajectory where X[0] = x0 and X[k+1] = step(X[k], ...).
         """
-        raise NotImplementedError(
-            "SDESimulator.simulate is not yet implemented."
-        )
+        T = U.shape[0]
+        nx = x0.shape[0]
+        X = np.empty((T + 1, nx))
+        X[0] = x0.copy()
+        t_cur = t0
+        for k in range(T):
+            X[k + 1] = self.step(X[k], U[k], D[k], P[k], t_cur)
+            t_cur += self._dt
+        return X

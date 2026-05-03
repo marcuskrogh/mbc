@@ -34,7 +34,8 @@ model-based control, estimation, identification, and simulation.
       * ``MPCController``           – KalmanFilter + OptimalControlProblem.
       * ``CDOptimalControlProblem`` – receding-horizon QP for linear CD systems.
       * ``CDMPCController``         – CDKalmanFilter + CDOptimalControlProblem.
-      * ``EconomicNMPC``            – economic nonlinear MPC (Ph.D. Ch. 9).
+      * ``EconomicOptimalControlProblem`` – economic nonlinear OCP (Ph.D. Ch. 9).
+      * ``EconomicNMPCController``      – estimator + EconomicOptimalControlProblem.
 
   mbc.identification
       System-identification / parameter-estimation utilities:
@@ -83,7 +84,8 @@ from .control import (
     MPCController,
     CDOptimalControlProblem,
     CDMPCController,
-    EconomicNMPC,
+    EconomicOptimalControlProblem,
+    EconomicNMPCController,
 )
 from .identification.estimator import ParameterEstimator, EstimationResult
 from .identification.likelihood import (
@@ -113,7 +115,8 @@ __all__ = [
     "MPCController",
     "CDOptimalControlProblem",
     "CDMPCController",
-    "EconomicNMPC",
+    "EconomicOptimalControlProblem",
+    "EconomicNMPCController",
     # Identification
     "ParameterEstimator",
     "EstimationResult",

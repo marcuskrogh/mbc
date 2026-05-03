@@ -16,6 +16,8 @@ Provides helpers used across the mbc sub-packages:
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 from cvxopt import matrix
 
@@ -196,3 +198,51 @@ def _van_loan(
     A_d = E[n:, n:].T          # expm(A_c dt)
     Q_d = A_d @ E[:n, n:]      # expm(A_c dt) · (expm(-A_c dt) Q_d)
     return (Q_d + Q_d.T) * 0.5  # symmetrise
+
+
+# ── Newton's method ───────────────────────────────────────────────────────
+
+
+def _newton_solve(
+    residual: Callable[[np.ndarray], np.ndarray],
+    jacobian: Callable[[np.ndarray], np.ndarray],
+    x0: np.ndarray,
+    tol: float = 1e-10,
+    max_iter: int = 50,
+) -> np.ndarray:
+    """
+    Solve the nonlinear system F(x) = 0 via Newton's method.
+
+    Starting from the initial guess ``x0``, iterates
+
+        x ← x − J(x)⁻¹ F(x)
+
+    until ``‖F(x)‖ < tol`` or ``max_iter`` iterations have been taken.
+
+    Parameters
+    ----------
+    residual : callable (x,) → (n,)
+        Residual function F(x).
+    jacobian : callable (x,) → (n, n)
+        Jacobian of F with respect to x.
+    x0 : (n,) ndarray
+        Initial guess.
+    tol : float, optional
+        Convergence tolerance on ``‖F(x)‖``.  Default: 1e-10.
+    max_iter : int, optional
+        Maximum number of Newton iterations.  Default: 50.
+
+    Returns
+    -------
+    x : (n,) ndarray
+        Approximate solution satisfying ``‖F(x)‖ < tol`` (or the best
+        iterate after ``max_iter`` steps).
+    """
+    x = x0.copy()
+    for _ in range(max_iter):
+        F = residual(x)
+        if np.linalg.norm(F) < tol:
+            break
+        J = jacobian(x)
+        x = x - np.linalg.solve(J, F)
+    return x
