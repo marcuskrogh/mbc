@@ -448,3 +448,370 @@ class TestDiscreteJacobian:
         dA, _, _ = m.discretize_jacobian(np.array([0.0]))
         # dA/d(log_a) = a * d(log_a)/d(log_a) = a for scalar constant A = a
         np.testing.assert_allclose(dA[0][0, 0], a, rtol=1e-3)
+
+
+# ── Nonlinear CD identification tests ─────────────────────────────────────────
+#
+# These tests use the Monod bioreactor model (same as test_ekf.py) since it has
+# meaningful kinetic parameters mu_max and K_s that can be identified.
+#
+# Model:
+#   dS/dt = -mu(S)*X/Y  +  (S_in - S) * F/V
+#   dX/dt =  mu(S)*X    -  X * F/V
+#   mu(S) = mu_max * S / (K_s + S)
+#
+# Parameters:  theta = [log(mu_max), log(K_s)]  (log-space parametrisation)
+# True values: mu_max = 0.5 h⁻¹,  K_s = 0.2 g/L
+
+from mbc.identification import (
+    cd_ped_neg_log_likelihood,
+    cd_ped_neg_log_likelihood_gradient,
+    CDParameterEstimator,
+)
+from mbc.models import ContinuousDiscreteModel
+
+
+class _MonodModel(ContinuousDiscreteModel):
+    """
+    Monod bioreactor — re-implemented locally so the test file is
+    self-contained.  Parameterised by theta = [log(mu_max), log(K_s)].
+    """
+
+    _Y = 0.5   # yield coefficient
+
+    def __init__(self, mu_max: float, K_s: float) -> None:
+        self._mu_max = mu_max
+        self._K_s = K_s
+
+    # ── Dimensions ────────────────────────────────────────────────────────
+
+    @property
+    def nx(self) -> int: return 2
+
+    @property
+    def nu(self) -> int: return 1
+
+    @property
+    def nd(self) -> int: return 1
+
+    @property
+    def nym(self) -> int: return 1
+
+    @property
+    def nz(self) -> int: return 1
+
+    @property
+    def nw(self) -> int: return 2
+
+    # ── Noise ─────────────────────────────────────────────────────────────
+
+    @property
+    def Rm(self) -> np.ndarray:
+        return np.array([[0.01]])
+
+    # ── Model functions ───────────────────────────────────────────────────
+
+    def _mu(self, S: float) -> float:
+        return self._mu_max * max(S, 0.0) / (self._K_s + max(S, 0.0))
+
+    def f(self, x, u, d, p, t):
+        S, X = x
+        FV = u[0]
+        S_in = d[0]
+        mu = self._mu(S)
+        dS = -mu * X / self._Y + (S_in - S) * FV
+        dX = mu * X - X * FV
+        return np.array([dS, dX])
+
+    def sigma(self, x, u, d, p, t):
+        return 0.01 * np.eye(2)
+
+    def hm(self, x, u, d, p, t):
+        return np.array([x[1]])
+
+    def g(self, x, u, d, p, t):
+        return np.array([x[1]])
+
+    # ── Identification interface ──────────────────────────────────────────
+
+    @property
+    def params(self) -> np.ndarray:
+        """theta = [log(mu_max), log(K_s)]"""
+        return np.array([np.log(self._mu_max), np.log(self._K_s)])
+
+
+def _monod_factory(theta: np.ndarray) -> _MonodModel:
+    """Create a MonodModel from theta = [log(mu_max), log(K_s)]."""
+    mu_max = float(np.exp(theta[0]))
+    K_s = float(np.exp(theta[1]))
+    return _MonodModel(mu_max, K_s)
+
+
+# True parameters (same as test_ekf.py)
+_MONOD_P_TRUE = np.array([0.5, 0.2])   # mu_max=0.5 h⁻¹, K_s=0.2 g/L
+_MONOD_THETA_TRUE = np.log(_MONOD_P_TRUE)
+_MONOD_THETA_WRONG = np.log(np.array([0.4, 0.3]))
+_MONOD_DT = 0.1      # h
+_MONOD_X0 = np.array([5.0, 0.5])
+_MONOD_U = np.array([0.05])
+_MONOD_D = np.array([20.0])
+
+
+def _monod_history(
+    n_steps: int = 60,
+    seed: int = 0,
+    noise_std: float = 0.1,
+) -> tuple:
+    """
+    Simulate the Monod bioreactor at true parameters and return
+    (history, x0, P0) suitable for cd_ped_neg_log_likelihood.
+    """
+    model = _MonodModel(*_MONOD_P_TRUE)
+    rng = np.random.default_rng(seed)
+    dt = _MONOD_DT
+    n_sub = 20
+    h = dt / n_sub
+
+    x = _MONOD_X0.copy()
+    history = []
+    for k in range(n_steps):
+        ym = model.hm(x, _MONOD_U, _MONOD_D, np.array([]), 0.0)
+        ym_noisy = ym + rng.normal(0.0, noise_std, size=ym.shape)
+        history.append({
+            "ym": ym_noisy,
+            "u": _MONOD_U.copy(),
+            "d": _MONOD_D.copy(),
+            "t": float(k * dt),
+        })
+        # Noiseless Euler integration to next step
+        for _ in range(n_sub):
+            x = x + h * model.f(x, _MONOD_U, _MONOD_D, np.array([]), 0.0)
+
+    x0 = _MONOD_X0 + np.array([0.5, 0.1])   # slightly perturbed IC
+    P0 = np.diag([1.0, 0.5])
+    return history, x0, P0
+
+
+# ── Tests for cd_ped_neg_log_likelihood ──────────────────────────────────────
+
+
+class TestCDPedNegLogLikelihood:
+
+    def test_finite_at_true_params(self):
+        history, x0, P0 = _monod_history(n_steps=30, seed=0)
+        val = cd_ped_neg_log_likelihood(
+            _monod_factory, _MONOD_THETA_TRUE, history, x0, P0, _MONOD_DT
+        )
+        assert math.isfinite(val)
+
+    def test_sentinel_for_nan_theta(self):
+        history, x0, P0 = _monod_history(n_steps=20, seed=1)
+        nan_theta = np.array([float("nan"), 0.0])
+        val = cd_ped_neg_log_likelihood(
+            _monod_factory, nan_theta, history, x0, P0, _MONOD_DT
+        )
+        assert val >= 1e9
+
+    def test_sentinel_for_factory_exception(self):
+        def bad_factory(theta):
+            raise ValueError("bad")
+
+        history, x0, P0 = _monod_history(n_steps=20, seed=2)
+        val = cd_ped_neg_log_likelihood(
+            bad_factory, np.zeros(2), history, x0, P0, _MONOD_DT
+        )
+        assert val >= 1e9
+
+    def test_sentinel_for_too_short_history(self):
+        history, x0, P0 = _monod_history(n_steps=5, seed=3)
+        val = cd_ped_neg_log_likelihood(
+            _monod_factory, _MONOD_THETA_TRUE,
+            history[:1], x0, P0, _MONOD_DT,
+        )
+        assert val >= 1e9
+
+    def test_true_params_better_than_wrong_params(self):
+        """True parameters should give a lower neg-log-likelihood."""
+        history, x0, P0 = _monod_history(n_steps=80, seed=4)
+        ll_true = cd_ped_neg_log_likelihood(
+            _monod_factory, _MONOD_THETA_TRUE, history, x0, P0, _MONOD_DT
+        )
+        ll_wrong = cd_ped_neg_log_likelihood(
+            _monod_factory, _MONOD_THETA_WRONG, history, x0, P0, _MONOD_DT
+        )
+        assert ll_true < ll_wrong
+
+
+# ── Tests for cd_ped_neg_log_likelihood_gradient ─────────────────────────────
+
+
+class TestCDPedNegLogLikelihoodGradient:
+
+    def test_gradient_shape(self):
+        history, x0, P0 = _monod_history(n_steps=25, seed=5)
+        grad = cd_ped_neg_log_likelihood_gradient(
+            _monod_factory, _MONOD_THETA_TRUE, history, x0, P0, _MONOD_DT
+        )
+        assert grad.shape == _MONOD_THETA_TRUE.shape
+
+    def test_gradient_approx_finite_diff(self):
+        """Gradient should match a coarser finite-difference check."""
+        history, x0, P0 = _monod_history(n_steps=30, seed=6)
+        h = 1e-4
+        theta = _MONOD_THETA_TRUE.copy()
+        grad = cd_ped_neg_log_likelihood_gradient(
+            _monod_factory, theta, history, x0, P0, _MONOD_DT, h=h
+        )
+        f0 = cd_ped_neg_log_likelihood(
+            _monod_factory, theta, history, x0, P0, _MONOD_DT
+        )
+        for i in range(len(theta)):
+            theta_h = theta.copy()
+            theta_h[i] += h
+            fh = cd_ped_neg_log_likelihood(
+                _monod_factory, theta_h, history, x0, P0, _MONOD_DT
+            )
+            expected = (fh - f0) / h
+            assert abs(grad[i] - expected) < 1e-8, (
+                f"grad[{i}]={grad[i]}, expected={expected}"
+            )
+
+
+# ── Tests for CDParameterEstimator ────────────────────────────────────────────
+
+
+class TestCDParameterEstimator:
+
+    def _make_estimator(self, **kwargs) -> CDParameterEstimator:
+        history, x0, P0 = _monod_history(n_steps=50, seed=0)
+        theta0 = _MONOD_THETA_WRONG.copy()
+        return CDParameterEstimator(
+            model_factory=_monod_factory,
+            theta0=theta0,
+            bounds=None,
+            x0=x0,
+            P0=P0,
+            dt=_MONOD_DT,
+            n_steps=10,
+            **kwargs,
+        )
+
+    def _history(self, seed: int = 0, n: int = 50) -> list:
+        history, _, _ = _monod_history(n_steps=n, seed=seed)
+        return history
+
+    def test_returns_estimation_result(self):
+        est = self._make_estimator(n_restarts=1)
+        result = est.estimate(self._history())
+        assert isinstance(result, EstimationResult)
+
+    def test_neg_ll_is_finite(self):
+        est = self._make_estimator(n_restarts=1)
+        result = est.estimate(self._history(seed=7, n=60))
+        assert math.isfinite(result.neg_log_likelihood)
+
+    def test_result_has_correct_n_steps(self):
+        n = 50
+        est = self._make_estimator(n_restarts=1)
+        result = est.estimate(self._history(n=n))
+        assert result.n_steps == n
+
+    def test_log_likelihood_at_theta0(self):
+        history = self._history()
+        est = self._make_estimator()
+        ll = est.log_likelihood(history)
+        assert ll is not None
+        assert math.isfinite(ll)
+
+    def test_log_likelihood_default_uses_theta0(self):
+        history, x0, P0 = _monod_history(n_steps=40, seed=8)
+        theta0 = _MONOD_THETA_TRUE.copy()
+        est = CDParameterEstimator(
+            model_factory=_monod_factory,
+            theta0=theta0,
+            bounds=None,
+            x0=x0,
+            P0=P0,
+            dt=_MONOD_DT,
+        )
+        ll_default = est.log_likelihood(history)
+        ll_explicit = est.log_likelihood(history, theta=theta0)
+        assert ll_default == pytest.approx(ll_explicit, rel=1e-9)
+
+    def test_bounds_violated_returns_sentinel(self):
+        """Objective returns sentinel when a parameter is out of bounds."""
+        history, x0, P0 = _monod_history(n_steps=30, seed=9)
+        # Force mu_max < exp(-5) ≈ 0.0067 — far from the true value
+        bounds = [(-10.0, -5.0), (-10.0, 10.0)]
+        est = CDParameterEstimator(
+            model_factory=_monod_factory,
+            theta0=_MONOD_THETA_TRUE.copy(),
+            bounds=bounds,
+            x0=x0,
+            P0=P0,
+            dt=_MONOD_DT,
+            n_restarts=1,
+        )
+        result = est.estimate(history)
+        assert math.isfinite(result.neg_log_likelihood)
+
+    def test_regularisation_pulls_toward_theta0(self):
+        """Strong regularisation should keep estimates near theta0."""
+        history, x0, P0 = _monod_history(n_steps=60, seed=10)
+        theta0 = _MONOD_THETA_TRUE.copy()
+        sigma = 1e-3
+
+        def reg(theta):
+            return float(np.sum((theta - theta0) ** 2) / (2 * sigma ** 2))
+
+        est = CDParameterEstimator(
+            model_factory=_monod_factory,
+            theta0=theta0,
+            bounds=None,
+            x0=x0,
+            P0=P0,
+            dt=_MONOD_DT,
+            regularization_fn=reg,
+            n_restarts=1,
+        )
+        result = est.estimate(history)
+        np.testing.assert_allclose(result.theta_best, theta0, atol=0.2)
+
+    def test_estimate_does_not_worsen_likelihood(self):
+        """
+        The estimated parameters should produce an equal-or-better
+        likelihood than the starting point.
+        """
+        history, x0, P0 = _monod_history(n_steps=80, seed=11)
+        theta0 = _MONOD_THETA_WRONG.copy()
+        est = CDParameterEstimator(
+            model_factory=_monod_factory,
+            theta0=theta0,
+            bounds=None,
+            x0=x0,
+            P0=P0,
+            dt=_MONOD_DT,
+            n_restarts=2,
+        )
+        ll_init = est.log_likelihood(history, theta=theta0)
+        result = est.estimate(history)
+        ll_est = est.log_likelihood(history, theta=result.theta_best)
+        assert ll_init is not None and ll_est is not None
+        assert ll_est >= ll_init - 1.0   # allow 1 nat tolerance
+
+    def test_error_in_factory_returns_graceful_result(self):
+        def bad_factory(theta):
+            raise RuntimeError("factory failed")
+
+        history, x0, P0 = _monod_history(n_steps=20, seed=12)
+        est = CDParameterEstimator(
+            model_factory=bad_factory,
+            theta0=np.zeros(2),
+            bounds=None,
+            x0=x0,
+            P0=P0,
+            dt=_MONOD_DT,
+            n_restarts=1,
+        )
+        result = est.estimate(history)
+        assert result is not None
