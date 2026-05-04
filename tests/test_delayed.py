@@ -178,10 +178,6 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return 2
 
     @property
-    def Q_c(self) -> np.ndarray:
-        return self._Q_c_val.copy()
-
-    @property
     def Rm(self) -> np.ndarray:
         return self._R_val.copy()
 
@@ -197,6 +193,13 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
 
     def hm(self, x, u, d, p, t):
         return x.copy()  # full-state observation (both states)
+
+    def g(self, x, u, d, p, t):
+        return x.copy()  # controlled outputs: both states
+
+    @property
+    def nz(self) -> int:
+        return 2
 
 
 _VDV_SS = np.array([0.097141, 0.048329])

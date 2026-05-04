@@ -136,9 +136,6 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     def nw(self) -> int: return 2
 
     @property
-    def Q_c(self) -> np.ndarray: return self._Q_c_val.copy()
-
-    @property
     def Rm(self) -> np.ndarray: return self._R_val.copy()
 
     def f(self, x, u, d, p, t):
@@ -149,11 +146,17 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
         return np.array([dc_A, dc_B])
 
     def sigma(self, x, u, d, p, t):
-        # sigma sigma^T = Q_c = diag([0.01, 0.005]); so sigma = diag([sqrt(0.01), sqrt(0.005)])
+        # sigma @ sigma.T = diag([0.01, 0.005]); choose sigma = diag([0.1, sqrt(0.005)])
         return np.diag([0.1, np.sqrt(0.005)])
 
     def hm(self, x, u, d, p, t):
         return np.array([x[1]])  # measure c_B
+
+    def g(self, x, u, d, p, t):
+        return np.array([x[1]])  # controlled output: c_B
+
+    @property
+    def nz(self) -> int: return 1
 
 
 _VDV_SS = np.array([0.097141, 0.048329])  # steady state at D=0.5 h⁻¹
@@ -204,9 +207,6 @@ class MonodBioreactor(ContinuousDiscreteModel):
     def nw(self) -> int: return 2
 
     @property
-    def Q_c(self) -> np.ndarray: return self._Q_c_val.copy()
-
-    @property
     def Rm(self) -> np.ndarray: return self._R_val.copy()
 
     def _mu(self, S, p):
@@ -224,11 +224,17 @@ class MonodBioreactor(ContinuousDiscreteModel):
         return np.array([dS, dX])
 
     def sigma(self, x, u, d, p, t):
-        # sigma sigma^T = Q_c = diag([1e-4, 1e-4]); so sigma = 0.01 * I
+        # sigma @ sigma.T = diag([1e-4, 1e-4]); so sigma = 0.01 * I
         return 0.01 * np.eye(2)
 
     def hm(self, x, u, d, p, t):
         return np.array([x[1]])  # measure biomass X
+
+    def g(self, x, u, d, p, t):
+        return np.array([x[1]])  # controlled output: biomass X
+
+    @property
+    def nz(self) -> int: return 1
 
 
 _MONOD_P_TRUE = np.array([0.5, 0.2])   # mu_max=0.5 h⁻¹, K_s=0.2 g/L
@@ -276,7 +282,7 @@ class TestVanDeVusseModel:
         assert m.nx == 2
         assert m.nu == 1
         assert m.nd == 0
-        assert m.ny == 1
+        assert m.nym == 1
         assert m.nw == 2
 
     def test_f_shape(self, vdv_model):
@@ -292,11 +298,14 @@ class TestVanDeVusseModel:
         assert y.shape == (1,)
         assert float(y[0]) == pytest.approx(_VDV_SS[1])
 
-    def test_Q_c_shape(self, vdv_model):
-        assert vdv_model.Q_c.shape == (2, 2)
+    def test_sigma_noise_cov_shape(self, vdv_model):
+        """sigma @ sigma.T gives the instantaneous noise covariance matrix."""
+        sig = vdv_model.sigma(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
+        Q = sig @ sig.T
+        assert Q.shape == (2, 2)
 
-    def test_R_shape(self, vdv_model):
-        assert vdv_model.R.shape == (1, 1)
+    def test_Rm_shape(self, vdv_model):
+        assert vdv_model.Rm.shape == (1, 1)
 
     def test_approximate_steady_state(self, vdv_model):
         """Near the nominal SS, f should be close to zero."""
@@ -318,16 +327,16 @@ class TestVanDeVusseModel:
             J_ref[:, k] = (vdv_model.f(xh, u, _VDV_D, _VDV_P, 0.0) - f0) / h
         np.testing.assert_allclose(J, J_ref, atol=1e-4)
 
-    def test_dhdx_fd_vs_default(self, vdv_model):
-        """dhdx FD Jacobian rows and columns match expectation (C = [0,1])."""
-        H = vdv_model.dhdx(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
+    def test_dhmdx_fd_vs_default(self, vdv_model):
+        """dhmdx FD Jacobian rows and columns match expectation (Cm = [0,1])."""
+        H = vdv_model.dhmdx(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert H.shape == (1, 2)
         np.testing.assert_allclose(H[0, 0], 0.0, atol=1e-8)
         np.testing.assert_allclose(H[0, 1], 1.0, atol=1e-4)
 
-    def test_dhdu_zero_for_linear_output(self, vdv_model):
-        """h = c_B does not depend on u, so dhdu should be ~ 0."""
-        Hu = vdv_model.dhdu(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P)
+    def test_dhmdu_zero_for_linear_output(self, vdv_model):
+        """hm = c_B does not depend on u, so dhmdu should be ~ 0."""
+        Hu = vdv_model.dhmdu(_VDV_SS, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert Hu.shape == (1, 1)
         np.testing.assert_allclose(Hu, 0.0, atol=1e-6)
 
@@ -340,7 +349,7 @@ class TestMonodModel:
         assert m.nx == 2
         assert m.nu == 1
         assert m.nd == 1
-        assert m.ny == 1
+        assert m.nym == 1
 
     def test_f_shape(self, monod_model):
         fx = monod_model.f(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE, 0.0)
@@ -370,8 +379,8 @@ class TestMonodModel:
         Jp = monod_model.dfdp(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE, 0.0)
         assert Jp.shape == (2, 2)
 
-    def test_dhdp_shape(self, monod_model):
-        Jhp = monod_model.dhdp(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE)
+    def test_dhmdp_shape(self, monod_model):
+        Jhp = monod_model.dhmdp(_MONOD_X0, _MONOD_U, _MONOD_D, _MONOD_P_TRUE, 0.0)
         assert Jhp.shape == (1, 2)
 
 
@@ -531,10 +540,10 @@ class TestVanDeVusseTracking:
         ekf = ContinuousDiscreteEKF(model, x0_est, P0, dt=self._dt, n_steps=10)
 
         rng = np.random.default_rng(42)
-        R_std = np.sqrt(model.R[0, 0])
+        R_std = np.sqrt(model.Rm[0, 0])
         X_est = [ekf.x_hat.copy()]
         for k in range(self._T):
-            y_true = model.h(X_true[k + 1], U[k], D[k] if D.shape[1] > 0 else np.zeros(0), _VDV_P)
+            y_true = model.hm(X_true[k + 1], U[k], D[k] if D.shape[1] > 0 else np.zeros(0), _VDV_P, k * self._dt)
             y_noisy = y_true + R_std * rng.standard_normal(1)
             ekf.step(y_noisy, U[k], D[k] if D.shape[1] > 0 else np.zeros(0), _VDV_P, k * self._dt)
             X_est.append(ekf.x_hat.copy())
@@ -556,12 +565,12 @@ class TestVanDeVusseTracking:
         ekf = ContinuousDiscreteEKF(model, x0_est, P0, dt=self._dt, n_steps=10)
 
         rng = np.random.default_rng(7)
-        R_std = np.sqrt(model.R[0, 0])
+        R_std = np.sqrt(model.Rm[0, 0])
         errors_first = []
         errors_second = []
         half = self._T // 2
         for k in range(self._T):
-            y_true = model.h(X_true[k + 1], U[k], np.zeros(0), _VDV_P)
+            y_true = model.hm(X_true[k + 1], U[k], np.zeros(0), _VDV_P, k * self._dt)
             y = y_true + R_std * rng.standard_normal(1)
             ekf.step(y, U[k], np.zeros(0), _VDV_P, k * self._dt)
             err_k = np.linalg.norm(ekf.x_hat - X_true[k + 1])
@@ -601,10 +610,10 @@ class TestMonodTracking:
         ekf = ContinuousDiscreteEKF(model, x0_est, P0, dt=self._dt, n_steps=20)
 
         rng = np.random.default_rng(123)
-        R_std = np.sqrt(model.R[0, 0])
+        R_std = np.sqrt(model.Rm[0, 0])
         X_est = [ekf.x_hat.copy()]
         for k in range(self._T):
-            y_true = model.h(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
+            y_true = model.hm(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE, k * self._dt)
             y = y_true + R_std * rng.standard_normal(1)
             ekf.step(y, U[k], D[k], _MONOD_P_TRUE, k * self._dt)
             X_est.append(ekf.x_hat.copy())
@@ -625,9 +634,9 @@ class TestMonodTracking:
         ekf = ContinuousDiscreteEKF(model, x0_est, P0, dt=self._dt, n_steps=20)
 
         rng = np.random.default_rng(55)
-        R_std = np.sqrt(model.R[0, 0])
+        R_std = np.sqrt(model.Rm[0, 0])
         for k in range(self._T):
-            y_true = model.h(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
+            y_true = model.hm(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE, k * self._dt)
             y = y_true + R_std * rng.standard_normal(1)
             ekf.step(y, U[k], D[k], _MONOD_P_TRUE, k * self._dt)
 
@@ -648,10 +657,10 @@ class TestMonodTracking:
                 model, _MONOD_X0 + np.array([0.3, 0.05]),
                 np.diag([1.0, 0.5]), dt=self._dt, n_steps=20
             )
-            R_std = np.sqrt(model.R[0, 0])
+            R_std = np.sqrt(model.Rm[0, 0])
             errors = []
             for k in range(self._T):
-                y_true = model.h(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE)
+                y_true = model.hm(X_true[k + 1], U[k], D[k], _MONOD_P_TRUE, k * self._dt)
                 y = y_true + R_std * rng.standard_normal(1)
                 ekf.step(y, U[k], D[k], p_param, k * self._dt)
                 errors.append(np.linalg.norm(ekf.x_hat - X_true[k + 1]))

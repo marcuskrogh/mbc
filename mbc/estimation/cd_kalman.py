@@ -7,8 +7,8 @@ specialised to a linear system where no Jacobian linearisation is required.
 
 Model
 -----
-    dx = (A_c x + B_c u + E_c d) dt + G dw,   w ~ N(0, Q_c)
-    y[k] = C x[k] + v[k],                      v[k] ~ N(0, R)
+    dx = (A x + B u + E d) dt + G dw(t),   dw(t) ~ N(0, I dt)
+    y[k] = C x[k] + v[k],                  v[k] ~ N(0, R)
 
 The filter operates in two steps at each measurement time t_k:
 
@@ -55,7 +55,7 @@ from typing import Optional, List, TYPE_CHECKING
 
 import numpy as np
 
-from .._utils import _np_to_cvx, _cvx_to_np, _any_to_np1d
+from .._utils import _np_to_cvx, _any_to_np1d
 
 if TYPE_CHECKING:
     from ..models import LinearContinuousDiscreteModel
@@ -73,9 +73,9 @@ class CDKalmanFilter:
     Parameters
     ----------
     model : LinearContinuousDiscreteModel
-        Plant model providing ``A_c``, ``B_c``, ``E_c``, ``G``, ``Q_c``,
-        ``C``, ``R``, ``dt``, ``x`` (initial state), ``n_x``, ``n_u``,
-        ``n_d``.
+        Plant model providing ``A``, ``B``, ``E``, ``G``,
+        ``C``, ``Rm``, ``dt``, ``x``, ``nx``, ``nu``,
+        ``nd``.
     P0 : cvxopt.matrix (n, n), optional
         Initial state error covariance.  Default: Iₙ.
     n_steps : int, optional
@@ -106,7 +106,7 @@ class CDKalmanFilter:
         self._h: float = model.dt / n_steps
 
         # Measurement noise covariance (numpy)
-        self._R_np: np.ndarray = _cvx_to_np(model.R_cvx)
+        self._R_np: np.ndarray = model.Rm.copy()
 
         # State error covariance (numpy internally)
         if P0 is not None:
@@ -286,7 +286,7 @@ class CDKalmanFilter:
         -------
         x_hat : (n,) corrected state estimate (copy).
         """
-        C_np = _cvx_to_np(self._model.C_cvx)
+        C_np = self._model.Cm.copy()
         y_np = _any_to_np1d(y)
         l = self._model.nym
         n = self._model.nx

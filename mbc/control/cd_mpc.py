@@ -32,9 +32,10 @@ from __future__ import annotations
 
 from typing import Tuple, TYPE_CHECKING
 
+import numpy as np
 from cvxopt import matrix
 
-from .._utils import _zeros
+from .._utils import _zeros, _np_to_cvx
 from ..estimation.cd_kalman import CDKalmanFilter
 from .cd_ocp import CDOptimalControlProblem
 
@@ -52,7 +53,7 @@ class CDMPCController:
     Parameters
     ----------
     model     : LinearContinuousDiscreteModel
-        Plant model providing ``n_u``, ``n_d``, ``x_ref``, ``discretize``,
+        Plant model providing ``nu``, ``nd``, ``x_ref``, ``discretize``,
         and ``discretize_noise``.
     estimator : CDKalmanFilter
         State estimator.
@@ -103,8 +104,11 @@ class CDMPCController:
         d0 = D[:n_d]
 
         x_hat = self._estimator.update(y, d0)
+        x_ref_cvx = _np_to_cvx(
+            np.asarray(self._model.x_ref, dtype=float).reshape(-1, 1)
+        )
         U_seq, X_seq = self._ocp.solve(
-            x_hat, D, self._model.x_ref_cvx, u_prev=self._u_prev
+            x_hat, D, x_ref_cvx, u_prev=self._u_prev
         )
         u = U_seq[:n_u]
         self._u_prev = matrix(u)

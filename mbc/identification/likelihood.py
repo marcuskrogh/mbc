@@ -16,7 +16,7 @@ where:
 
 The model is provided via a *factory* callable
 ``model_factory(θ) → model`` that returns any object exposing the
-``LinearDiscreteModel`` interface (``n_x``, ``n_u``, ``n_d``,
+``LinearDiscreteModel`` interface (``nx``, ``nu``, ``nd``,
 ``discretize(d_cvx)``, ``predict_offset(d_np)``).  The ``d`` argument
 passed to ``discretize`` is the recorded disturbance from the history; LTI
 model implementations may ignore it.
@@ -66,7 +66,7 @@ def ped_neg_log_likelihood(
     Parameters
     ----------
     model_factory : callable  θ → model
-        Returns a model object exposing ``n_x``, ``n_u``, ``n_d``,
+        Returns a model object exposing ``nx``, ``nu``, ``nd``,
         ``discretize(d_cvx) → (A_cvx, B_cvx, E_cvx)``, and optionally
         ``predict_offset(d_np) → np.ndarray``.
         May raise any exception for invalid θ; the sentinel ``_INVALID_LIKELIHOOD``
@@ -98,9 +98,9 @@ def ped_neg_log_likelihood(
     except Exception:
         return _INVALID_LIKELIHOOD
 
-    n = model.n_x
-    n_u = model.n_u
-    n_d = model.n_d
+    n = model.nx
+    n_u = model.nu
+    n_d = model.nd
 
     # Bootstrap state estimate from first measurement
     try:
