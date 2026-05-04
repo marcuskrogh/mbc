@@ -437,7 +437,7 @@ class CDNMPCController:
 
     At each measurement time t_k the following steps are executed:
 
-      1. **Estimate**  x̂[k] ← ``estimator.step(ym[k], u[k−1], d[k], p, t_k)``
+      1. **Estimate**  x̂[k] ← ``estimator.step(y[k], u[k−1], d[k], p, t_k)``
       2. **Optimise**  U*   ← ``ocp.solve(x̂[k], d_trajectory, u_seq_prev, p, t_k)``
       3. **Apply**     u[k] = U*[0]   (receding horizon)
 
