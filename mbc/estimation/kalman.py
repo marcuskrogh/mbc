@@ -277,10 +277,10 @@ class KalmanFilter:
             active = list(range(l))
 
         if self._first:
-            # Bootstrap:  x̂ = C⁺ y  (left pseudo-inverse)
-            CtC = C_np.T @ C_np
-            Cty = C_np.T @ y_np
-            self._x_np = np.linalg.solve(CtC, Cty)
+            # Bootstrap:  x̂ = C⁺ y  (Moore-Penrose pseudoinverse, minimum-norm)
+            # lstsq handles both overdetermined (nym ≥ nx) and underdetermined
+            # (nym < nx) cases without requiring C to have full column rank.
+            self._x_np, _, _, _ = np.linalg.lstsq(C_np, y_np, rcond=None)
             self._first = False
         else:
             # Use constant discrete-time matrices (no LPV scheduling)

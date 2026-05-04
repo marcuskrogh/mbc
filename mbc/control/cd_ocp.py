@@ -93,20 +93,30 @@ if TYPE_CHECKING:
 class _CDModelAdapter:
     """
     Thin adapter that wraps a ``LinearContinuousDiscreteModel`` and exposes
-    the cvxopt-compatible interface expected by ``OptimalControlProblem``.
+    the numpy interface expected by ``OptimalControlProblem``.
 
     ``OptimalControlProblem.solve`` accesses:
       - ``model.nx``, ``model.nu``, ``model.nd``  (int)
-      - ``model.C``         (cvxopt matrix, for output prediction)
-      - ``model.u_bounds``  (tuple of cvxopt column vectors)
-      - ``model.discretize(d)``  (returns cvxopt matrices)
+      - ``model.Cm``        (numpy ndarray, for output prediction)
+      - ``model.Ad``        (numpy ndarray, ZOH-discretised state matrix)
+      - ``model.Bd``        (numpy ndarray, ZOH-discretised input matrix)
+      - ``model.Ed``        (numpy ndarray, ZOH-discretised disturbance matrix)
+      - ``model.u_bounds``  (tuple of numpy (nu,) arrays)
 
-    This adapter satisfies all requirements by delegating to the
-    appropriate numpy → cvxopt conversion properties on the CD model.
+    The ZOH-discretised matrices are computed once at construction time.
     """
 
     def __init__(self, model: "LinearContinuousDiscreteModel") -> None:
         self._m = model
+        # Compute ZOH-discretised matrices once at construction time to avoid
+        # repeated computation and any thread-safety concerns with lazy init.
+        from .._utils import _zoh_full
+        self._Ad_np, self._Bd_np, self._Ed_np = _zoh_full(
+            model.A, model.B, model.E, model.dt
+        )
+
+    def _ensure_discretized(self) -> None:
+        """No-op: matrices are computed in __init__."""
 
     @property
     def nx(self) -> int:
@@ -120,22 +130,33 @@ class _CDModelAdapter:
     def nd(self) -> int:
         return self._m.nd
 
-    # cvxopt-format matrices
     @property
-    def C(self) -> matrix:
-        return _np_to_cvx(self._m.Cm)
+    def Cm(self) -> np.ndarray:
+        """Measurement output matrix Cm (numpy ndarray)."""
+        return self._m.Cm
 
     @property
-    def u_bounds(self) -> Tuple[matrix, matrix]:
-        lo, hi = self._m.u_bounds
-        return (
-            _np_to_cvx(np.asarray(lo, dtype=float).reshape(-1, 1)),
-            _np_to_cvx(np.asarray(hi, dtype=float).reshape(-1, 1)),
-        )
+    def Ad(self) -> np.ndarray:
+        """ZOH-discretised state-transition matrix Ad (numpy ndarray)."""
+        self._ensure_discretized()
+        return self._Ad_np
 
-    # Discretisation — delegates directly (already returns cvxopt)
-    def discretize(self, d: matrix) -> Tuple[matrix, matrix, matrix]:
-        return self._m.discretize(d)
+    @property
+    def Bd(self) -> np.ndarray:
+        """ZOH-discretised input matrix Bd (numpy ndarray)."""
+        self._ensure_discretized()
+        return self._Bd_np
+
+    @property
+    def Ed(self) -> np.ndarray:
+        """ZOH-discretised disturbance matrix Ed (numpy ndarray)."""
+        self._ensure_discretized()
+        return self._Ed_np
+
+    @property
+    def u_bounds(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Input box constraints (u_min, u_max), each a (nu,) ndarray."""
+        return self._m.u_bounds
 
 
 class CDOptimalControlProblem(OptimalControlProblem):
@@ -144,21 +165,16 @@ class CDOptimalControlProblem(OptimalControlProblem):
 
     Inherits the full QP formulation and solver from
     ``OptimalControlProblem``.  The only difference is the model type:
-    ``LinearContinuousDiscreteModel.discretize(d)`` provides ZOH-discretised
-    matrices (A_d, B_d, E_d) in cvxopt format, compatible with the inherited
-    ``solve`` method.
-
-    A ``_CDModelAdapter`` is used internally to translate the numpy-based
-    CD model interface (``C`` as ndarray, ``u_bounds`` as ndarray tuples)
-    into the cvxopt-compatible interface required by
-    ``OptimalControlProblem.solve``.  The original CD model is also stored
-    as ``self._cd_model`` for direct access.
+    a ``_CDModelAdapter`` wraps a ``LinearContinuousDiscreteModel``,
+    computing ZOH-discretised matrices ``Ad``, ``Bd``, ``Ed`` at construction
+    time and exposing them as numpy arrays for the inherited ``solve`` method.
+    The original CD model is also stored as ``self._cd_model`` for direct access.
 
     Parameters
     ----------
     model : LinearContinuousDiscreteModel
-        Plant model.  Must implement ``nx``, ``nu``, ``nd``, ``C``,
-        ``u_bounds``, and ``discretize(d)``.
+        Plant model.  Must implement ``nx``, ``nu``, ``nd``, ``A``, ``B``,
+        ``E``, ``Cm``, ``dt``, and ``u_bounds``.
     N : int
         Prediction horizon (number of sampling intervals).
     Q : cvxopt.matrix (ny, ny)
