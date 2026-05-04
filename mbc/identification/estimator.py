@@ -44,6 +44,7 @@ import numpy as np
 
 from .likelihood import (
     ped_neg_log_likelihood,
+    cd_ped_neg_log_likelihood,
     _INVALID_LIKELIHOOD,
 )
 from ._nelder_mead import nelder_mead
@@ -298,6 +299,276 @@ class ParameterEstimator:
                 return g
 
             bounds_scipy = self._bounds  # list of (lo, hi) or None
+            res = minimize(
+                objective,
+                x0,
+                jac=grad,
+                method="L-BFGS-B",
+                bounds=bounds_scipy,
+                options={"maxiter": 500, "ftol": 1e-8, "gtol": 1e-5},
+            )
+            return res.x, float(res.fun), res.success
+
+        except ImportError:
+            _LOGGER.debug(
+                "scipy not available; falling back to Nelder–Mead for "
+                "gradient-based step."
+            )
+            return nelder_mead(
+                objective,
+                x0,
+                tol=1e-4,
+                max_iter=400 * len(x0),
+            )
+
+
+# ── CD Parameter Estimator ────────────────────────────────────────────────────
+
+
+class CDParameterEstimator:
+    """
+    Multi-start optimizer for the CD-EKF PED log-likelihood.
+
+    Maximises the prediction-error decomposition (PED) log-likelihood of a
+    nonlinear continuous-discrete stochastic system w.r.t. the model parameter
+    vector ``θ``.  The likelihood is evaluated via the CD-EKF: the nonlinear
+    state ODE and linearised continuous Riccati ODE are integrated forward
+    between measurements, and the Gaussian innovation log-likelihood is
+    accumulated at each measurement time.
+
+    This estimator is model-agnostic: all domain knowledge is encapsulated in
+    the *model_factory* callable.  The caller is responsible for:
+
+    * Choosing the parametrisation of ``θ`` (e.g. log-space for positive
+      parameters).
+    * Providing a ``model_factory(θ) → ContinuousDiscreteModel`` that returns
+      a model whose ``params`` property returns ``θ`` (or a function of it).
+    * Supplying appropriate ``x0`` and ``P0`` (initial state estimate and
+      covariance at the first history time point).
+    * Supplying ``bounds`` to keep the search in a physically meaningful
+      region.
+
+    Parameters
+    ----------
+    model_factory : callable  θ → model
+        Returns a :class:`~mbc.models.ContinuousDiscreteModel` (or any object
+        exposing ``f``, ``sigma``, ``hm``, ``dfdx``, ``dhmdx``, ``Rm``, and
+        ``params``).  ``model.params`` is used as the parameter vector ``p``
+        in all model function calls.  May raise any exception for invalid
+        ``θ``; the objective returns the sentinel ``1e10`` in that case.
+    theta0 : (ntheta,) ndarray
+        Initial (prior) parameter vector.  The first restart uses this as
+        the starting point.
+    bounds : list of (lo, hi) pairs or None
+        Per-parameter box constraints.  Violated parameters cause the
+        objective to return the sentinel ``1e10``.  ``None`` means unbounded.
+    x0 : (nx,) ndarray
+        Initial state estimate at time ``history[0].get("t", 0.0)``.
+    P0 : (nx, nx) ndarray
+        Initial state covariance.
+    dt : float
+        Sampling interval (used for Euler sub-step size ``h = dt / n_steps``
+        and as the default time-stamp spacing when ``"t"`` is absent from
+        history records).
+    n_steps : int, optional
+        Number of forward-Euler sub-steps per sampling interval.  Default: 10.
+    regularization_fn : callable  θ → float, optional
+        Regularisation penalty added to the negative log-likelihood.  ``None``
+        for unregularised maximum-likelihood estimation.
+    n_restarts : int
+        Number of optimisation restarts (including the initial point).
+        Default: 3.
+    restart_perturbation : float
+        Standard deviation of Gaussian noise added to ``theta0`` for
+        additional restarts.  Default: 0.5.
+    use_gradient : bool
+        If ``True``, attempt a gradient-based optimiser (requires scipy).
+        Falls back to Nelder–Mead if scipy is not available.  Default: False.
+    perturbation_fn : callable, optional
+        If provided, called as ``perturbation_fn(theta0, rng, restart_idx)``
+        for restarts 1, 2, …  If ``None``, Gaussian noise is added to
+        ``theta0``.
+    """
+
+    def __init__(
+        self,
+        model_factory: Callable[[np.ndarray], object],
+        theta0: np.ndarray,
+        bounds: Optional[List[Tuple[float, float]]],
+        x0: np.ndarray,
+        P0: np.ndarray,
+        dt: float,
+        n_steps: int = 10,
+        regularization_fn: Optional[Callable[[np.ndarray], float]] = None,
+        n_restarts: int = 3,
+        restart_perturbation: float = 0.5,
+        use_gradient: bool = False,
+        perturbation_fn: Optional[
+            Callable[[np.ndarray, "np.random.Generator", int], np.ndarray]
+        ] = None,
+    ) -> None:
+        self._model_factory = model_factory
+        self._theta0 = np.asarray(theta0, dtype=float)
+        if bounds is not None and len(bounds) != len(self._theta0):
+            raise ValueError(
+                f"bounds length ({len(bounds)}) must equal theta0 length "
+                f"({len(self._theta0)})"
+            )
+        self._bounds = bounds
+        self._x0 = np.asarray(x0, dtype=float)
+        self._P0 = np.asarray(P0, dtype=float)
+        self._dt = dt
+        self._n_steps = n_steps
+        self._reg_fn = regularization_fn
+        self._n_restarts = n_restarts
+        self._restart_pert = restart_perturbation
+        self._use_gradient = use_gradient
+        self._perturbation_fn = perturbation_fn
+
+    # ── Public API ─────────────────────────────────────────────────────────
+
+    def log_likelihood(
+        self,
+        history: List[dict],
+        theta: Optional[np.ndarray] = None,
+    ) -> Optional[float]:
+        """
+        Evaluate the *unregularised* log-likelihood at *theta*.
+
+        Parameters
+        ----------
+        history : standardised history records.
+        theta   : parameter vector (defaults to ``theta0``).
+
+        Returns
+        -------
+        float or None
+            Log-likelihood (positive = better), or ``None`` on failure.
+        """
+        if theta is None:
+            theta = self._theta0
+        neg_ll = cd_ped_neg_log_likelihood(
+            self._model_factory, theta, history,
+            self._x0, self._P0, self._dt, self._n_steps,
+        )
+        if not np.isfinite(neg_ll) or neg_ll >= _INVALID_LIKELIHOOD:
+            return None
+        return float(-neg_ll)
+
+    def estimate(self, history: List[dict]) -> EstimationResult:
+        """
+        Run the multi-start optimisation over *history*.
+
+        Parameters
+        ----------
+        history : list of dicts
+            Standardised records ``{"ym": ndarray, "u": ndarray,
+            "d": ndarray}`` (and optionally ``"t": float``).
+
+        Returns
+        -------
+        EstimationResult
+        """
+        n_steps_hist = len(history)
+
+        def objective(theta: np.ndarray) -> float:
+            # Box-constraint guard
+            if self._bounds is not None:
+                for i, (lo, hi) in enumerate(self._bounds):
+                    if lo is not None and theta[i] < lo:
+                        return _INVALID_LIKELIHOOD
+                    if hi is not None and theta[i] > hi:
+                        return _INVALID_LIKELIHOOD
+
+            neg_ll = cd_ped_neg_log_likelihood(
+                self._model_factory, theta, history,
+                self._x0, self._P0, self._dt, self._n_steps,
+            )
+            if neg_ll >= _INVALID_LIKELIHOOD:
+                return neg_ll
+
+            if self._reg_fn is not None:
+                neg_ll += self._reg_fn(theta)
+            return neg_ll
+
+        rng = np.random.default_rng(0)
+        best_theta = self._theta0.copy()
+        best_f = float("inf")
+        best_converged = False
+
+        try:
+            for restart in range(self._n_restarts):
+                if restart == 0:
+                    x0_opt = self._theta0.copy()
+                elif self._perturbation_fn is not None:
+                    x0_opt = self._perturbation_fn(self._theta0, rng, restart)
+                else:
+                    x0_opt = self._theta0 + rng.normal(
+                        0.0, self._restart_pert, size=self._theta0.size
+                    )
+
+                if self._use_gradient:
+                    x_best, f_best, conv = self._gradient_step(
+                        objective, x0_opt
+                    )
+                else:
+                    x_best, f_best, conv = nelder_mead(
+                        objective,
+                        x0_opt,
+                        tol=1e-4,
+                        max_iter=400 * len(x0_opt),
+                    )
+
+                if f_best < best_f:
+                    best_f = f_best
+                    best_theta = x_best
+                    best_converged = conv
+
+        except Exception as exc:
+            _LOGGER.error("CDParameterEstimator failed: %s", exc)
+            return EstimationResult(
+                theta_best=self._theta0.copy(),
+                neg_log_likelihood=float("inf"),
+                converged=False,
+                n_steps=n_steps_hist,
+                message=f"Estimation error: {exc}",
+            )
+
+        if best_converged:
+            msg = "Converged."
+        else:
+            msg = "Reached iteration limit (result may be approximate)."
+        return EstimationResult(
+            theta_best=best_theta,
+            neg_log_likelihood=float(best_f),
+            converged=best_converged,
+            n_steps=n_steps_hist,
+            message=msg,
+        )
+
+    # ── Internal ───────────────────────────────────────────────────────────
+
+    def _gradient_step(
+        self,
+        objective: Callable[[np.ndarray], float],
+        x0: np.ndarray,
+    ) -> Tuple[np.ndarray, float, bool]:
+        """Gradient-based minimisation, falling back to Nelder–Mead."""
+        try:
+            from scipy.optimize import minimize  # optional dependency
+
+            h = 1e-5
+
+            def grad(theta: np.ndarray) -> np.ndarray:
+                f0 = objective(theta)
+                g = np.zeros(len(theta), dtype=float)
+                for i in range(len(theta)):
+                    th = theta.copy()
+                    th[i] += h
+                    g[i] = (objective(th) - f0) / h
+                return g
+
+            bounds_scipy = self._bounds
             res = minimize(
                 objective,
                 x0,

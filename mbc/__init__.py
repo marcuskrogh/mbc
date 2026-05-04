@@ -47,9 +47,12 @@ model-based control, estimation, identification, and simulation.
   mbc.identification
       System-identification / parameter-estimation utilities:
 
-      * ``ped_neg_log_likelihood``          – PED Kalman log-likelihood.
+      * ``ped_neg_log_likelihood``          – PED Kalman log-likelihood (linear discrete).
       * ``ped_neg_log_likelihood_gradient`` – finite-difference gradient.
-      * ``ParameterEstimator``              – multi-start optimiser.
+      * ``ParameterEstimator``              – multi-start optimiser (linear discrete).
+      * ``cd_ped_neg_log_likelihood``       – CD-EKF PED log-likelihood (nonlinear CD).
+      * ``cd_ped_neg_log_likelihood_gradient`` – finite-difference gradient (nonlinear CD).
+      * ``CDParameterEstimator``            – multi-start optimiser (nonlinear CD).
       * ``EstimationResult``                – result dataclass.
 
   mbc.realization
@@ -95,10 +98,12 @@ from .control import (
     EconomicOptimalControlProblem,
     CDNMPCController,
 )
-from .identification.estimator import ParameterEstimator, EstimationResult
+from .identification.estimator import ParameterEstimator, CDParameterEstimator, EstimationResult
 from .identification.likelihood import (
     ped_neg_log_likelihood,
     ped_neg_log_likelihood_gradient,
+    cd_ped_neg_log_likelihood,
+    cd_ped_neg_log_likelihood_gradient,
 )
 from .realization import SISORealization, MIMORealization
 from .simulation import SDESimulator, SDAESimulator
@@ -128,9 +133,12 @@ __all__ = [
     "CDNMPCController",
     # Identification
     "ParameterEstimator",
+    "CDParameterEstimator",
     "EstimationResult",
     "ped_neg_log_likelihood",
     "ped_neg_log_likelihood_gradient",
+    "cd_ped_neg_log_likelihood",
+    "cd_ped_neg_log_likelihood_gradient",
     # Realization
     "SISORealization",
     "MIMORealization",

@@ -36,6 +36,8 @@ MPC solvers (`KalmanFilter`, `OptimalControlProblem`, `CDKalmanFilter`,
   - [2.4 Optimal Control Problems](#24-optimal-control-problems)
   - [2.5 MPC Controllers](#25-mpc-controllers)
 - [Part III — System Identification](#part-iii--system-identification)
+  - [3.1 Linear Discrete-time Identification](#31-linear-discrete-time-identification)
+  - [3.2 Nonlinear Continuous-Discrete Identification](#32-nonlinear-continuous-discrete-identification)
 - [Part IV — Realization](#part-iv--realization)
 - [Part V — Monte Carlo Simulation](#part-v--monte-carlo-simulation)
 - [Installation](#installation)
@@ -1898,6 +1900,8 @@ u = ctrl_d.step(ym, d_trajectory, p=None, t=t_k)
 
 ## Part III — System Identification
 
+### 3.1 Linear Discrete-time Identification
+
 ### `ped_neg_log_likelihood` — `mbc.identification.likelihood`
 
 Evaluates the **prediction-error decomposition (PED)** Kalman-filter negative
@@ -2003,6 +2007,199 @@ result = estimator.estimate(history)
 # result.neg_log_likelihood : float — objective at theta_best
 # result.converged          : bool
 # result.message            : str
+```
+
+**Log-likelihood inspection**:
+
+```python
+ll = estimator.log_likelihood(history, theta=theta_candidate)  # float or None
+```
+
+---
+
+### 3.2 Nonlinear Continuous-Discrete Identification
+
+#### `cd_ped_neg_log_likelihood` — `mbc.identification.likelihood`
+
+Evaluates the **prediction-error decomposition (PED)** negative log-likelihood
+for a **nonlinear continuous-discrete stochastic system** using the CD-EKF.
+
+The state is propagated between measurements by integrating the nonlinear drift
+ODE and the linearised continuous Riccati ODE (forward Euler with `n_steps`
+sub-steps).  At each measurement time the innovation and its covariance are
+computed and added to the log-likelihood:
+
+```
+−log L(θ) = ½ Σ_k [ log|Sₖ| + νₖᵀ Sₖ⁻¹ νₖ ]
+
+where, at step k:
+    x̂_k⁻, P_k⁻  — prior from CD-EKF prediction
+    H_k = ∂hm/∂x  evaluated at (x̂_k⁻, u_k, d_k, p, t_k)
+    νₖ  = ym_k − hm(x̂_k⁻, u_k, d_k, p, t_k)   innovation
+    Sₖ  = H_k P_k⁻ H_kᵀ + Rm                   innovation covariance
+```
+
+After computing the likelihood contribution the state is updated with the
+Joseph-form Kalman correction.
+
+**History format (nonlinear CD)**:
+
+Each entry in *history* is a ``dict`` with keys:
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `"ym"` | `(nym,) ndarray` | Measurement at time `t_k` |
+| `"u"` | `(nu,) ndarray` | Input applied during `[t_k, t_{k+1}]` |
+| `"d"` | `(nd,) ndarray` | Disturbance during `[t_k, t_{k+1}]` |
+| `"t"` | `float` (optional) | Absolute time `t_k`; defaults to `k * dt` |
+
+**Convention**: entry `k` holds `ym_k` together with `u_k`, `d_k` applied
+during `[t_k, t_{k+1}]`.  The inputs from entry `k` drive the prediction to
+`t_{k+1}`; the inputs from entry `k+1` enter the measurement function at
+`t_{k+1}`.
+
+**Signature**:
+
+```python
+from mbc.identification.likelihood import cd_ped_neg_log_likelihood
+
+neg_ll = cd_ped_neg_log_likelihood(
+    model_factory,   # callable: θ → ContinuousDiscreteModel
+    theta,           # (ntheta,) ndarray — parameter vector
+    history,         # list of {"ym": ndarray, "u": ndarray, "d": ndarray}
+    x0,              # (nx,) ndarray — initial state estimate
+    P0,              # (nx, nx) ndarray — initial state covariance
+    dt,              # float — sampling interval
+    n_steps=10,      # int — Euler sub-steps per interval
+)
+```
+
+The `model_factory(θ)` callable must return a
+:class:`~mbc.models.ContinuousDiscreteModel` whose `params` property holds
+the parameter vector `p` passed to `f`, `sigma`, `hm`, `dfdx`, and `dhmdx`
+at each filter step.
+
+Returns `1e10` (sentinel) on any numerical failure.
+
+#### `cd_ped_neg_log_likelihood_gradient` — `mbc.identification.likelihood`
+
+Forward finite-difference gradient `∂(−log L)/∂θ` of the CD-EKF PED
+log-likelihood.  Step size `h = 1e-5` by default.
+
+```python
+from mbc.identification.likelihood import cd_ped_neg_log_likelihood_gradient
+
+grad = cd_ped_neg_log_likelihood_gradient(
+    model_factory, theta, history, x0, P0, dt, n_steps=10, h=1e-5
+)
+# grad : (ntheta,) ndarray
+```
+
+#### `CDParameterEstimator` — `mbc.identification`
+
+Multi-start optimizer that maximises the CD-EKF PED log-likelihood over the
+model parameter vector `θ`.
+
+**Algorithm**:
+
+For each restart `r = 0, 1, …, n_restarts−1`:
+
+1. Initialise from `θ_r` (restart 0 uses `theta0`; later restarts add
+   Gaussian perturbation `N(0, restart_perturbation²)` or use
+   `perturbation_fn`).
+2. Minimise the regularised negative log-likelihood:
+
+```
+objective(θ) = −log L(θ | x0, P0, dt, history) + regularization_fn(θ)
+```
+
+using **Nelder–Mead** (gradient-free, default) or **L-BFGS-B** (gradient-based,
+requires scipy; activated by `use_gradient=True`).
+
+3. Track the best result across all restarts.
+
+**Parameters**:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `model_factory` | `θ → ContinuousDiscreteModel` | — | Model constructor |
+| `theta0` | `(ntheta,) ndarray` | — | Initial parameter guess |
+| `bounds` | `list[(lo,hi)]` or `None` | — | Per-parameter box constraints |
+| `x0` | `(nx,) ndarray` | — | Initial state estimate |
+| `P0` | `(nx,nx) ndarray` | — | Initial state covariance |
+| `dt` | `float` | — | Sampling interval |
+| `n_steps` | `int` | `10` | Euler sub-steps per sampling interval |
+| `regularization_fn` | `θ → float` or `None` | `None` | Optional regularisation penalty |
+| `n_restarts` | `int` | `3` | Number of optimisation restarts |
+| `restart_perturbation` | `float` | `0.5` | Std of Gaussian perturbation for restarts |
+| `use_gradient` | `bool` | `False` | Use L-BFGS-B; falls back to Nelder–Mead if scipy absent |
+| `perturbation_fn` | `callable` or `None` | `None` | Custom restart initialiser |
+
+**Usage** (Monod bioreactor example):
+
+```python
+import numpy as np
+from mbc.identification import CDParameterEstimator
+from mbc.models import ContinuousDiscreteModel
+
+# 1. Define a parameterised model: theta = [log(mu_max), log(K_s)]
+class MonodModel(ContinuousDiscreteModel):
+    _Y = 0.5
+    def __init__(self, mu_max, K_s):
+        self._mu_max = mu_max; self._K_s = K_s
+    @property
+    def nx(self): return 2
+    @property
+    def nu(self): return 1
+    @property
+    def nd(self): return 1
+    @property
+    def nym(self): return 1
+    @property
+    def nz(self): return 1
+    @property
+    def nw(self): return 2
+    @property
+    def Rm(self): return np.array([[0.01]])
+    def f(self, x, u, d, p, t):
+        S, X = x; FV = u[0]; S_in = d[0]
+        mu = self._mu_max * max(S, 0.0) / (self._K_s + max(S, 0.0))
+        return np.array([-mu*X/self._Y + (S_in-S)*FV, mu*X - X*FV])
+    def sigma(self, x, u, d, p, t): return 0.01 * np.eye(2)
+    def hm(self, x, u, d, p, t): return np.array([x[1]])
+    def g(self, x, u, d, p, t): return np.array([x[1]])
+    @property
+    def params(self): return np.log(np.array([self._mu_max, self._K_s]))
+
+def monod_factory(theta):
+    return MonodModel(np.exp(theta[0]), np.exp(theta[1]))
+
+# 2. Build measurement history
+# history = [{"ym": ym_k, "u": u_k, "d": d_k, "t": t_k}, ...]
+
+# 3. Construct estimator and run
+theta0 = np.array([np.log(0.4), np.log(0.3)])   # initial guess
+x0    = np.array([5.0, 0.5])
+P0    = np.diag([1.0, 0.5])
+dt    = 0.1   # h
+
+estimator = CDParameterEstimator(
+    model_factory=monod_factory,
+    theta0=theta0,
+    bounds=[(-3.0, 1.0), (-3.0, 1.0)],
+    x0=x0,
+    P0=P0,
+    dt=dt,
+    n_steps=10,
+    n_restarts=5,
+)
+result = estimator.estimate(history)
+
+# result.theta_best         : (ntheta,) ndarray — best parameters in θ-space
+# result.neg_log_likelihood : float — objective at theta_best
+# result.converged          : bool
+print("mu_max =", np.exp(result.theta_best[0]))
+print("K_s    =", np.exp(result.theta_best[1]))
 ```
 
 **Log-likelihood inspection**:
