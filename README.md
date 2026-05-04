@@ -178,10 +178,11 @@ numerical skew.
 
 **Bootstrap**: on the first call to `update`, before any prediction has been
 run, the state is initialised from the measurement via the Moore–Penrose
-pseudoinverse.  When `Cm` has full column rank (the standard case where `nym ≤ nx`)
-this gives the least-squares solution `x̂ = (CmᵀCm)⁻¹ Cmᵀ ym`, obtained by solving
-`CmᵀCm α = Cmᵀ ym` and setting `x̂ = α`.  For `Cm = I` (full state observation) this
-reduces to `x̂ = ym`.
+pseudoinverse: `x̂ = Cm⁺ ym`.  This is computed via `numpy.linalg.lstsq`,
+which returns the minimum-norm least-squares solution and handles both the
+underdetermined case (`nym < nx`, common when only a subset of states is
+measured) and the overdetermined case (`nym ≥ nx`).  For `Cm = I` (full state
+observation) this reduces to `x̂ = ym`.
 
 **Missing observations** (M.Sc. Ch. 5.5): the optional `mask` argument of
 `update(ym, d, mask)` controls which output channels are used in the measurement
@@ -1496,13 +1497,15 @@ x_hat, y_hat, P = ekf.update(ym, u, d, p, t, mask=None)
 
 Receding-horizon QP for a `LinearContinuousDiscreteModel`.  A typed thin wrapper
 around `OptimalControlProblem` that accepts a continuous-discrete model.
-Internally calls `model.discretize(d)` to obtain ZOH-discretised matrices
-`(Ad, Bd, Ed)` and delegates to the parent class QP solver.
+Internally wraps the model in a `_CDModelAdapter` that computes ZOH-discretised
+matrices `(Ad, Bd, Ed)` from the continuous-time model matrices `(A, B, E)` on
+first access and caches them for subsequent calls.
 
 The cost function, constraints, batch-form prediction matrices, and QP solver are
 identical to `OptimalControlProblem` (see §1.3).  The only difference is the
-model type, which exposes `discretize(d)` via the `LinearContinuousDiscreteModel`
-interface rather than inheriting from `LinearDiscreteModel`.
+model type, which provides continuous-time matrices `(A, B, E)` via the
+`LinearContinuousDiscreteModel` interface rather than inheriting from
+`LinearDiscreteModel`.
 
 **Parameters**: identical to `OptimalControlProblem` with `model` of type
 `LinearContinuousDiscreteModel`.
@@ -1804,8 +1807,9 @@ u, U_seq, X_seq = ctrl.step(y, D)   # D = (N*p, 1) stacked disturbance forecast
 ```
 
 Note the split: the *estimator* uses the continuous-time matrices `A`, `B`,
-`E` directly via ODE integration; the *OCP* internally calls `model.discretize(d)`
-to obtain ZOH matrices for the QP.  Both operate on the same `model` object.
+`E` directly via ODE integration; the *OCP* obtains ZOH-discretised matrices
+`(Ad, Bd, Ed)` via the internal `_CDModelAdapter` (computed from `A`, `B`, `E`,
+`dt` on first use and cached).  Both operate on the same `model` object.
 
 #### `CDNMPCController` — `mbc.control` *(Ph.D. Ch. 9)*
 
