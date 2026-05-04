@@ -30,12 +30,21 @@ model-based control, estimation, identification, and simulation.
   mbc.control
       Optimal control algorithms:
 
-      * ``OptimalControlProblem``   – receding-horizon QP (tracking MPC, discrete).
-      * ``MPCController``           – KalmanFilter + OptimalControlProblem.
-      * ``CDOptimalControlProblem`` – receding-horizon QP for linear CD systems.
-      * ``CDMPCController``         – CDKalmanFilter + CDOptimalControlProblem.
+      * ``OptimalControlProblem``         – receding-horizon QP (tracking MPC, discrete).
+      * ``MPCController``                 – KalmanFilter + OptimalControlProblem.
+      * ``CDOptimalControlProblem``       – receding-horizon QP for linear CD systems.
+      * ``CDMPCController``               – CDKalmanFilter + CDOptimalControlProblem.
+      * ``CDTrackingOptimalControlProblem`` – nonlinear tracking OCP for CD systems
+                                             (NLP; input/state/output constraints,
+                                             ROM penalty + constraints, linear input
+                                             penalty).
       * ``EconomicOptimalControlProblem`` – economic nonlinear OCP (Ph.D. Ch. 9).
-      * ``EconomicNMPCController``      – estimator + EconomicOptimalControlProblem.
+                                           Accepts Mayer + Lagrange functions and
+                                           the same constraint set as the tracking OCP.
+      * ``CDNMPCController``              – generic estimator + OCP controller
+                                           (works with any CD estimator and any OCP).
+      * ``EconomicNMPCController``        – backward-compatible alias for
+                                           CDNMPCController.
 
   mbc.identification
       System-identification / parameter-estimation utilities:
@@ -83,8 +92,10 @@ from .control import (
     OptimalControlProblem,
     MPCController,
     CDOptimalControlProblem,
+    CDTrackingOptimalControlProblem,
     CDMPCController,
     EconomicOptimalControlProblem,
+    CDNMPCController,
     EconomicNMPCController,
 )
 from .identification.estimator import ParameterEstimator, EstimationResult
@@ -114,8 +125,10 @@ __all__ = [
     "OptimalControlProblem",
     "MPCController",
     "CDOptimalControlProblem",
+    "CDTrackingOptimalControlProblem",
     "CDMPCController",
     "EconomicOptimalControlProblem",
+    "CDNMPCController",
     "EconomicNMPCController",
     # Identification
     "ParameterEstimator",
