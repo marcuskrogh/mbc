@@ -341,7 +341,7 @@ from mbc.control import EconomicOptimalControlProblem, CDNMPCController
 ekf  = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
 filt = DelayedObservationFilter(ekf, lag_max=10)
 
-ocp  = EconomicOptimalControlProblem(model, N=20, dt=1.0, stage_cost=cost_fn)
+ocp  = EconomicOptimalControlProblem(model, N=20, dt=1.0, lagrange=cost_fn)
 ctrl = CDNMPCController(estimator=filt, ocp=ocp)
 
 u = ctrl.step(ym, d, p, t)                          # no lab result this step
@@ -1713,8 +1713,6 @@ parameter; if omitted it falls back to `model.dt` (if available) or `1.0`.
 | `solver` | `str` | `"SLSQP"` | NLP solver name for `scipy.optimize.minimize` |
 | `solver_options` | `dict` or `None` | `None` | Options forwarded to the solver |
 | `dt` | `float` or `None` | `model.dt` or `1.0` | Sampling interval |
-| `stage_cost` | `(x, u, d) → float` or `None` | `None` | **Deprecated** alias for `lagrange` |
-| `terminal_cost` | `(x) → float` or `None` | `None` | **Deprecated** alias for `mayer` |
 
 **Public properties**:
 
@@ -1756,10 +1754,6 @@ u0 = ocp.step(x_hat, d_fcast, u_seq_prev, p=p, t0=t)
 
 # To close the loop, pair with an estimator via CDNMPCController (§2.5)
 ```
-
-**Backward compatibility**: the legacy parameter names `stage_cost` and
-`terminal_cost` are still accepted and map to `lagrange` and `mayer` respectively.
-Providing both the new and old name for the same argument raises `ValueError`.
 
 ---
 
@@ -1895,10 +1889,6 @@ filt = DelayedObservationFilter(ekf, lag_max=10)
 ctrl_d = CDNMPCController(estimator=filt, ocp=ocp)
 u = ctrl_d.step(ym, d_trajectory, p=None, t=t_k)
 ```
-
-**`EconomicNMPCController`**: backward-compatible alias for `CDNMPCController`.
-Accepts an optional `model` positional argument (ignored internally; dimensions
-are derived from `ocp.nu`).
 
 ---
 

@@ -1,12 +1,10 @@
 """
-Economic Nonlinear Optimal Control Problem, Tracking Controller, and
-CD-NMPC Controller (Ph.D. Ch. 9).
+Economic Nonlinear Optimal Control Problem and CD-NMPC Controller (Ph.D. Ch. 9).
 
 Unlike tracking MPC (which minimises a quadratic distance to a setpoint),
-the economic optimal control problem minimises an economic stage cost
-(Lagrange term) l_e(x, u, d) that directly represents an economic criterion
-such as energy cost, yield, or profit, combined with an optional terminal cost
-(Mayer term) V_f(x_N).
+the economic optimal control problem minimises an economic objective comprising
+a Lagrange (stage) term l_e(x, u, d) and an optional Mayer (terminal) term
+V_f(x_N).
 
 ``EconomicOptimalControlProblem``
     Solves the finite-horizon NLP at each step:
@@ -24,8 +22,8 @@ such as energy cost, yield, or profit, combined with an optional terminal cost
         ρ_x (‖max(0, x[k] − x_max)‖² + ‖max(0, x_min − x[k])‖²)
         ρ_z (‖max(0, z[k] − z_max)‖² + ‖max(0, z_min − z[k])‖²)
 
-    Additional terms (ROM penalty, linear input penalty) can be included in
-    ``lagrange`` / ``stage_cost`` directly.  The NLP is solved by
+    Additional terms (ROM penalty, linear input penalty) can be included via
+    the ``S`` and ``c_u`` parameters.  The NLP is solved by
     ``scipy.optimize.minimize`` with the SLSQP method (default).
 
 ``CDNMPCController``
@@ -35,9 +33,6 @@ such as energy cost, yield, or profit, combined with an optional terminal cost
       1. **Estimate**   x̂[k] ← estimator.step(y[k], u[k−1], d[k], p, t_k)
       2. **Optimise**   U*   ← ocp.solve(x̂[k], d_trajectory, u_seq_prev, p)
       3. **Apply**      u[k] = U*[0]
-
-``EconomicNMPCController``
-    Backward-compatible alias for ``CDNMPCController``.
 
 Reference:  Ph.D. thesis, Ch. 9.
 """
@@ -67,11 +62,10 @@ class EconomicOptimalControlProblem:
         Prediction horizon (number of sampling intervals).
     lagrange : Callable[[np.ndarray, np.ndarray, np.ndarray], float] or None
         Economic stage cost ``l_e(x, u, d)`` — a scalar-valued function of
-        state, input, and disturbance (Lagrange term).  Mutually exclusive
-        with ``stage_cost``.
+        state, input, and disturbance (Lagrange term).
     mayer : Callable[[np.ndarray], float] or None, optional
         Terminal cost ``V_f(x_N)`` (Mayer term).  ``None`` means no terminal
-        cost.  Mutually exclusive with ``terminal_cost``.
+        cost.
     u_min : (nu,) ndarray or None, optional
         Hard lower bound on inputs.  ``None`` = unconstrained.
     u_max : (nu,) ndarray or None, optional
@@ -112,12 +106,6 @@ class EconomicOptimalControlProblem:
         NLP solver passed to ``scipy.optimize.minimize``.  Default: ``"SLSQP"``.
     solver_options : dict or None, optional
         Options forwarded to the solver.  ``None`` uses solver defaults.
-    stage_cost : Callable or None, optional
-        Deprecated alias for ``lagrange``.  Raises ``ValueError`` if both
-        ``lagrange`` and ``stage_cost`` are provided.
-    terminal_cost : Callable or None, optional
-        Deprecated alias for ``mayer``.  Raises ``ValueError`` if both
-        ``mayer`` and ``terminal_cost`` are provided.
     dt : float or None, optional
         Sampling interval.  If ``None``, taken from ``model.dt`` if available,
         else ``1.0``.
@@ -146,25 +134,10 @@ class EconomicOptimalControlProblem:
         n_steps: int = 10,
         solver: str = "SLSQP",
         solver_options: dict | None = None,
-        # deprecated aliases
-        stage_cost: Callable[[np.ndarray, np.ndarray, np.ndarray], float] | None = None,
-        terminal_cost: Callable[[np.ndarray], float] | None = None,
         dt: float | None = None,
     ) -> None:
-        # ── Lagrange / stage cost ─────────────────────────────────────────────
-        if lagrange is not None and stage_cost is not None:
-            raise ValueError(
-                "Provide either 'lagrange' or 'stage_cost', not both."
-            )
-        self._lagrange = lagrange if lagrange is not None else stage_cost
-
-        # ── Mayer / terminal cost ─────────────────────────────────────────────
-        if mayer is not None and terminal_cost is not None:
-            raise ValueError(
-                "Provide either 'mayer' or 'terminal_cost', not both."
-            )
-        self._mayer = mayer if mayer is not None else terminal_cost
-
+        self._lagrange = lagrange
+        self._mayer = mayer
         self._model = model
         self._N = N
         self._u_min = np.asarray(u_min, dtype=float) if u_min is not None else None
@@ -196,20 +169,6 @@ class EconomicOptimalControlProblem:
     def nu(self) -> int:
         """Input dimension."""
         return self._model.nu
-
-    # ── backward-compat properties ────────────────────────────────────────────
-
-    @property
-    def _stage_cost(self):
-        return self._lagrange
-
-    @property
-    def _terminal_cost(self):
-        return self._mayer
-
-    @property
-    def _constraints(self):
-        return self._user_constraints
 
     def _predict_mean(
         self,
@@ -519,35 +478,3 @@ class CDNMPCController:
 
         self._u_prev = u0
         return u0
-
-
-# ── Backward-compatible alias ─────────────────────────────────────────────────
-
-
-class EconomicNMPCController(CDNMPCController):
-    """
-    Economic Nonlinear MPC controller — backward-compatible alias for
-    :class:`CDNMPCController`.
-
-    .. deprecated::
-        Use :class:`CDNMPCController` for new code.  This class is retained
-        for backward compatibility.  The ``model`` argument is accepted but
-        ignored (dimensions are derived from ``ocp.nu``).
-
-    Parameters
-    ----------
-    model : ContinuousDiscreteModel or None, optional
-        Accepted for backward compatibility; not used internally.
-    estimator : object with ``step(ym, u, d, p, t) → (x_hat, P)``
-        State estimator.
-    ocp : EconomicOptimalControlProblem
-        Economic optimal control problem (NLP solver).
-    """
-
-    def __init__(
-        self,
-        model: ContinuousDiscreteModel | None = None,
-        estimator=None,
-        ocp: EconomicOptimalControlProblem | None = None,
-    ) -> None:
-        super().__init__(estimator=estimator, ocp=ocp)

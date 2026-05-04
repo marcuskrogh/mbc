@@ -43,8 +43,6 @@ model-based control, estimation, identification, and simulation.
                                            the same constraint set as the tracking OCP.
       * ``CDNMPCController``              – generic estimator + OCP controller
                                            (works with any CD estimator and any OCP).
-      * ``EconomicNMPCController``        – backward-compatible alias for
-                                           CDNMPCController.
 
   mbc.identification
       System-identification / parameter-estimation utilities:
@@ -96,7 +94,6 @@ from .control import (
     CDMPCController,
     EconomicOptimalControlProblem,
     CDNMPCController,
-    EconomicNMPCController,
 )
 from .identification.estimator import ParameterEstimator, EstimationResult
 from .identification.likelihood import (
@@ -129,7 +126,6 @@ __all__ = [
     "CDMPCController",
     "EconomicOptimalControlProblem",
     "CDNMPCController",
-    "EconomicNMPCController",
     # Identification
     "ParameterEstimator",
     "EstimationResult",

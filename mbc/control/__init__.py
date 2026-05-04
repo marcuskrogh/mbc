@@ -7,7 +7,6 @@ from .cd_mpc import CDMPCController
 from .enmpc import (
     EconomicOptimalControlProblem,
     CDNMPCController,
-    EconomicNMPCController,
 )
 
 __all__ = [
@@ -18,5 +17,4 @@ __all__ = [
     "CDMPCController",
     "EconomicOptimalControlProblem",
     "CDNMPCController",
-    "EconomicNMPCController",
 ]
