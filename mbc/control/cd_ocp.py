@@ -103,22 +103,20 @@ class _CDModelAdapter:
       - ``model.Ed``        (numpy ndarray, ZOH-discretised disturbance matrix)
       - ``model.u_bounds``  (tuple of numpy (nu,) arrays)
 
-    The ZOH-discretised matrices are computed once on first access and cached.
+    The ZOH-discretised matrices are computed once at construction time.
     """
 
     def __init__(self, model: "LinearContinuousDiscreteModel") -> None:
         self._m = model
-        self._Ad_np: np.ndarray | None = None
-        self._Bd_np: np.ndarray | None = None
-        self._Ed_np: np.ndarray | None = None
+        # Compute ZOH-discretised matrices once at construction time to avoid
+        # repeated computation and any thread-safety concerns with lazy init.
+        from .._utils import _zoh_full
+        self._Ad_np, self._Bd_np, self._Ed_np = _zoh_full(
+            model.A, model.B, model.E, model.dt
+        )
 
     def _ensure_discretized(self) -> None:
-        """Compute and cache ZOH matrices on first use."""
-        if self._Ad_np is None:
-            from .._utils import _zoh_full
-            self._Ad_np, self._Bd_np, self._Ed_np = _zoh_full(
-                self._m.A, self._m.B, self._m.E, self._m.dt
-            )
+        """No-op: matrices are computed in __init__."""
 
     @property
     def nx(self) -> int:
@@ -168,8 +166,8 @@ class CDOptimalControlProblem(OptimalControlProblem):
     Inherits the full QP formulation and solver from
     ``OptimalControlProblem``.  The only difference is the model type:
     a ``_CDModelAdapter`` wraps a ``LinearContinuousDiscreteModel``,
-    computing ZOH-discretised matrices ``Ad``, ``Bd``, ``Ed`` on first access
-    and exposing them as numpy arrays for the inherited ``solve`` method.
+    computing ZOH-discretised matrices ``Ad``, ``Bd``, ``Ed`` at construction
+    time and exposing them as numpy arrays for the inherited ``solve`` method.
     The original CD model is also stored as ``self._cd_model`` for direct access.
 
     Parameters

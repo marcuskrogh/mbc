@@ -1498,8 +1498,8 @@ x_hat, y_hat, P = ekf.update(ym, u, d, p, t, mask=None)
 Receding-horizon QP for a `LinearContinuousDiscreteModel`.  A typed thin wrapper
 around `OptimalControlProblem` that accepts a continuous-discrete model.
 Internally wraps the model in a `_CDModelAdapter` that computes ZOH-discretised
-matrices `(Ad, Bd, Ed)` from the continuous-time model matrices `(A, B, E)` on
-first access and caches them for subsequent calls.
+matrices `(Ad, Bd, Ed)` from the continuous-time model matrices `(A, B, E)` at
+construction time and exposes them as numpy arrays for the QP solver.
 
 The cost function, constraints, batch-form prediction matrices, and QP solver are
 identical to `OptimalControlProblem` (see §1.3).  The only difference is the
@@ -1809,7 +1809,7 @@ u, U_seq, X_seq = ctrl.step(y, D)   # D = (N*p, 1) stacked disturbance forecast
 Note the split: the *estimator* uses the continuous-time matrices `A`, `B`,
 `E` directly via ODE integration; the *OCP* obtains ZOH-discretised matrices
 `(Ad, Bd, Ed)` via the internal `_CDModelAdapter` (computed from `A`, `B`, `E`,
-`dt` on first use and cached).  Both operate on the same `model` object.
+`dt` at construction time).  Both operate on the same `model` object.
 
 #### `CDNMPCController` — `mbc.control` *(Ph.D. Ch. 9)*
 
