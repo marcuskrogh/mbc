@@ -992,8 +992,8 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         """
         from ._utils import _van_loan, _np_to_cvx
 
-        # dw ~ N(0, I dt), so the noise intensity matrix is G G^T.
-        # This replaces the old G Q_c G^T formulation (Van Loan 1978).
+        # dw ~ N(0, I dt), so the noise intensity is G G^T.
+        # Computed via the Van Loan (1978) augmented matrix method.
         Q_d_np = _van_loan(self.A, self.G, np.eye(self.nw), self.dt)
         return _np_to_cvx(Q_d_np)
 
