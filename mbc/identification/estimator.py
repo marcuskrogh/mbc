@@ -534,10 +534,10 @@ class CDParameterEstimator:
                 message=f"Estimation error: {exc}",
             )
 
-        msg = (
-            "Converged." if best_converged
-            else "Reached iteration limit (result may be approximate)."
-        )
+        if best_converged:
+            msg = "Converged."
+        else:
+            msg = "Reached iteration limit (result may be approximate)."
         return EstimationResult(
             theta_best=best_theta,
             neg_log_likelihood=float(best_f),
