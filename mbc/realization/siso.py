@@ -116,9 +116,9 @@ class SISORealization:
 
         n = len(den) - 1  # order
 
-        # Zero-pad numerator if needed so len(num) == len(den)
+        # Zero-pad numerator on the right if needed so len(num) == len(den)
         if len(num) < len(den):
-            num = np.pad(num, (len(den) - len(num), 0), mode='constant')
+            num = np.pad(num, (0, len(den) - len(num)), mode='constant')
         elif len(num) > len(den):
             raise ValueError(
                 f"Numerator degree {len(num)-1} exceeds denominator degree {n}"
