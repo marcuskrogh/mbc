@@ -294,10 +294,10 @@ class CDKalmanFilter:
         active = list(range(l)) if mask is None else [i for i, m in enumerate(mask) if m]
 
         if self._first:
-            # Bootstrap via minimum-norm solution: x̂ = Cᵀ (C Cᵀ)⁻¹ y
-            CCt = C_np @ C_np.T
-            alpha = np.linalg.solve(CCt, y_np)
-            self._x_np = C_np.T @ alpha
+            # Bootstrap via minimum-norm pseudoinverse: x̂ = Cm⁺ ym
+            # np.linalg.lstsq returns the minimum-norm least-squares solution,
+            # handling both underdetermined (nym < nx) and overdetermined cases.
+            self._x_np, _, _, _ = np.linalg.lstsq(C_np, y_np, rcond=None)
             self._first = False
         else:
             # Continuous ODE prediction using previous u and d (ZOH)

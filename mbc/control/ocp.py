@@ -63,6 +63,7 @@ Notation
 
 from __future__ import annotations
 
+import warnings
 from typing import TYPE_CHECKING
 
 from cvxopt import matrix, spmatrix, solvers
@@ -381,7 +382,12 @@ class OptimalControlProblem:
         sol = solvers.qp(H, f, G, h)
 
         if sol["status"] != "optimal":
-            # Fallback: zeros (no input)
+            warnings.warn(
+                f"OptimalControlProblem.solve: QP solver returned status "
+                f"'{sol['status']}'; returning zero inputs as fallback.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             U_flat = _zeros(n_U, 1)
         else:
             z_opt = sol["x"]

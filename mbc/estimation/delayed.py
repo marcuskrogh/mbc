@@ -53,7 +53,6 @@ from typing import Any
 
 import numpy as np
 
-from .._utils import _cvx_to_np
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -238,7 +237,7 @@ class DelayedObservationFilter:
 
         est = self._est
         if isinstance(est, KalmanFilter):
-            return np.zeros(est._model.n_u)
+            return np.zeros(est._model.nu)
         if isinstance(est, CDKalmanFilter):
             return np.zeros(est._model.nu)
         return np.zeros(0)
@@ -322,7 +321,7 @@ class DelayedObservationFilter:
         if isinstance(est, KalmanFilter):
             C_full_np = est._model.Cm   # (ny, n) numpy ndarray
         elif isinstance(est, CDKalmanFilter):
-            C_full_np = _cvx_to_np(est._model.C_cvx)  # (ny, n) from cvxopt
+            C_full_np = est._model.Cm   # (nym, n) numpy ndarray
         else:
             raise TypeError(
                 f"_correction_discrete: unexpected estimator type {type(est)!r}"

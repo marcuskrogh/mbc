@@ -6,10 +6,10 @@ Provides helpers used across the mbc sub-packages:
   - ``_np_to_cvx`` / ``_cvx_to_np`` / ``_cvx_col_to_np``  – array conversion
   - ``_any_to_np1d`` / ``_any_to_np2d``                   – accept cvxopt or numpy
   - ``_eye`` / ``_zeros`` / ``_symmetrise``                 – cvxopt matrix construction
-  - ``_expm`` / ``_zoh``                                    – matrix exponential and
-                                                              zero-order-hold discretisation
   - ``_zoh_full``                                           – ZOH for systems with multiple
-                                                              input matrices (B_c, E_c)
+                                                              input matrices (B_c, E_c),
+                                                              implemented via the augmented-
+                                                              matrix method (no matrix inverse)
   - ``_van_loan``                                           – exact discrete process-noise
                                                               covariance via Van Loan (1978)
 """
@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 import numpy as np
+from scipy.linalg import expm as _expm  # noqa: F401 — re-exported for callers
 from cvxopt import matrix
 
 
@@ -90,32 +91,6 @@ def _symmetrise(M: matrix) -> matrix:
 
 
 # ── Matrix exponential and ZOH discretisation ─────────────────────────────
-
-
-def _expm(M: np.ndarray) -> np.ndarray:
-    """
-    Matrix exponential via eigendecomposition.
-
-    For a real matrix M with distinct eigenvalues this is exact.
-    Thermal state matrices have real, distinct, negative eigenvalues
-    (stable RC circuit), so this approach is numerically well-conditioned.
-    """
-    vals, vecs = np.linalg.eig(M)
-    return np.real(vecs @ np.diag(np.exp(vals)) @ np.linalg.inv(vecs))
-
-
-def _zoh(Fc: np.ndarray, Gc: np.ndarray, dt: float) -> tuple[np.ndarray, np.ndarray]:
-    """
-    Zero-order hold discretisation of ẋ = Fc x + Gc u.
-
-    Returns (A_d, B_d) such that x[k+1] = A_d x[k] + B_d u[k].
-
-    Using:  A_d = expm(Fc dt),   B_d = Fc⁻¹ (A_d − I) Gc
-    """
-    n = Fc.shape[0]
-    A_d = _expm(Fc * dt)
-    B_d = np.linalg.solve(Fc, (A_d - np.eye(n)) @ Gc)
-    return A_d, B_d
 
 
 def _zoh_full(
