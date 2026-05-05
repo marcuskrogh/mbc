@@ -94,7 +94,6 @@ the measurement.  All system matrices are constant (LTI).
 | `predict_offset(d)` | zeros | Additive prediction bias `offset(d)` |
 | `params` | `array([])` | Flat parameter vector for identification |
 | `with_params(theta)` | raises | Construct new model from parameter vector |
-| `discretize_jacobian(d)` | FD | Finite-difference Jacobians `∂Ad/∂θ_i`, `∂Bd/∂θ_i`, `∂Ed/∂θ_i` |
 
 **Example**:
 
@@ -236,8 +235,8 @@ kf.record_action(u)                   # store u[k] for next prediction
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `x_hat` | `(nx,1) matrix` | Current state estimate x̂[k] (copy) |
-| `P` | `(nx,nx) matrix` | Current covariance P[k] (copy) |
+| `x_hat` | `(nx,) ndarray` | Current state estimate x̂[k] (copy) |
+| `P` | `(nx,nx) ndarray` | Current covariance P[k] (copy) |
 | `last_innovation` | `list[float]` or `None` | Most recent innovation ν = ym − Cm x̂⁻ |
 
 #### `DelayedObservationFilter` — `mbc.estimation`
@@ -1049,22 +1048,21 @@ from mbc.estimation import CDKalmanFilter
 kf = CDKalmanFilter(model, P0=None, n_steps=10)
 
 # At each measurement time:
-x_hat = kf.update(y, d, mask=None)   # (n,1) cvxopt column
+x_hat = kf.update(y, d, mask=None)   # (nx,) ndarray state estimate
 kf.record_action(u)                   # store u[k] for next prediction
 
 # Inspect filter state:
-kf.x_hat             # (n,1) state estimate
-kf.P                 # (n,n) covariance
+kf.x_hat             # (nx,) ndarray state estimate
+kf.P                 # (nx,nx) ndarray covariance
 kf.last_innovation   # list[float] or None
 ```
 
 **Internal representation**: state `x̂` and covariance `P` are maintained as
-`numpy.ndarray` internally for efficient ODE integration, and converted to
-`cvxopt.matrix` on output.
+`numpy.ndarray` throughout.
 
 ---
 
-#### `ContinuousDiscreteEKF` — `mbc.estimation` *(stub — Ph.D. Ch. 7.1)*
+#### `ContinuousDiscreteEKF` — `mbc.estimation` *(Ph.D. Ch. 7.1)*
 
 Extended Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Extends the
 linear CDKalmanFilter by replacing `A` with the Jacobian
@@ -1125,7 +1123,7 @@ x_hat, P = ekf.update(y, d, mask=None)       # update only
 
 ---
 
-#### `ContinuousDiscreteUKF` — `mbc.estimation` *(stub — Ph.D. Ch. 7.2)*
+#### `ContinuousDiscreteUKF` — `mbc.estimation` *(Ph.D. Ch. 7.2)*
 
 Unscented Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Replaces the
 Jacobian linearisation of the EKF with a deterministic sigma-point approximation
@@ -1233,7 +1231,7 @@ x_hat, P = ukf.step(y, u, d, t, mask=None)
 
 ---
 
-#### `ContinuousDiscreteEnKF` — `mbc.estimation` *(stub — Ph.D. Ch. 7.3)*
+#### `ContinuousDiscreteEnKF` — `mbc.estimation` *(Ph.D. Ch. 7.3)*
 
 Ensemble Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Maintains an
 ensemble of `N` particles to approximate the state distribution without requiring
@@ -1317,7 +1315,7 @@ x_hat, P = enkf.step(y, u, d, t, mask=None)
 
 ---
 
-#### `ContinuousDiscreteParticleFilter` — `mbc.estimation` *(stub — Ph.D. Ch. 7.4)*
+#### `ContinuousDiscreteParticleFilter` — `mbc.estimation` *(Ph.D. Ch. 7.4)*
 
 Sequential Monte Carlo (particle filter) for a nonlinear `ContinuousDiscreteModel`.
 Represents the posterior `p(x[k] | y[1:k])` as a weighted particle cloud.  Unlike
@@ -1945,9 +1943,7 @@ records one time step.
 ### `ped_neg_log_likelihood_gradient` — `mbc.identification.likelihood`
 
 Forward finite-difference gradient `∂(−log L)/∂θ` of the PED log-likelihood.
-Step size `h = 1e-5` by default.  Can be replaced by analytic propagation through
-the Kalman recursion using `model.discretize_jacobian()` for better accuracy and
-speed.
+Step size `h = 1e-5` by default.
 
 ### `ParameterEstimator` — `mbc.identification`
 
@@ -2425,7 +2421,7 @@ A, B, C, D = sys.A, sys.B, sys.C, sys.D
 
 ## Part V — Monte Carlo Simulation
 
-### `MonteCarloSimulation` — `mbc.monte_carlo` *(stub — Ph.D. Ch. 12)*
+### `MonteCarloSimulation` — `mbc.monte_carlo` *(Ph.D. Ch. 12)*
 
 Closed-loop Monte Carlo framework for assessing controller and estimator
 performance under stochastic initial conditions and process noise.
@@ -2461,7 +2457,7 @@ but deterministic realisations.
 | `simulator` | `SDESimulator` or `SDAESimulator` | — | Plant dynamics integrator |
 | `controller` | `object` with `.step()` | — | Feedback controller |
 | `estimator` | `object` with `.step()` or `None` | `None` | State estimator; `None` = perfect state info |
-| `stage_cost` | `(x, u, d) → float` | — | Cost accumulated per step (used for `costs` field) |
+| `stage_cost` | `(x, u, d) → float` or `None` | `None` | Cost accumulated per step (used for `costs` field); `None` leaves `costs` as zeros |
 | `N_mc` | `int` | `100` | Number of Monte Carlo trials |
 | `seed` | `int` or `None` | `None` | Base random seed (trial i uses seed+i) |
 
@@ -2473,6 +2469,7 @@ from mbc.monte_carlo import MonteCarloSimulation
 mc = MonteCarloSimulation(
     model=plant, simulator=sim,
     controller=ctrl, estimator=ekf,
+    stage_cost=lambda x, u, d: float(x @ Q_x @ x + u @ R_u @ u),
     N_mc=500, seed=42,
 )
 

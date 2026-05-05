@@ -68,6 +68,10 @@ class MonteCarloSimulation:
     estimator : object with ``.step(y, u, d, t)`` method or None, optional
         State estimator.  When ``None`` the true state is fed to the
         controller (perfect state information).
+    stage_cost : callable (x, u, d) → float or None, optional
+        Cost function accumulated at each step.  The cumulative per-trial
+        cost is stored in ``MonteCarloResult.costs``.  When ``None``
+        (default), all costs are zero.
     N_mc : int, optional
         Number of Monte Carlo trials.  Default: 100.
     seed : int or None, optional
@@ -80,6 +84,7 @@ class MonteCarloSimulation:
         simulator: SDESimulator | SDAESimulator,
         controller,
         estimator=None,
+        stage_cost=None,
         N_mc: int = 100,
         seed: int | None = None,
     ) -> None:
@@ -87,6 +92,7 @@ class MonteCarloSimulation:
         self._simulator = simulator
         self._controller = controller
         self._estimator = estimator
+        self._stage_cost = stage_cost
         self._N_mc = N_mc
         self._seed = seed
 
@@ -114,11 +120,6 @@ class MonteCarloSimulation:
         Returns
         -------
         MonteCarloResult
-
-        Raises
-        ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
         """
         nx = self._model.nx
         nu = self._model.nu
@@ -226,11 +227,11 @@ class MonteCarloSimulation:
                     # Estimator step signature: step(y, u, d, p, t)
                     self._estimator.step(ym_k, u_k, d_k, p, t + dt)
 
+                # Accumulate stage cost if a cost function was provided
+                if self._stage_cost is not None:
+                    costs[i] += float(self._stage_cost(x_i, u_k, d_k))
+
                 # Advance time
                 t += dt
-
-            # 3. Record total cost (set to zero for now - no cost function provided)
-            # In a real implementation, this would accumulate stage costs
-            costs[i] = 0.0
 
         return MonteCarloResult(X=X, Y=Y, U=U, costs=costs)
