@@ -78,12 +78,95 @@ class MIMORealization:
 
         Raises
         ------
-        NotImplementedError
-            Always — to be implemented in a future commit.
+        ValueError
+            If H is too short or dimensions are inconsistent.
         """
-        raise NotImplementedError(
-            "MIMORealization.from_markov_parameters is not yet implemented."
-        )
+        if len(H) < 2 * n + 1:
+            raise ValueError(
+                f"Need at least {2*n + 1} Markov parameters for order {n}, "
+                f"got {len(H)}"
+            )
+
+        # Extract D = H[0] and validate dimensions
+        D = np.asarray(H[0], dtype=float)
+        if D.ndim != 2:
+            raise ValueError(f"H[0] must be 2D, got shape {D.shape}")
+
+        ny, nu = D.shape
+
+        # Validate all H[k] have consistent shape
+        for k, Hk in enumerate(H):
+            Hk = np.asarray(Hk, dtype=float)
+            if Hk.shape != (ny, nu):
+                raise ValueError(
+                    f"H[{k}] has shape {Hk.shape}, expected ({ny}, {nu})"
+                )
+
+        # Determine q (block rows/cols for Hankel matrix)
+        # We have H[1], H[2], ..., H[T-1] available
+        # Need H[1] through H[2q] for block Hankel, so 2q <= T-1
+        T = len(H)
+        q = (T - 1) // 2
+        if q < n:
+            raise ValueError(
+                f"Block size q={q} < n={n}. Need more Markov parameters."
+            )
+
+        # Validate observability and controllability conditions
+        if q * ny < n:
+            raise ValueError(
+                f"Observability condition violated: q*ny={q*ny} < n={n}. "
+                f"Need more outputs or larger q."
+            )
+        if q * nu < n:
+            raise ValueError(
+                f"Controllability condition violated: q*nu={q*nu} < n={n}. "
+                f"Need more inputs or larger q."
+            )
+
+        # Build block Hankel matrix H_blk ∈ ℝ^(q·ny × q·nu)
+        # H_blk[i*ny:(i+1)*ny, j*nu:(j+1)*nu] = H[i+j+1] for i,j = 0..q-1
+        H_blk = np.zeros((q * ny, q * nu))
+        for i in range(q):
+            for j in range(q):
+                idx = i + j + 1  # Skip H[0], use H[1] onwards
+                if idx < len(H):
+                    H_blk[i*ny:(i+1)*ny, j*nu:(j+1)*nu] = H[idx]
+
+        # Compute rank-n truncated SVD
+        try:
+            U, s, Vt = np.linalg.svd(H_blk, full_matrices=False)
+        except np.linalg.LinAlgError as e:
+            raise ValueError(f"SVD failed: {e}")
+
+        # Truncate to rank n
+        U_n = U[:, :n]
+        s_n = s[:n]
+        V_n = Vt[:n, :].T  # Transpose to get V from V^T
+
+        # Form observability and controllability matrices
+        sqrt_s = np.diag(np.sqrt(s_n))
+        O_n = U_n @ sqrt_s  # (q·ny) × n observability matrix
+        R_n = sqrt_s @ V_n.T  # n × (q·nu) controllability matrix
+
+        # Extract system matrices
+        # C = first ny rows of observability matrix
+        C = O_n[0:ny, :]  # Shape (ny, n)
+
+        # B = first nu columns of controllability matrix
+        B = R_n[:, 0:nu]  # Shape (n, nu)
+
+        # A from shift-and-recover: A = O_n[0:(q-1)·ny]^+ O_n[ny:q·ny]
+        O_upper = O_n[0:(q-1)*ny, :]  # First (q-1)·ny rows
+        O_lower = O_n[ny:q*ny, :]      # Rows shifted down by ny
+
+        # Compute A using pseudo-inverse
+        try:
+            A = np.linalg.lstsq(O_upper, O_lower, rcond=None)[0].T
+        except np.linalg.LinAlgError as e:
+            raise ValueError(f"Failed to recover A matrix: {e}")
+
+        return cls(A=A, B=B, C=C, D=D)
 
     # ── System matrices ──────────────────────────────────────────────────
 
