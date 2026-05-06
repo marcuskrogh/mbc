@@ -152,8 +152,8 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     def hm(self, x, u, d, p, t):
         return np.array([x[1]])  # measure c_B
 
-    def g(self, x, u, d, p, t):
-        return np.array([x[1]])  # controlled output: c_B
+    def gm(self, x, u, d, p, t):
+        return np.array([x[1]])  # output: c_B
 
     @property
     def nz(self) -> int: return 1
@@ -230,8 +230,8 @@ class MonodBioreactor(ContinuousDiscreteModel):
     def hm(self, x, u, d, p, t):
         return np.array([x[1]])  # measure biomass X
 
-    def g(self, x, u, d, p, t):
-        return np.array([x[1]])  # controlled output: biomass X
+    def gm(self, x, u, d, p, t):
+        return np.array([x[1]])  # output: biomass X
 
     @property
     def nz(self) -> int: return 1

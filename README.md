@@ -505,18 +505,19 @@ u, U_seq, X_seq = ctrl.step(y, D)   # D = stacked disturbance forecast (N*p, 1)
 #### `ContinuousDiscreteModel` — `mbc.models`
 
 Abstract base class for a nonlinear continuous-discrete stochastic SDE system
-(Ph.D. thesis, Ch. 5):
+(ControlToolbox §SDE):
 
 ```
 dx(t)   = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
-z(t)    = g(x, u, d, p, t)
+z(t)    = gm(x, u, d, p, t)
 ym(tk)  = hm(x, u, d, p, tk) + v(tk),                         v(tk) ~ N(0, Rm)
 ```
 
 where `x ∈ ℝⁿˣ` is the state, `u ∈ ℝⁿᵘ` is the control input, `d ∈ ℝⁿᵈ` is a
-measured disturbance, `p` is a parameter vector, `z ∈ ℝⁿᶻ` is the controlled
-output, `ym ∈ ℝⁿʸᵐ` is the measurement, and `dw(t) ~ N(0, I dt)` is standard
-Brownian motion.  The instantaneous noise covariance is `sigma sigma^T dt`.
+measured disturbance, `p` is a parameter vector, `z ∈ ℝⁿᶻ` is the continuous
+output (`g^m` in the ControlToolbox notation), `ym ∈ ℝⁿʸᵐ` is the discrete
+noisy measurement (`h^m`), and `dw(t) ~ N(0, I dt)` is standard Brownian
+motion.  The instantaneous noise covariance is `sigma sigma^T dt`.
 
 All arrays use `numpy.ndarray`.  This ABC is accepted by all nonlinear estimators
 (`ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`, `ContinuousDiscreteEnKF`,
@@ -528,14 +529,14 @@ All arrays use `numpy.ndarray`.  This ABC is accepted by all nonlinear estimator
 |--------|-----------------|-------------|
 | `f` | `(x, u, d, p, t) → (nx,) ndarray` | Drift function |
 | `sigma` | `(x, u, d, p, t) → (nx, nw) ndarray` | Diffusion matrix |
-| `hm` | `(x, u, d, p, t) → (nym,) ndarray` | Measurement function |
-| `g` | `(x, u, d, p, t) → (nz,) ndarray` | Controlled output function |
+| `hm` | `(x, u, d, p, t) → (nym,) ndarray` | Measurement function `h^m` |
+| `gm` | `(x, u, d, p, t) → (nz,) ndarray` | Continuous output function `g^m` |
 | `Rm` | `(nym, nym) ndarray` | Measurement noise covariance |
 | `nx` | `int` | State dimension |
 | `nu` | `int` | Input dimension |
 | `nd` | `int` | Disturbance dimension |
 | `nym` | `int` | Measurement dimension |
-| `nz` | `int` | Controlled output dimension |
+| `nz` | `int` | Output dimension |
 | `nw` | `int` | Process-noise / diffusion dimension (columns of `sigma`) |
 
 **Optional analytic Jacobians** — subclasses may override these to avoid
@@ -576,7 +577,7 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     @property
     def nym(self): return 1  # measure c_B only
     @property
-    def nz(self): return 1   # control c_B
+    def nz(self): return 1   # output c_B
     @property
     def Rm(self): return np.array([[0.05]])
 
@@ -593,8 +594,8 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     def hm(self, x, u, d, p, t):
         return np.array([x[1]])   # measure c_B
 
-    def g(self, x, u, d, p, t):
-        return np.array([x[1]])   # control c_B
+    def gm(self, x, u, d, p, t):
+        return np.array([x[1]])   # output c_B
 
 m = VanDeVusseCSTR()
 print(m.nx, m.nu, m.nd, m.nw, m.nym, m.nz)  # 2  1  0  2  1  1
@@ -606,7 +607,7 @@ d0  = np.zeros(m.nd)                # no disturbance
 p0  = np.zeros(0)                   # no parameters
 print(m.f(x0, u0, d0, p0, t=0.0))  # (2,) drift vector
 print(m.hm(x0, u0, d0, p0, t=0.0)) # (1,) predicted measurement
-print(m.g(x0, u0, d0, p0, t=0.0))  # (1,) controlled output
+print(m.gm(x0, u0, d0, p0, t=0.0)) # (1,) output
 ```
 
 #### `LinearContinuousDiscreteModel` — `mbc.models`
@@ -623,7 +624,7 @@ ym(tk) = Cm x(tk) + Dm u(tk) + Fm d(tk) + v(tk),   v(tk) ~ N(0, Rm)
 Inputs `u` and disturbances `d` are held constant (zero-order hold) over each
 sampling interval `[tk, tk+1]`.
 
-**Notation** (M.Sc. thesis, Ch. 5; Ph.D. thesis, Ch. 5):
+**Notation** (ControlToolbox §SDE; M.Sc. thesis Ch. 5):
 
 | Symbol | Dimension | Description |
 |--------|-----------|-------------|
@@ -631,15 +632,15 @@ sampling interval `[tk, tk+1]`.
 | `nu` | `int` | Input dimension |
 | `nd` | `int` | Disturbance dimension |
 | `nym` | `int` | Measurement output dimension (derived: `Cm.shape[0]`) |
-| `nz` | `int` | Controlled output dimension (derived: `Cz.shape[0]`) |
+| `nz` | `int` | Output dimension (derived: `Cz.shape[0]`) |
 | `nw` | `int` | Process-noise dimension (derived: `G.shape[1]`) |
 | `A` | `(nx, nx)` | Continuous state matrix |
 | `B` | `(nx, nu)` | Continuous input matrix |
 | `E` | `(nx, nd)` | Continuous disturbance matrix |
 | `G` | `(nx, nw)` | Noise input matrix |
-| `Cz` | `(nz, nx)` | Controlled output matrix |
-| `Dz` | `(nz, nu)` | Controlled output input feedthrough |
-| `Fz` | `(nz, nd)` | Controlled output disturbance feedthrough |
+| `Cz` | `(nz, nx)` | Output matrix |
+| `Dz` | `(nz, nu)` | Output input feedthrough |
+| `Fz` | `(nz, nd)` | Output disturbance feedthrough |
 | `Cm` | `(nym, nx)` | Measurement output matrix |
 | `Dm` | `(nym, nu)` | Measurement input feedthrough |
 | `Fm` | `(nym, nd)` | Measurement disturbance feedthrough |
@@ -652,7 +653,7 @@ sampling interval `[tk, tk+1]`.
 |--------|------|-------------|
 | `nx`, `nu`, `nd` | `int` | Dimensions (inherited abstracts) |
 | `A`, `B`, `E`, `G` | `ndarray` | Continuous-time matrices |
-| `Cz` | `(nz, nx) ndarray` | Controlled output matrix |
+| `Cz` | `(nz, nx) ndarray` | Output matrix |
 | `Cm` | `(nym, nx) ndarray` | Measurement output matrix |
 | `Rm` | `(nym, nym) ndarray` | Measurement noise covariance |
 | `dt` | `float` | Sampling interval |
@@ -667,7 +668,7 @@ sampling interval `[tk, tk+1]`.
 | `f(x, u, d, p, t)` | `A @ x + B @ u + E @ d` |
 | `sigma(x, u, d, p, t)` | `G` (constant; arguments ignored) |
 | `hm(x, u, d, p, t)` | `Cm @ x + Dm @ u + Fm @ d` |
-| `g(x, u, d, p, t)` | `Cz @ x + Dz @ u + Fz @ d` |
+| `gm(x, u, d, p, t)` | `Cz @ x + Dz @ u + Fz @ d` |
 | `nym` | `Cm.shape[0]` |
 | `nz` | `Cz.shape[0]` |
 | `nw` | `G.shape[1]` |
@@ -738,7 +739,7 @@ class CSTRLinear(LinearContinuousDiscreteModel):
     @property
     def G(self): return np.eye(2)
     @property
-    def Cz(self): return np.array([[1.0, 0.0]])    # controlled output: state 0
+    def Cz(self): return np.array([[1.0, 0.0]])    # output: state 0
     @property
     def Cm(self): return np.array([[1.0, 0.0]])    # measurement: state 0
     @property
@@ -764,17 +765,17 @@ print(isinstance(m, LinearContinuousDiscreteModel))  # True
 #### `ContinuousDiscreteDAEModel` — `mbc.models`
 
 Extends `ContinuousDiscreteModel` with an algebraic constraint and algebraic
-states `y` (Ph.D. thesis, Ch. 6):
+states `y` (ControlToolbox §SDAE):
 
 ```
 dx(t)   = f(x, y, u, d, p, t) dt + sigma(x, y, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
-0       = h(x, y, u, d, p, t)
-z(t)    = g(x, y, u, d, p, t)
+0       = g(x, y, u, d, p, t)
+z(t)    = gm(x, y, u, d, p, t)
 ym(tk)  = hm(x, y, u, d, p, tk) + v(tk),                            v(tk) ~ N(0, Rm)
 ```
 
 where `y ∈ ℝⁿʸ` is the algebraic state vector, kept consistent with the
-differential state `x` at all times by enforcing `h = 0`.  The `nw` property
+differential state `x` at all times by enforcing `g = 0`.  The `nw` property
 is inherited from `ContinuousDiscreteModel` and must be implemented by
 concrete subclasses.
 
@@ -782,8 +783,9 @@ concrete subclasses.
 
 | Member | Signature | Description |
 |--------|-----------|-------------|
-| `h` | `(x, y, u, d, p, t) → (ny,)` | Algebraic constraint residual; zero when satisfied |
+| `g` | `(x, y, u, d, p, t) → (ny,)` | Algebraic constraint residual; zero when satisfied |
 | `ny` | `int` | Algebraic state dimension |
+| `gm` | `(x, y, u, d, p, t) → (nz,)` | Continuous output function `g^m` |
 
 **Optional analytic Jacobians** for the constraint and cross-terms:
 
@@ -791,11 +793,11 @@ concrete subclasses.
 |--------|-----------|---------|
 | `dfdx` | `(x, y, u, d, p, t) → (nx, nx)` | Forward FD |
 | `dfdy` | `(x, y, u, d, p, t) → (nx, ny)` | Forward FD |
-| `dhdx` | `(x, y, u, d, p, t) → (ny, nx)` | Forward FD |
-| `dhdy` | `(x, y, u, d, p, t) → (ny, ny)` | Forward FD |
-| `dhdu` | `(x, y, u, d, p, t) → (ny, nu)` | Forward FD |
-| `dhdd` | `(x, y, u, d, p, t) → (ny, nd)` | Forward FD |
-| `dhdp` | `(x, y, u, d, p, t) → (ny, np)` | Forward FD |
+| `dgdx` | `(x, y, u, d, p, t) → (ny, nx)` | Forward FD |
+| `dgdy` | `(x, y, u, d, p, t) → (ny, ny)` | Forward FD |
+| `dgdu` | `(x, y, u, d, p, t) → (ny, nu)` | Forward FD |
+| `dgdd` | `(x, y, u, d, p, t) → (ny, nd)` | Forward FD |
+| `dgdp` | `(x, y, u, d, p, t) → (ny, np)` | Forward FD |
 | `dhmdy` | `(x, y, u, d, p, t) → (nym, ny)` | Forward FD |
 
 Accepted by `SDAESimulator` and `ContinuousDiscreteDAEEKF`.
@@ -817,7 +819,7 @@ class IsomerisationReactor(ContinuousDiscreteDAEModel):
     Differential state : x = [C_tot]   total concentration (mol/L)
     Algebraic state    : y = [C_A]     concentration of species A (mol/L)
     Algebraic constraint: K_eq * C_A = C_B = C_tot - C_A
-                          → h(x, y) = (K_eq + 1) * C_A - C_tot = 0
+                          → g(x, y) = (K_eq + 1) * C_A - C_tot = 0
     Drift              : dC_tot/dt = F/V * (C_feed - C_tot)
     Input              : u = [F/V]  specific feed rate (1/min)
     Measurement        : ym = C_A  (UV absorber measuring species A)
@@ -838,7 +840,7 @@ class IsomerisationReactor(ContinuousDiscreteDAEModel):
     @property
     def nym(self): return 1  # measure C_A
     @property
-    def nz(self): return 1   # control C_A
+    def nz(self): return 1   # output C_A
     @property
     def Rm(self): return np.array([[0.01]])
 
@@ -849,12 +851,12 @@ class IsomerisationReactor(ContinuousDiscreteDAEModel):
     def sigma(self, x, y, u, d, p, t):
         return np.array([[0.02]])   # small additive noise on C_tot
 
-    def h(self, x, y, u, d, p, t):
+    def g(self, x, y, u, d, p, t):
         # Constraint: (K_eq + 1) * C_A - C_tot = 0
         return np.array([(self._K_eq + 1.0) * y[0] - x[0]])
 
-    def g(self, x, y, u, d, p, t):
-        return np.array([y[0]])   # controlled output: C_A
+    def gm(self, x, y, u, d, p, t):
+        return np.array([y[0]])   # output: C_A
 
     def hm(self, x, y, u, d, p, t):
         return np.array([y[0]])   # measure C_A
@@ -868,7 +870,7 @@ C_A   = np.array([C_tot[0] / (m._K_eq + 1)])   # = 1.0 mol/L
 u0    = np.array([0.2])
 d0    = np.zeros(0); p0 = np.zeros(0)
 
-print(m.h(C_tot, C_A, u0, d0, p0, t=0.0))   # [0.0] — constraint satisfied
+print(m.g(C_tot, C_A, u0, d0, p0, t=0.0))   # [0.0] — constraint satisfied
 print(m.f(C_tot, C_A, u0, d0, p0, t=0.0))   # drift dC_tot/dt
 print(m.hm(C_tot, C_A, u0, d0, p0, t=0.0))  # predicted measurement C_A
 ```
@@ -879,48 +881,40 @@ print(m.hm(C_tot, C_A, u0, d0, p0, t=0.0))  # predicted measurement C_A
 
 #### `SDESimulator` — `mbc.simulation`
 
-Euler-Maruyama numerical integrator for `ContinuousDiscreteModel` (Ph.D.
-thesis, Ch. 5).  Simulates the continuous SDE from `t_k` to `t_{k+1} = t_k + dt`
-using `n_steps` sub-steps of size `h = dt / n_steps`.  Inputs `u` and
-disturbances `d` are held constant (ZOH) over each measurement interval.
+Numerical integrator for `ContinuousDiscreteModel` (ControlToolbox §SDE —
+*Numerical Integration*).  Simulates the continuous SDE from `t_k` to
+`t_{k+1} = t_k + dt` using `n_steps` equidistant sub-steps of size
+`Δt = dt / n_steps`.  Inputs `u` and disturbances `d` are held constant
+(zero-order hold) over each measurement interval.  The discrete Wiener
+increment is `Δω_n = z_n √Δt` with `z_n ~ N(0, I)`.
 
-**Explicit-Explicit (EE) scheme** (default):
-
-Both drift and diffusion are evaluated at the beginning of each sub-step:
-
-```
-x_{j+1} = x_j + h · f(x_j, u, d, p, t_j) + √h · sigma(x_j, u, d, p, t_j) · w_j
-
-where  w_j ~ N(0, I)  and  t_j = t + j·h
-```
-
-This is the standard Euler-Maruyama discretisation.  It is first-order strong
-and half-order weak convergent.  Appropriate for non-stiff systems.
-
-**Implicit-Explicit (IE) scheme**:
-
-The drift is evaluated implicitly at `t_{j+1}` while the diffusion remains explicit:
+**Explicit-Explicit Euler-Maruyama (EE)** — both drift and diffusion
+evaluated at the current sub-step:
 
 ```
-x_{j+1} = x_j + h · f(x_{j+1}, u, d, p, t_{j+1}) + √h · sigma(x_j, u, d, p, t_j) · w_j
+x_{n+1} = x_n + Δt · f(x_n, u_k, d_k, p, t_n) + sigma(x_n, u_k, d_k, p, t_n) · Δω_n
 ```
 
-The implicit drift term is resolved by **fixed-point iteration**:
+This is the standard Euler-Maruyama discretisation.  Use when drift
+dynamics are non-stiff.
+
+**Implicit-Explicit (IE) scheme** — drift evaluated at the *next*
+sub-step (implicit), diffusion evaluated explicitly:
 
 ```
-noise_term = √h · sigma(x_j, u, d, p, t_j) · w_j    (fixed at start of sub-step)
-
-x^(0) = x_j
-x^(ℓ+1) = x_j + h · f(x^(ℓ), u, d, p, t_{j+1}) + noise_term
-
-Converged when  ‖x^(ℓ+1) − x^(ℓ)‖₂ < fp_tol,  or after fp_max_iter iterations.
+x_{n+1} = x_n + Δt · f(x_{n+1}, u_k, d_k, p, t_{n+1}) + sigma(x_n, u_k, d_k, p, t_n) · Δω_n
 ```
 
-The noise term `√h · sigma(x_j, u, d, p, t_j) · w_j` is fixed during the inner iteration
-since it depends on the beginning-of-step state.  The IE scheme has better
-stability properties for stiff drift terms and damps spurious oscillations that
-the EE scheme can introduce when `h` is not sufficiently small relative to the
-system's fastest time constant.
+The implicit equation is solved by Newton's method on the residual
+
+```
+R(x_{n+1}) = x_{n+1} − x_n − f(x_{n+1}, …) · Δt − sigma(x_n, …) · Δω_n = 0,
+
+∂R/∂x = I − (∂f/∂x)(x_{n+1}, …) · Δt.
+```
+
+The IE scheme is appropriate when the drift dynamics are stiff (large
+eigenvalues in `∂f/∂x`).
 
 **Parameters**:
 
@@ -928,11 +922,11 @@ system's fastest time constant.
 |-----------|------|---------|-------------|
 | `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model |
 | `dt` | `float` | — | Measurement sampling interval |
-| `n_steps` | `int` | `10` | Euler-Maruyama sub-steps per interval |
+| `n_steps` | `int` | `10` | Integration sub-steps per interval |
 | `scheme` | `"EE"` or `"IE"` | `"EE"` | Integration scheme |
 | `seed` | `int` or `None` | `None` | Random seed for reproducibility |
-| `fp_tol` | `float` | `1e-8` | IE fixed-point convergence tolerance (ignored for EE) |
-| `fp_max_iter` | `int` | `50` | IE maximum fixed-point iterations per sub-step |
+| `newton_tol` | `float` | `1e-12` | IE drift Newton tolerance (ignored for EE) |
+| `newton_max_iter` | `int` | `50` | IE maximum Newton iterations per sub-step |
 
 **Methods**:
 
@@ -942,93 +936,60 @@ from mbc.simulation import SDESimulator
 sim = SDESimulator(model, dt=1.0, n_steps=20, scheme="EE", seed=42)
 
 # Simulate one measurement interval [t, t+dt]
-x_next = sim.step(x, u, d, t)                  # returns (nx,) ndarray
+x_next = sim.step(x, u, d, p, t)               # returns (nx,) ndarray
 
 # Simulate full horizon of T intervals
-# U : (T, nu) ndarray,  D : (T, nd) ndarray
-X = sim.simulate(x0, U, D, t0=0.0)             # returns (T+1, nx) ndarray
+# U : (T, nu) ndarray,  D : (T, nd) ndarray,  P : (T, nparams) ndarray
+X = sim.simulate(x0, U, D, P, t0=0.0)          # returns (T+1, nx) ndarray
 ```
 
 #### `SDAESimulator` — `mbc.simulation`
 
-Euler-Maruyama integrator for `ContinuousDiscreteDAEModel` (Ph.D. thesis, Ch. 6).
-Extends `SDESimulator` to maintain the algebraic constraint `h(x, y, u, d, p, t) = 0`
-at every sub-step by interleaving Newton iteration for `y` with the Euler step
-for `x`.
+Implicit-explicit Euler-Maruyama integrator for `ContinuousDiscreteDAEModel`
+(ControlToolbox §SDAE — *Numerical Integration: Implicit-Explicit Method*).
+Drift and the algebraic constraint are evaluated at the *next* sub-step
+(implicit); diffusion is explicit.
 
-**Newton iteration for `y`** (used at every sub-step after the Euler update on `x`):
-
-```
-y^(0) = y_j   (previous algebraic state)
-
-For ℓ = 0, 1, …, newton_max_iter − 1:
-
-    J_hy ≈ ∂h/∂y  (finite-difference Jacobian, ny × ny)
-
-    where  J_hy[i, k] = (h(x, y + h_fd · e_k, u, d, p, t)[i] − h(x, y, u, d, p, t)[i]) / h_fd
-           h_fd = 1e-5,  e_k = k-th standard basis vector ∈ ℝⁿʸ
-
-    y^(ℓ+1) = y^(ℓ) − J_hy⁻¹ h(x, y^(ℓ), u, d, p, t)    (Newton step)
-
-    Converged when  ‖h(x, y^(ℓ+1), u, d, p, t)‖₂ < newton_tol
-```
-
-Analytic Jacobians can be provided by implementing `dhdy` on the model
-subclass, replacing the finite-difference computation.
-
-**Explicit-Explicit (EE) scheme** (default):
-
-At each sub-step `j`:
+At each sub-step the combined variable `z_{n+1} = (x_{n+1}, y_{n+1})` is
+the root of
 
 ```
-1. Euler drift update on x (explicit):
-      x_trial = x_j + h · f(x_j, y_j, u, d, p, t_j)
-
-2. Add diffusion noise (explicit):
-      x_{j+1} = x_trial + √h · sigma(x_j, y_j, u, d, p, t_j) · w_j
-
-3. Newton solve for y at the new x (project onto constraint manifold):
-      y_{j+1} = Newton( h(x_{j+1}, y, u, d, p, t_{j+1}) = 0,  y_init = y_j )
+R(z_{n+1}) = [
+    x_{n+1} − x_n − f(x_{n+1}, y_{n+1}, u_k, d_k, p, t_{n+1}) · Δt − sigma(x_n, y_n, …) · Δω_n;
+    g(x_{n+1}, y_{n+1}, p)
+] = 0
 ```
 
-Drift and diffusion are evaluated at `(x_j, y_j)` (explicitly), then `y` is
-projected back onto `h = 0` at the updated `x_{j+1}`.
-
-**Implicit-Explicit (IE) scheme**:
-
-The drift is solved implicitly in `x`, with `y` updated at each inner iteration
-to maintain consistency:
+found by Newton's method with residual Jacobian
 
 ```
-1. Inner Newton loop on (x, y):
-      Outer iterate: x^(ℓ) with y^(ℓ) = Newton(h(x^(ℓ), y, ...) = 0)
-      x^(ℓ+1) = x_j + h · f(x^(ℓ), y^(ℓ), u, d, p, t_{j+1})
-               + √h · sigma(x_j, y_j, u, d, p, t_j) · w_j   (noise fixed)
-      Repeat until ‖x^(ℓ+1) − x^(ℓ)‖ < tol.
-
-2. Final algebraic solve:
-      y_{j+1} = Newton( h(x_{j+1}, y, u, d, p, t_{j+1}) = 0,  y_init = y^(last) )
+∂R/∂z = [
+    I − (∂f/∂x) · Δt,    −(∂f/∂y) · Δt;
+    ∂g/∂x,                ∂g/∂y
+].
 ```
 
-At each inner iteration, `y` is updated by Newton so that `h(x^(ℓ), y, ...) = 0`
-holds, coupling `x` and `y` implicitly.  This is necessary for index-1 DAEs with
-stiff algebraic coupling, where the EE scheme would violate the constraint to
-first order.
+There is no explicit-explicit variant — the SDAE always requires the
+Newton solve.  For consistent initial conditions the user-provided `y0`
+must satisfy `g(x0, y0, …) = 0`.
 
-**Parameters** (extends `SDESimulator`):
+**Parameters**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | `ContinuousDiscreteDAEModel` | — | SDAE model |
+| `dt` | `float` | — | Measurement sampling interval |
+| `n_steps` | `int` | `10` | Integration sub-steps per interval |
 | `newton_tol` | `float` | `1e-10` | Newton solver convergence tolerance |
 | `newton_max_iter` | `int` | `50` | Maximum Newton iterations per sub-step |
+| `seed` | `int` or `None` | `None` | Random seed for reproducibility |
 
 **Methods**:
 
 ```python
 from mbc.simulation import SDAESimulator
 
-sim = SDAESimulator(model, dt=1.0, n_steps=20, scheme="EE", newton_tol=1e-10)
+sim = SDAESimulator(model, dt=1.0, n_steps=20, newton_tol=1e-10)
 
 x_next, y_next = sim.step(x, y, u, d, p, t)      # one measurement interval
 X, Y = sim.simulate(x0, y0, U, D, P, t0=0.0)     # (T+1,nx) and (T+1,ny)
@@ -1072,7 +1033,7 @@ def fd_jacobian_hm(model, x, u, d, p, t, h_fd=1e-5):
 For `ContinuousDiscreteDAEModel`, additional Jacobians are needed:
 
 ```python
-# ∂f/∂y  (nx × ny),  ∂h/∂x  (ny × nx),  ∂h/∂y  (ny × ny),  ∂hm/∂y  (nym × ny)
+# ∂f/∂y  (nx × ny),  ∂g/∂x  (ny × nx),  ∂g/∂y  (ny × ny),  ∂hm/∂y  (nym × ny)
 # Each follows the same forward-FD pattern, perturbing y or x respectively.
 ```
 
@@ -1192,42 +1153,53 @@ kf.last_innovation   # list[float] or None
 
 ---
 
-#### `ContinuousDiscreteEKF` — `mbc.estimation` *(Ph.D. Ch. 7.1)*
+#### `ContinuousDiscreteEKF` — `mbc.estimation` *(ControlToolbox §SDE — CD-EKF)*
 
-Extended Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Extends the
-linear CDKalmanFilter by replacing `A` with the Jacobian
-`F(t) = ∂f/∂x|_{x̂(t)}` evaluated along the estimated trajectory.
+Extended Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Applies the
+linear Kalman filter update equations to a local linearisation of the nonlinear
+state and measurement dynamics; the state distribution is characterised by its
+first two moments — mean and covariance — at all times.
 
-**Prediction** — forward-Euler integration of the **nonlinear** state ODE and
-linearised Riccati ODE:
-
-```
-For j = 0, 1, …, n_steps − 1:
-
-    F_j = ∂f/∂x evaluated at (x̂_j, u, d, p, t_j)    (Jacobian, nx × nx)
-    G_j = sigma(x̂_j, u, d, p, t_j)                   (diffusion matrix, nx × nw)
-
-    x̂_{j+1} = x̂_j + h · f(x̂_j, u, d, p, t_j)       (nonlinear drift)
-
-    Ṗ_j = F_j P_j + P_j F_jᵀ + G_j G_jᵀ             (linearised Riccati ODE)
-    P_{j+1} = P_j + h · Ṗ_j
-```
-
-The Jacobian `F = ∂f/∂x` can be provided analytically by the model or computed
-by forward finite differences.
-
-**Filtering** — standard EKF linearised measurement update:
+**Time update over [t_k, t_{k+1}]** — explicit-Euler integration of the mean
+trajectory and the Lyapunov-type ODE for the covariance:
 
 ```
-Hm  = ∂hm/∂x evaluated at (x̂⁻, u, d, p, t)     (measurement Jacobian, nym × nx)
-ŷm⁻ = hm(x̂⁻, u, d, p, t)                        (predicted measurement)
-e   = ym − ŷm⁻                                   (innovation)
-R_e = Hm P⁻ Hmᵀ + Rm                            (innovation covariance)
-K   = P⁻ Hmᵀ R_e⁻¹                              (Kalman gain)
-x̂   = x̂⁻ + K e                                  (corrected state)
-IKHm = I − K Hm
-P   = IKHm P⁻ IKHmᵀ + K Rm Kᵀ                   (Joseph form)
+dx̂_k/dt(t) = f(x̂_k, u, d, p, t)                                       (mean ODE)
+dP_k/dt(t) = A_k(t) P_k + P_k A_kᵀ(t) + sigma_k(t) sigma_kᵀ(t)         (Lyapunov ODE)
+
+A_k(t)     = ∂f/∂x(x̂_k(t), u, d, p, t)
+sigma_k(t) = sigma(x̂_k(t), u, d, p, t)
 ```
+
+with sub-step `h = dt / n_steps`:
+
+```
+For n = 0, 1, …, n_steps − 1:
+    A_n     = ∂f/∂x evaluated at (x̂_n, u, d, p, t_n)
+    sigma_n = sigma(x̂_n, u, d, p, t_n)
+    x̂_{n+1} = x̂_n + h · f(x̂_n, u, d, p, t_n)
+    P_{n+1} = P_n + h · (A_n P_n + P_n A_nᵀ + sigma_n sigma_nᵀ)
+    P_{n+1} ← ½(P_{n+1} + P_{n+1}ᵀ)                  (symmetrise)
+```
+
+The Jacobian `A = ∂f/∂x` is provided analytically by the model or computed by
+forward finite differences.
+
+**Measurement update** — Joseph form:
+
+```
+C_k  = ∂hm/∂x(x̂_{k|k-1}, u, d, p, 0)     (measurement Jacobian, nym × nx)
+ŷ^m  = hm(x̂_{k|k-1}, u, d, p, 0)         (predicted measurement)
+e_k  = y^m_k − ŷ^m                        (innovation)
+R_e  = C_k P_{k|k-1} C_kᵀ + R             (innovation covariance)
+K_k  = P_{k|k-1} C_kᵀ R_e⁻¹               (Kalman gain)
+
+x̂_{k|k} = x̂_{k|k-1} + K_k e_k
+P_{k|k} = (I − K_k C_k) P_{k|k-1} (I − K_k C_k)ᵀ + K_k R K_kᵀ          (Joseph)
+```
+
+The Joseph stabilising form preserves symmetry and positive definiteness of
+the posterior covariance in finite-precision arithmetic.
 
 **Parameters**:
 
@@ -1253,88 +1225,87 @@ x_hat, P = ekf.update(y, d, mask=None)       # update only
 
 ---
 
-#### `ContinuousDiscreteUKF` — `mbc.estimation` *(Ph.D. Ch. 7.2)*
+#### `ContinuousDiscreteUKF` — `mbc.estimation` *(ControlToolbox §SDE — CD-UKF)*
 
-Unscented Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Replaces the
-Jacobian linearisation of the EKF with a deterministic sigma-point approximation
-(unscented transform), which captures the mean and covariance of a nonlinear
-transformation to third order for Gaussian distributions.
+Unscented Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Replaces
+the Jacobian linearisation of the EKF with a deterministic sigma-point
+approximation (unscented transform).  The time update uses an **augmented**
+dimension `n̄ = nx + nω` to handle state uncertainty and process noise
+explicitly through two sets of sigma points propagated separately.  No
+Jacobian is required.
 
-**Sigma points** — Van der Merwe scaled sigma-point scheme (`2 nx + 1` points):
-
-```
-λ = α² (nx + κ) − nx
-
-χ_0    = x̂                           (mean sigma point)
-χ_i    = x̂ + L[:, i-1]              for i = 1, …, nx
-χ_{nx+i} = x̂ − L[:, i-1]           for i = 1, …, nx
-
-where L = cholesky((nx + λ) · P, lower=True)   ∈ ℝ^{nx × nx}
-      L[:, i] denotes the i-th column of L
-```
-
-`L` is the **lower** Cholesky factor (i.e. `L @ L.T = (nx + λ) P`), computed via
-`scipy.linalg.cholesky((nx + λ) * P, lower=True)`.  If `P` is numerically
-near-singular, add a small jitter `ε · I` (e.g. `ε = 1e-8`) before factoring:
-
-```python
-try:
-    L = scipy.linalg.cholesky((nx + lam) * P, lower=True)
-except np.linalg.LinAlgError:
-    L = scipy.linalg.cholesky((nx + lam) * P + 1e-8 * np.eye(nx), lower=True)
-```
-
-**Weights** for mean and covariance reconstruction:
+**Time update — augmented sigma points**.  Tuning parameters
+`α ∈ ]0, 1]`, `κ ≥ 0`, `β ≥ 0` (β = 2 optimal for Gaussian):
 
 ```
-W_m^0 = λ / (nx + λ)
-W_c^0 = λ / (nx + λ) + (1 − α² + β)
-W_m^i = W_c^i = 1 / (2(nx + λ))   for i = 1, …, 2nx
+c̄ = α² (n̄ + κ),    λ̄ = α² (n̄ + κ) − n̄
+
+W̄_m^0 = λ̄ / (n̄ + λ̄)
+W̄_c^0 = λ̄ / (n̄ + λ̄) + (1 − α² + β)
+W̄_m^i = W̄_c^i = 1 / (2 (n̄ + λ̄))    for i = 1, …, 2 n̄
 ```
 
-Typical values: `α = 1e-3` (spread), `β = 2` (optimal for Gaussian), `κ = 0`.
-
-**Prediction** — propagate each sigma point through the drift ODE and reconstruct:
-
-```
-For each sigma point χ_i (i = 0, …, 2nx):
-    For sub-step j = 0, …, n_steps − 1:
-        χ_i ← χ_i + h · f(χ_i, u, d, t + j·h)      (pure drift, no noise)
-
-Predicted mean:       x̂⁻ = Σ_i W_m^i χ̃_i
-Predicted covariance: P⁻  = Σ_i W_c^i (χ̃_i − x̂⁻)(χ̃_i − x̂⁻)ᵀ + Q_d
-```
-
-The discrete diffusion term `Qd` is accumulated across all `n_steps` sub-steps
-using the propagated **mean** sigma point `χ_0` (i.e. the mean trajectory) to
-evaluate the diffusion matrix:
+Two sigma-point sets are constructed.  Deterministic state set
+(`2 nx + 1` points capturing state covariance):
 
 ```
-Qd = 0
-For sub-step j = 0, …, n_steps − 1:
-    x̂_j  = current mean sigma point χ_0 at sub-step j
-    G_j   = sigma(x̂_j, u, d, p, t + j·h)         (nx × nw diffusion matrix)
-    Qd   += h · G_j · G_jᵀ
+χ^(0)        = x̂_{k|k}
+χ^(i)        = x̂_{k|k} + √c̄ · L[:, i-1]            for i = 1, …, nx
+χ^(nx+i)     = x̂_{k|k} − √c̄ · L[:, i-1]            for i = 1, …, nx
+                where  L L^T = P_{k|k}              (Cholesky)
 ```
 
-This evaluates the stochastic integral `∫₀^dt sigma sigma^T dt` with a left-point
-Euler rule along the mean trajectory.  Using the mean sigma point (rather than
-all `2nx+1` sigma points) for diffusion accumulation is the standard CD-UKF
-approximation and avoids `O(nx)` extra model evaluations per sub-step.
-
-**Filtering** — unscented measurement update:
+Stochastic noise sigma set (`2 nω` points all placed at the mean) with
+structured deterministic Wiener increments `Δω = ±√(c̄ · dt) · e_i`,
+distributed equally across sub-steps so that the cumulative increment
+matches:
 
 ```
-Propagate predicted sigma points through the measurement function:
-    γ_i = hm(χ̃_i, u, d, p, t)   for i = 0, …, 2nx
+Per sub-step n:  Δω_n^(2nx+i)        = +√(c̄ · dt) / n_steps · e_i   for i = 1, …, nω
+                  Δω_n^(2nx+nω+i)     = −√(c̄ · dt) / n_steps · e_i   for i = 1, …, nω
+```
 
-Predicted measurement:    ŷm⁻ = Σ_i W_m^i γ_i
-Innovation covariance:    S_yy = Σ_i W_c^i (γ_i − ŷm⁻)(γ_i − ŷm⁻)ᵀ + Rm
-Cross-covariance:         S_xy = Σ_i W_c^i (χ̃_i − x̂⁻)(γ_i − ŷm⁻)ᵀ
+The deterministic set is propagated through the *drift only*
 
-Kalman gain:  K = S_xy S_yy⁻¹
-Corrected state:     x̂ = x̂⁻ + K (ym − ŷm⁻)
-Corrected covariance: P = P⁻ − K S_yy Kᵀ
+```
+χ^(i) ← χ^(i) + h · f(χ^(i), u, d, p, t)              i = 0, …, 2 nx
+```
+
+and the stochastic set through the *full SDE* with structured noise:
+
+```
+χ^(2nx+i) ← χ^(2nx+i) + h · f(χ^(2nx+i), …) + sigma(χ^(2nx+i), …) · Δω_n^(2nx+i)
+```
+
+Predicted mean and covariance are weighted statistics over all `2 n̄ + 1`
+sigma points:
+
+```
+x̂_{k+1|k} = Σ_i W̄_m^i χ^(i)
+P_{k+1|k} = Σ_i W̄_c^i (χ^(i) − x̂_{k+1|k})(…)ᵀ
+```
+
+No additive `sigma sigma^T · dt` term is needed — the diffusion is captured
+entirely by the propagation of the stochastic sigma points.
+
+**Measurement update — state-only sigma points** (no augmentation, dimension
+`nx`):
+
+```
+c = α² (nx + κ),    λ = α² (nx + κ) − nx
+
+χ^(0)        = x̂_{k|k-1}
+χ^(i)        = x̂_{k|k-1} + √c · L[:, i-1]            i = 1, …, nx
+χ^(nx+i)     = x̂_{k|k-1} − √c · L[:, i-1]            i = 1, …, nx
+
+z^{m,(i)}    = hm(χ^(i), u, d, p, 0),   ŷ^m = Σ_i W_m^i z^{m,(i)}
+R_zz         = Σ_i W_c^i (z^{m,(i)} − ŷ^m)(…)ᵀ
+R_xy         = Σ_i W_c^i (χ^(i) − x̂_{k|k-1})(z^{m,(i)} − ŷ^m)ᵀ
+R_e          = R_zz + R                       (innovation covariance)
+K_k          = R_xy R_e⁻¹                     (Kalman gain via cross-covariance)
+
+x̂_{k|k} = x̂_{k|k-1} + K_k (y^m_k − ŷ^m)
+P_{k|k} = P_{k|k-1} − K_k R_e K_kᵀ
 ```
 
 **Parameters**:
@@ -1346,79 +1317,75 @@ Corrected covariance: P = P⁻ − K S_yy Kᵀ
 | `P0` | `(nx,nx) ndarray` | — | Initial state covariance |
 | `dt` | `float` | — | Sampling interval |
 | `n_steps` | `int` | `10` | Euler sub-steps per interval |
-| `alpha` | `float` | `1e-3` | Sigma-point spread |
+| `alpha` | `float` | `1.0` | Sigma-point spread α ∈ ]0, 1] |
 | `beta` | `float` | `2.0` | Distribution parameter (2 = optimal for Gaussian) |
-| `kappa` | `float` | `0.0` | Secondary spread parameter |
+| `kappa` | `float` | `0.0` | Secondary spread parameter κ ≥ 0 |
 
 **Usage**:
 
 ```python
 from mbc.estimation import ContinuousDiscreteUKF
 
-ukf = ContinuousDiscreteUKF(model, x0, P0, dt=1.0, alpha=1e-3, beta=2.0)
-x_hat, P = ukf.step(y, u, d, t, mask=None)
+ukf = ContinuousDiscreteUKF(model, x0, P0, dt=1.0, alpha=1.0, beta=2.0)
+x_hat, P = ukf.step(y, u, d, p, t, mask=None)
 ```
 
 ---
 
-#### `ContinuousDiscreteEnKF` — `mbc.estimation` *(Ph.D. Ch. 7.3)*
+#### `ContinuousDiscreteEnKF` — `mbc.estimation` *(ControlToolbox §SDE — CD-EnKF)*
 
 Ensemble Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Maintains an
-ensemble of `N` particles to approximate the state distribution without requiring
-Jacobian computations.  The ensemble mean and sample covariance replace the
-analytical Gaussian approximation used by the EKF and UKF.
+ensemble of `N_p` particles to approximate the state distribution without
+requiring Jacobian computations.  Each particle is propagated independently
+through the *full* stochastic dynamics with state-dependent diffusion; the
+ensemble mean and Bessel-corrected sample covariance replace the analytical
+Gaussian approximation used by the EKF and UKF.
 
-**Initialisation**: draw `N` particles from `N(x0, P0)`:
-
-```
-X[:,i] ~ N(x0, P0)   for i = 1, …, N
-```
-
-**Prediction** — propagate each particle independently via Euler-Maruyama (EE):
+**Initialisation**: draw `N_p` particles from `N(x0, P0)`:
 
 ```
-For each particle i = 1, …, N and sub-step j = 0, …, n_steps−1:
-
-    X_{j+1}[:,i] = X_j[:,i] + h · f(X_j[:,i], u, d, p, t_j)
-                 + √h · sigma(X_j[:,i], u, d, p, t_j) · w_{j,i}
-
-where  w_{j,i} ~ N(0, I)  independently per particle and sub-step.
+X[:,i] ~ N(x0, P0)   for i = 1, …, N_p
 ```
 
-After propagation:
+**Time update** — per-particle Euler-Maruyama with state-dependent diffusion:
 
 ```
-x̂⁻ = (1/N) Σ_i X[:,i]                           (ensemble mean)
-A  = X − x̂⁻ 1ᵀ                                   (anomaly matrix, nx × N)
-P⁻ = (1/(N−1)) A Aᵀ                               (ensemble sample covariance)
+For each particle i = 1, …, N_p and sub-step n = 0, …, n_steps−1:
+
+    f_i     = f(X_n[:,i], u, d, p, t_n)
+    sigma_i = sigma(X_n[:,i], u, d, p, t_n)
+    z_i     ~ N(0, I)            (independent per particle and sub-step)
+    X_{n+1}[:,i] = X_n[:,i] + h · f_i + sigma_i · z_i · √h
 ```
 
-**Filtering** — perturbed-observations ensemble update:
+After propagation (Bessel-corrected sample statistics):
 
 ```
-Perturb observations:  ym_i = ym + v_i,   v_i ~ N(0, Rm),   i = 1, …, N
-                       (freshly drawn at each update call, independent of prediction noise)
-
-Predicted obs for each particle:
-    Ŷ[:,i] = hm(X⁻[:,i], u, d, p, t)
-
-Innovation matrix:  E = Ym − Ŷ   where Ym[:,i] = ym_i
-
-Cross-covariance:   P_xy = (1/(N−1)) A_x Ŷ_anom^T
-Innovation cov:     P_yy = (1/(N−1)) Ŷ_anom Ŷ_anom^T + Rm
-
-where A_x = X⁻ − x̂⁻ 1ᵀ  and  Ŷ_anom = Ŷ − (mean of Ŷ) 1ᵀ
-
-Kalman gain:  K = P_xy P_yy⁻¹
-
-Update each particle:  X[:,i] ← X⁻[:,i] + K (ym_i − Ŷ[:,i])
-
-x̂ = (1/N) Σ_i X[:,i]                             (updated ensemble mean)
-P  = (1/(N−1)) (X − x̂ 1ᵀ)(X − x̂ 1ᵀ)ᵀ           (updated sample covariance)
+x̂_{k+1|k} = (1/N_p) Σ_i X[:,i]
+P_{k+1|k} = (1/(N_p − 1)) (X − x̂ 1ᵀ)(X − x̂ 1ᵀ)ᵀ
 ```
 
-The perturbed-observations scheme ensures that the ensemble covariance satisfies
-the correct Kalman update equation in expectation over the random realisations.
+**Measurement update** — perturbed observations:
+
+```
+Predicted measurements:  Z[:,i] = hm(X⁻[:,i], u, d, p, 0)            i = 1, …, N_p
+Sample statistics:
+    ŷ^m_{k|k-1} = (1/N_p) Σ_i Z[:,i]
+    R_zz        = (1/(N_p − 1)) (Z − ŷ^m 1ᵀ)(…)ᵀ
+    R_xy        = (1/(N_p − 1)) (X⁻ − x̂_{k|k-1} 1ᵀ)(Z − ŷ^m 1ᵀ)ᵀ
+    R_e         = R_zz + R
+
+Single Kalman gain:   K_k = R_xy R_e⁻¹
+
+Perturbed measurements:  y^{m,(i)}_k = y^m_k + v^(i),  v^(i) ~ N(0, R)
+
+Per-particle update:    x̂_{k|k}^(i) = X⁻[:,i] + K_k (y^{m,(i)}_k − Z[:,i])
+```
+
+The perturbation prevents ensemble collapse — without it the ensemble
+covariance shrinks by the deterministic factor `(I − K C)` and underestimates
+the posterior covariance.  Filtered statistics are sample mean and
+Bessel-corrected sample covariance over the updated ensemble.
 
 **Parameters**:
 
@@ -1445,70 +1412,57 @@ x_hat, P = enkf.step(y, u, d, t, mask=None)
 
 ---
 
-#### `ContinuousDiscreteParticleFilter` — `mbc.estimation` *(Ph.D. Ch. 7.4)*
+#### `ContinuousDiscreteParticleFilter` — `mbc.estimation` *(ControlToolbox §SDE — CD-PF)*
 
 Sequential Monte Carlo (particle filter) for a nonlinear `ContinuousDiscreteModel`.
-Represents the posterior `p(x[k] | y[1:k])` as a weighted particle cloud.  Unlike
-the EnKF, no Gaussian approximation is made; the filter is asymptotically exact
-as `N → ∞`.
+Represents the posterior `p(x[k] | y[1:k])` as a particle set of size `N_p`.
+Unlike the EnKF the measurement update makes **no Gaussian assumption**; the
+filter is asymptotically exact as `N_p → ∞`.
 
-**Initialisation**: draw `N` particles from `N(x0, P0)` with equal weights:
-
-```
-X[:,i] ~ N(x0, P0),   w_i = 1/N   for i = 1, …, N
-```
-
-**Prediction** — identical to `ContinuousDiscreteEnKF`: each particle is
-propagated independently through the nonlinear SDE via Euler-Maruyama.  Weights
-are unchanged during prediction (the transition density acts as the proposal).
-
-**Filtering** — importance weight update (numerically stable log-domain):
+**Initialisation**: draw `N_p` particles from `N(x0, P0)`:
 
 ```
-For each particle i = 1, …, N:
-
-    ŷm_i = hm(X⁻[:,i], u, d, p, t)                (predicted measurement)
-    r_i = ym − ŷm_i                                (residual)
-    log_ℓ_i = −½ rᵢᵀ Rm⁻¹ r_i − ½ log|2π Rm|    (log Gaussian likelihood)
-    log_w_i ← log_w_i + log_ℓ_i                   (log-weight update)
+X[:,i] ~ N(x0, P0)    for i = 1, …, N_p
 ```
 
-To avoid underflow, normalise weights using the **log-sum-exp** trick:
+**Time update** — identical to CD-EnKF: each particle is propagated
+independently through the full SDE via Euler-Maruyama with state-dependent
+diffusion and an independent Wiener increment per particle and sub-step.
+
+**Measurement update** — likelihood-weighted **systematic resampling**.  Per
+particle:
 
 ```
-log_w_max = max_i(log_w_i)
-log_Z     = log_w_max + log( Σ_i exp(log_w_i − log_w_max) )   (log normaliser)
-w_i       = exp(log_w_i − log_Z)                               (normalised weights)
+z^{m,(i)} = hm(X⁻[:,i], u, d, p, 0)               (predicted measurement)
+e^(i)     = y^m_k − z^{m,(i)}                     (innovation)
+w̃^(i)    = (2π)^{-nym/2} |R|^{-1/2} exp(−½ (e^(i))ᵀ R⁻¹ e^(i))    (Gaussian likelihood)
+w^(i)     = w̃^(i) / Σ_j w̃^(j)                  (normalised weights)
 ```
 
-```
-Effective sample size:  N_eff = 1 / Σ_i w_i²      (w_i already normalised)
-```
+Numerically the log-weights are computed and normalised with the
+log-sum-exp trick to avoid underflow.
 
-**Initialisation**: set `log_w_i = −log(N)` (i.e. uniform weights in log domain).
-
-When `mask` is provided, only active output channels enter the log-likelihood:
-`r_i = ym_sub − ŷm_i[active]`, `Rm_sub = Rm[np.ix_(active, active)]`.
-
-**Systematic resampling** — triggered when `N_eff < resample_threshold · N`:
+**Systematic resampling** (per CD-PF spec — every step, no threshold):
 
 ```
-1. Compute cumulative weight CDF: C[0] = 0, C[i] = C[i-1] + w_i
-2. Draw u_0 ~ Uniform(0, 1/N)
-3. For each new particle j = 1, …, N:
-      t_j = u_0 + (j−1)/N
-      select particle i such that C[i−1] < t_j ≤ C[i]
-4. Replace ensemble with selected particles; reset w_i = 1/N
+1. Compute weight CDF:    s^(i) = Σ_{j ≤ i} w^(j),    s^(0) = 0
+2. Draw a single q_1 ~ Uniform[0, 1 / N_p)
+3. Form equally-spaced resampling points:  q^(i) = (i − 1) / N_p + q_1   for i = 1, …, N_p
+4. For each q^(l), select particle i with s^(i-1) < q^(l) ≤ s^(i)
+5. Replace particle set with the selected particles
 ```
 
-Systematic resampling has `O(N)` cost and minimal variance among resampling
-schemes, making it the standard choice for particle filters.
+Using a single uniform draw (rather than `N_p` independent draws) gives
+**systematic** resampling, which has `O(N_p)` cost and minimal variance among
+resampling schemes; each particle is replicated at least
+`⌊N_p w^(i)⌋` times.
 
-**Weighted statistics**:
+**Filtered statistics** (sample mean and Bessel-corrected sample covariance
+over the resampled set):
 
 ```
-x̂ = Σ_i w_i X[:,i]                               (weighted mean)
-P  = Σ_i w_i (X[:,i] − x̂)(X[:,i] − x̂)ᵀ          (weighted covariance)
+x̂_{k|k} = (1 / N_p) Σ_i x̂_{k|k}^(i)
+P_{k|k} = (1 / (N_p − 1)) Σ_i (x̂_{k|k}^(i) − x̂_{k|k})(…)ᵀ
 ```
 
 **Parameters**:
@@ -1519,12 +1473,11 @@ P  = Σ_i w_i (X[:,i] − x̂)(X[:,i] − x̂)ᵀ          (weighted covariance)
 | `x0` | `(nx,) ndarray` | — | Initial state estimate |
 | `P0` | `(nx,nx) ndarray` | — | Initial covariance |
 | `dt` | `float` | — | Sampling interval |
-| `N` | `int` | `500` | Number of particles |
+| `N` | `int` | `500` | Number of particles N_p |
 | `n_steps` | `int` | `10` | Euler-Maruyama sub-steps per interval |
-| `resample_threshold` | `float` | `0.5` | `N_eff / N` threshold for resampling |
 | `seed` | `int` or `None` | `None` | Random seed |
 
-**Public properties**: `x_hat`, `P`, `particles` `(nx, N)`, `weights` `(N,)`.
+**Public properties**: `x_hat`, `P`, `particles` `(nx, N_p)`.
 
 **Usage**:
 
@@ -1537,76 +1490,94 @@ x_hat, P = pf.step(y, u, d, t, mask=None)
 
 ---
 
-#### `ContinuousDiscreteDAEEKF` — `mbc.estimation` *(stub — Ph.D. Ch. 8)*
+#### `ContinuousDiscreteDAEEKF` — `mbc.estimation` *(ControlToolbox §SDAE — CD-EKF)*
 
-Extended Kalman Filter for `ContinuousDiscreteDAEModel`.  Extends the CD-EKF to
-handle systems where the state is partially constrained by `h(x, y, u, d, p, t) = 0`.
-The covariance propagation uses an **effective Jacobian** that accounts for the
-implicit dependence of `y` on `x` via the constraint.
+Extended Kalman Filter for `ContinuousDiscreteDAEModel`.  The algebraic
+variables `y` are *never* added to the state vector — the implicit function
+theorem expresses `y` as an implicit function of `x` and propagates the
+resulting sensitivities through the time and measurement updates.  The state
+covariance `P` remains `nx × nx`, and `P_y` is recovered as a post-processing
+step from the algebraic sensitivity.
 
-**Effective Jacobian** (implicit function theorem):
-
-If `h(x, y, ...) = 0` is satisfied, differentiating with respect to `x` gives:
-
-```
-∂h/∂x + (∂h/∂y)(∂y/∂x) = 0   ⟹   ∂y/∂x = −(∂h/∂y)⁻¹ (∂h/∂x)
-```
-
-The effective drift Jacobian for the Riccati ODE is:
+**Initialisation**.  The user-supplied `y0` is projected onto the constraint
+manifold by solving `g(x0, y0, …) = 0` (Newton).  The initial algebraic
+covariance is
 
 ```
-F_eff = ∂f/∂x + (∂f/∂y)(∂y/∂x)
-      = ∂f/∂x − (∂f/∂y)(∂h/∂y)⁻¹ (∂h/∂x)
+P_{y,0|0} = Φ_yx P_{0|0} Φ_yxᵀ,    (∂g/∂y) Φ_yx = −∂g/∂x.
 ```
 
-**Four Jacobians required** (all computed by forward FD with `h_fd = 1e-5` if not
-supplied analytically):
+**Time update — implicit-Euler with sensitivity propagation**.  The
+interval `[t_k, t_{k+1}]` is divided into `n_steps` sub-steps of size
+`h = dt / n_steps`.  At each sub-step:
 
-| Jacobian | Shape | Formula |
-|----------|-------|---------|
-| `∂f/∂x` | `(nx, nx)` | perturb `x` in `f(x, y, u, d, p, t)` |
-| `∂f/∂y` | `(nx, ny)` | perturb `y` in `f(x, y, u, d, p, t)` |
-| `∂h/∂x` | `(ny, nx)` | perturb `x` in `h(x, y, u, d, p, t)` |
-| `∂h/∂y` | `(ny, ny)` | perturb `y` in `h(x, y, u, d, p, t)` |
+1. **Mean sub-step.**  Solve the implicit-Euler residual
 
-If `hm` depends on `y`, also compute `∂hm/∂y` (shape `nym × ny`) and use the
-extended observation Jacobian `Hm_eff = ∂hm/∂x − (∂hm/∂y)(∂h/∂y)⁻¹ (∂h/∂x)`.
+   ```
+   R(z_{n+1}) = [
+       x_{n+1} − x_n − f(x_{n+1}, y_{n+1}, u, d, p, t_{n+1}) h;
+       g(x_{n+1}, y_{n+1}, p)
+   ] = 0
+   ```
 
-`(∂h/∂y)⁻¹` is solved via `np.linalg.solve(J_hy, rhs)` rather than explicit
-inversion, following the same pattern as the Newton solver in `SDAESimulator`.
+   for `z_{n+1} = (x_{n+1}, y_{n+1})` by Newton's method.
 
-**Prediction** — interleaved Euler/Newton:
+2. **Sensitivity sub-step.**  The one-step sensitivities `Φ_xx`, `Φ_yx`
+   solve the linear system (same coefficient matrix as the Newton Jacobian):
+
+   ```
+   [ I − (∂f/∂x) h    −(∂f/∂y) h ] [ Φ_xx ]   [ I ]
+   [   ∂g/∂x              ∂g/∂y  ] [ Φ_yx ] = [ 0 ]
+   ```
+
+3. **Covariance sub-step** (left-rectangular rule for the stochastic integral):
+
+   ```
+   τ_n      = P_n + sigma(x_n, y_n, …) sigma^T h
+   P_{n+1}  = Φ_xx τ_n Φ_xxᵀ
+   ```
+
+4. **Algebraic covariance** at the new sub-step (implicit function theorem):
+
+   ```
+   P_{y,n+1} = Φ_yx P_{n+1} Φ_yxᵀ,    (∂g/∂y) Φ_yx = −∂g/∂x   at (x_{n+1}, y_{n+1}).
+   ```
+
+**Measurement update — total derivative C and Joseph form**.  The matrix
+`C_k` is the *total* derivative of `hm` with respect to `x`, accounting for
+the indirect dependence through `y(x)`:
 
 ```
-For j = 0, 1, …, n_steps − 1:
+C_k = ∂hm/∂x + (∂hm/∂y) (∂y/∂x),    (∂g/∂y) (∂y/∂x) = −(∂g/∂x).
 
-    1. Compute F_eff at (x̂_j, y_j, u, d, p, t_j)
-    2. Euler update on x̂:
-          x̂_{j+1} = x̂_j + h · f(x̂_j, y_j, u, d, p, t_j)
-    3. Newton solve for y at updated x:
-          y_{j+1} = Newton( h(x̂_{j+1}, y, u, d, p, t_{j+1}) = 0,  y_init = y_j )
-    4. Riccati update:
-          G_j    = sigma(x̂_j, y_j, u, d, p, t_j)
-          P_{j+1} = P_j + h · (F_eff P_j + P_j F_effᵀ + G_j G_jᵀ)
+R_e = C_k P_{k|k-1} C_kᵀ + R
+K_k = P_{k|k-1} C_kᵀ R_e⁻¹
+e_k = y^m_k − hm(x̂_{k|k-1}, ŷ_{k|k-1}, p)
+x̂_{k|k} = x̂_{k|k-1} + K_k e_k
+P_{k|k} = (I − K_k C_k) P_{k|k-1} (I − K_k C_k)ᵀ + K_k R K_kᵀ          (Joseph)
 ```
 
-**Filtering**: identical to the CD-EKF, using the extended measurement Jacobian
-`Hm = ∂hm/∂x + (∂hm/∂y)(∂y/∂x)` if `hm` depends on `y`.
+The filtered `ŷ_{k|k}` satisfies `g(x̂_{k|k}, ŷ_{k|k}, p) = 0` (Newton); the
+filtered `P_{y,k|k}` is recomputed via the implicit function theorem at the
+filtered state.
 
-**Parameters** (extends `ContinuousDiscreteEKF`):
+**Required Jacobians** (forward FD by default, may be overridden analytically):
+`∂f/∂x`, `∂f/∂y`, `∂g/∂x`, `∂g/∂y`, `∂hm/∂x`, `∂hm/∂y`.
+
+**Parameters**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `model` | `ContinuousDiscreteDAEModel` | — | SDAE model |
 | `x0` | `(nx,) ndarray` | — | Initial differential state estimate |
-| `y0` | `(ny,) ndarray` | — | Initial algebraic state (must satisfy `h = 0`) |
+| `y0` | `(ny,) ndarray` | — | Initial algebraic state guess (will be projected onto `g = 0`) |
 | `P0` | `(nx,nx) ndarray` | — | Initial covariance (differential states only) |
 | `dt` | `float` | — | Sampling interval |
-| `n_steps` | `int` | `10` | Sub-steps per interval |
+| `n_steps` | `int` | `10` | Implicit-Euler sub-steps per interval |
 | `newton_tol` | `float` | `1e-10` | Newton convergence tolerance |
-| `newton_max_iter` | `int` | `50` | Max Newton iterations per sub-step |
+| `newton_max_iter` | `int` | `50` | Max Newton iterations per solve |
 
-**Properties**: `x_hat`, `y_hat`, `P`.
+**Properties**: `x_hat`, `y_hat`, `P`, `Py`.
 
 **Usage**:
 
@@ -1616,7 +1587,7 @@ from mbc.estimation import ContinuousDiscreteDAEEKF
 ekf = ContinuousDiscreteDAEEKF(model, x0, y0, P0, dt=1.0)
 x_hat, y_hat, P = ekf.step(ym, u, d, p, t, mask=None)
 x_hat, y_hat, P = ekf.predict(u, d, p, t)
-x_hat, y_hat, P = ekf.update(ym, u, d, p, t, mask=None)
+x_hat, y_hat, P = ekf.update(ym, u, d, p, mask=None)
 ```
 
 ---
@@ -1674,7 +1645,7 @@ J = Σ_{k=0}^{N-1} [
 ```
 
 where:
-- `z[k] = g(x[k], u[k], d[k], p, t_k)` is the controlled output
+- `z[k] = gm(x[k], u[k], d[k], p, t_k)` is the (continuous) output
 - `Δu[k] = u[k] − u[k−1]` is the input rate of movement (ROM)
 - `c_u` is a linear input penalty vector
 - `ρ_x`, `ρ_z` are soft constraint penalty weights
@@ -1711,7 +1682,7 @@ guess.  Pass `u_prev=None` on the first call (zero initialisation).
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model (with `g` for output) |
+| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model (with `gm` for output) |
 | `N` | `int` | — | Prediction horizon |
 | `Q` | `(nz, nz) ndarray` | — | Stage output tracking cost |
 | `R` | `(nu, nu) ndarray` | — | Stage input cost |
@@ -2308,7 +2279,7 @@ class MonodModel(ContinuousDiscreteModel):
         return np.array([-mu*X/self._Y + (S_in-S)*FV, mu*X - X*FV])
     def sigma(self, x, u, d, p, t): return 0.01 * np.eye(2)
     def hm(self, x, u, d, p, t): return np.array([x[1]])
-    def g(self, x, u, d, p, t): return np.array([x[1]])
+    def gm(self, x, u, d, p, t): return np.array([x[1]])
     @property
     def params(self): return np.log(np.array([self._mu_max, self._K_s]))
 

@@ -280,7 +280,7 @@ class EconomicOptimalControlProblem:
 
                 # Soft output constraints
                 if self._z_min is not None or self._z_max is not None:
-                    z_k = self._model.g(x, u_k, d_trajectory[k], p_, t)
+                    z_k = self._model.gm(x, u_k, d_trajectory[k], p_, t)
                     if self._z_min is not None:
                         viol = np.maximum(0.0, self._z_min - z_k)
                         total += self._rho_z * float(viol @ viol)

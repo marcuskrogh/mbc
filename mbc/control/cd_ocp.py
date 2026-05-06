@@ -42,8 +42,8 @@ The lifted (batch) QP is solved using ``cvxopt.solvers.qp``.
 
 Nonlinear problem formulation (Ph.D. Ch. 9 — tracking variant)
 ---------------------------------------------------------------
-For a general nonlinear continuous-discrete model with controlled output
-z = g(x, u, d, p, t), the tracking OCP is:
+For a general nonlinear continuous-discrete model with output
+z = gm(x, u, d, p, t), the tracking OCP is:
 
     min_{u_0,...,u_{N-1}}  J = Σₖ₌₀ᴺ⁻¹ [
                                 ‖z[k+1] − z_ref‖²_Q
@@ -250,7 +250,7 @@ class CDTrackingOptimalControlProblem:
             ]
           + ‖z[N] − z_ref‖²_P
 
-    where  z[k] = g(x[k], u[k], d[k], p, t_k)  is the controlled output.
+    where  z[k] = gm(x[k], u[k], d[k], p, t_k)  is the (continuous) output.
 
     Constraints:
 
@@ -264,8 +264,8 @@ class CDTrackingOptimalControlProblem:
     Parameters
     ----------
     model : ContinuousDiscreteModel
-        Nonlinear continuous-discrete model.  ``model.g(x, u, d, p, t)``
-        provides the controlled output ``z``.
+        Nonlinear continuous-discrete model.  ``model.gm(x, u, d, p, t)``
+        provides the (continuous) output ``z``.
     N : int
         Prediction horizon (number of sampling intervals).
     Q : (nz, nz) ndarray
@@ -475,8 +475,8 @@ class CDTrackingOptimalControlProblem:
                 x = self._predict_mean(x, u_k, d_trajectory[k], p_, t)
                 t += self._dt
 
-                # Controlled output
-                z_k = self._model.g(x, u_k, d_trajectory[k], p_, t)
+                # Output
+                z_k = self._model.gm(x, u_k, d_trajectory[k], p_, t)
                 ez = z_k - self._z_ref
 
                 # Stage tracking cost (use terminal matrix P on last step)

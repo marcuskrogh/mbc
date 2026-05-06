@@ -5,13 +5,23 @@ Provides helpers used across the mbc sub-packages:
 
   - ``_np_to_cvx`` / ``_cvx_to_np`` / ``_cvx_col_to_np``  – array conversion
   - ``_any_to_np1d`` / ``_any_to_np2d``                   – accept cvxopt or numpy
-  - ``_eye`` / ``_zeros`` / ``_symmetrise``                 – cvxopt matrix construction
-  - ``_zoh_full``                                           – ZOH for systems with multiple
-                                                              input matrices (B_c, E_c),
-                                                              implemented via the augmented-
-                                                              matrix method (no matrix inverse)
-  - ``_van_loan``                                           – exact discrete process-noise
-                                                              covariance via Van Loan (1978)
+  - ``_eye`` / ``_zeros`` / ``_symmetrise``               – matrix construction / symmetry
+  - ``_zoh_full``                                         – ZOH discretisation
+  - ``_van_loan``                                         – exact discrete process-noise
+                                                            covariance (Van Loan 1978)
+  - ``_newton_solve``                                     – Newton iteration on F(x) = 0
+  - ``_fd_jacobian``                                      – forward finite-difference Jacobian
+                                                            of an arbitrary scalar/vector
+                                                            function (centralises the FD
+                                                            kernel used by all model defaults)
+  - ``_cholesky_psd``                                     – Cholesky factor with diagonal
+                                                            jitter fallback for numerically
+                                                            non-positive-definite matrices
+
+Constants:
+
+  - ``H_FD``                  – default forward-FD step (1e-5)
+  - ``CHOLESKY_JITTER``       – default Cholesky regularisation (1e-10)
 """
 
 from __future__ import annotations
@@ -175,7 +185,105 @@ def _van_loan(
     return (Q_d + Q_d.T) * 0.5  # symmetrise
 
 
-# ── Newton's method ───────────────────────────────────────────────────────
+# ── Numerical-method tuning constants ────────────────────────────────────
+
+
+H_FD: float = 1e-5
+"""Default forward finite-difference step used by :func:`_fd_jacobian`."""
+
+CHOLESKY_JITTER: float = 1e-10
+"""Default diagonal jitter used by :func:`_cholesky_psd` on near-singular matrices."""
+
+
+# ── Forward finite-difference Jacobian ───────────────────────────────────
+
+
+def _fd_jacobian(
+    func: Callable[[np.ndarray], np.ndarray],
+    x: np.ndarray,
+    h: float = H_FD,
+    m_out: int | None = None,
+) -> np.ndarray:
+    """
+    Forward finite-difference Jacobian of a vector-valued function.
+
+    Computes
+
+        J[i, k] = (func(x + h e_k)[i] − func(x)[i]) / h,    i ∈ {0, …, m−1},
+                                                            k ∈ {0, …, n−1},
+
+    where ``e_k`` is the k-th standard basis vector of ℝⁿ.  This is the
+    single FD kernel used by all model-default Jacobians in
+    :mod:`mbc.models`.
+
+    Parameters
+    ----------
+    func : callable (n,) ndarray → (m,) ndarray
+        Function whose Jacobian is approximated.
+    x : (n,) ndarray
+        Evaluation point.
+    h : float, optional
+        Forward-difference step size.  Default: :data:`H_FD`.
+    m_out : int or None, optional
+        Output dimension hint.  Required when ``n = 0`` to determine the
+        empty-Jacobian shape ``(m_out, 0)`` without evaluating ``func``.
+        Ignored when ``n > 0``.
+
+    Returns
+    -------
+    J : (m, n) ndarray
+        Forward-FD Jacobian.  When ``n = 0`` returns an empty ``(m_out, 0)``
+        array (and never calls ``func`` if ``m_out`` is supplied).
+    """
+    n = x.shape[0]
+    if n == 0:
+        if m_out is None:
+            m_out = func(x).shape[0]
+        return np.empty((m_out, 0))
+    f0 = func(x)
+    m = f0.shape[0]
+    J = np.empty((m, n))
+    for k in range(n):
+        x_fwd = x.copy()
+        x_fwd[k] += h
+        J[:, k] = (func(x_fwd) - f0) / h
+    return J
+
+
+# ── Cholesky with diagonal jitter ────────────────────────────────────────
+
+
+def _cholesky_psd(
+    M: np.ndarray,
+    jitter: float = CHOLESKY_JITTER,
+) -> np.ndarray:
+    """
+    Lower Cholesky factor of a symmetric positive-(semi)-definite matrix
+    with diagonal jitter fallback.
+
+    Attempts ``np.linalg.cholesky(M)``; on :class:`numpy.linalg.LinAlgError`
+    (numerically non-PD ``M``) retries with ``M + jitter · I``.  Used by
+    sigma-point and ensemble samplers that are robust to mild jitter on a
+    near-singular covariance.
+
+    Parameters
+    ----------
+    M : (n, n) ndarray  — symmetric positive-(semi)-definite matrix.
+    jitter : float, optional
+        Diagonal regularisation added on the fallback path.
+        Default: :data:`CHOLESKY_JITTER`.
+
+    Returns
+    -------
+    L : (n, n) ndarray  — lower-triangular Cholesky factor with ``L Lᵀ ≈ M``.
+    """
+    try:
+        return np.linalg.cholesky(M)
+    except np.linalg.LinAlgError:
+        return np.linalg.cholesky(M + jitter * np.eye(M.shape[0]))
+
+
+# ── Newton's method ──────────────────────────────────────────────────────
 
 
 def _newton_solve(

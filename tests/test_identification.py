@@ -529,7 +529,7 @@ class _MonodModel(ContinuousDiscreteModel):
     def hm(self, x, u, d, p, t):
         return np.array([x[1]])
 
-    def g(self, x, u, d, p, t):
+    def gm(self, x, u, d, p, t):
         return np.array([x[1]])
 
     # ── Identification interface ──────────────────────────────────────────

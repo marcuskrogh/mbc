@@ -1,20 +1,48 @@
 """
-Continuous-Discrete Particle Filter (Ph.D. Ch. 7.4).
+Continuous-Discrete Particle Filter (CD-PF) for SDE systems
+(ControlToolbox §State Estimation for Nonlinear SDE Systems —
+*Continuous-Discrete Particle Filter*).
 
-The CD-PF is a sequential Monte Carlo estimator.  N weighted particles
-approximate the posterior distribution of the state.
+The CD-PF approximates the state distribution by a randomly sampled
+particle set of size N_p.  The time update is identical to the CD-EnKF —
+each particle is propagated independently through the full SDE via
+Euler-Maruyama.  The measurement update replaces the Kalman correction
+with **likelihood-weighted resampling**: each particle is scored by how
+well its predicted measurement matches the observed one, and the
+particle set is resampled proportionally to these scores using
+**systematic resampling** (single uniform draw, equally-spaced
+resampling points — minimal-variance, O(N_p)).
 
-Prediction:
-    Each particle x_i is propagated through the nonlinear SDE via
-    Euler-Maruyama integration (same scheme as ContinuousDiscreteEnKF).
+Initialisation
+--------------
+The particle set {x̂^{(i)}_{0|0}}_{i=1}^{N_p} is sampled from the prior;
+in practice draw from N(x̂_{0|0}, P_{0|0}) when no analytic prior is
+available.
 
-Measurement update:
-    Weights w_i are multiplied by the likelihood p(y | x_i):
-        w_i ← w_i · p(y | x_i)   where   p(y | x_i) ∝ exp(-½ ‖y - h(x_i,d)‖²_R⁻¹)
-    Weights are normalised.  Systematic resampling is applied when the
-    effective sample size N_eff = (Σ w_i²)⁻¹ falls below threshold * N.
+Time update
+-----------
+For each particle i = 1, …, N_p, integrate the SDE
 
-Reference:  Ph.D. thesis, Ch. 7.4.
+    dx̂_k^{(i)}(t) = f(x̂_k^{(i)}, u, d, p, t) dt
+                  + sigma(x̂_k^{(i)}, u, d, p, t) dω_k^{(i)}(t)
+
+with independent Wiener increments dω_k^{(i)} per particle.
+
+Measurement update
+------------------
+Per-particle innovations e^{(i)} = y^m_k − hm(x̂_{k|k-1}^{(i)}, p) and
+Gaussian likelihood weights
+
+    w̃^{(i)} = (2π)^{-nym/2} |R|^{-1/2} exp(−½ (e^{(i)})ᵀ R⁻¹ e^{(i)}),
+    w^{(i)} = w̃^{(i)} / Σ_j w̃^{(j)}.
+
+Systematic resampling: draw q_1 ~ U[0, 1), construct N_p equally-spaced
+resampling points q^{(i)} = ((i−1) + q_1) / N_p and select particles
+according to the weight CDF.
+
+The filtered statistics are sample mean and Bessel-corrected sample
+covariance over the resampled particle set (uniform weights after
+resampling).
 """
 
 from __future__ import annotations
@@ -22,16 +50,19 @@ from __future__ import annotations
 import numpy as np
 
 from ..models import ContinuousDiscreteModel
+from .._utils import _cholesky_psd
+from ._ensemble import _ensemble_measurements, _propagate_em_ensemble
 
 
 class ContinuousDiscreteParticleFilter:
     """
-    Continuous-Discrete Particle Filter (Ph.D. Ch. 7.4).
+    Continuous-Discrete Particle Filter for SDE systems
+    (ControlToolbox §SDE State Estimation — *CD-PF*).
 
     Parameters
     ----------
     model : ContinuousDiscreteModel
-        Nonlinear continuous-discrete system.
+        Nonlinear continuous-discrete SDE system.
     x0 : (nx,) ndarray
         Initial state estimate (particle mean).
     P0 : (nx, nx) ndarray
@@ -39,12 +70,9 @@ class ContinuousDiscreteParticleFilter:
     dt : float
         Measurement sampling interval (seconds).
     N : int, optional
-        Number of particles.  Default: 500.
+        Number of particles N_p.  Default: 500.
     n_steps : int, optional
         Euler-Maruyama sub-steps per measurement interval.  Default: 10.
-    resample_threshold : float, optional
-        Effective sample size fraction below which systematic resampling
-        is triggered.  Default: 0.5 (i.e. N_eff < N/2).
     seed : int or None, optional
         Random seed for reproducibility.
     """
@@ -57,7 +85,6 @@ class ContinuousDiscreteParticleFilter:
         dt: float,
         N: int = 500,
         n_steps: int = 10,
-        resample_threshold: float = 0.5,
         seed: int | None = None,
     ) -> None:
         self._model = model
@@ -65,17 +92,15 @@ class ContinuousDiscreteParticleFilter:
         self._N = N
         self._n_steps = n_steps
         self._h_sub = dt / n_steps
-        self._resample_threshold = resample_threshold
         self._rng = np.random.default_rng(seed)
 
         nx = len(x0)
         self._nx = nx
 
         # Initialise particles by sampling from N(x0, P0)
-        L = np.linalg.cholesky(P0)
+        L = _cholesky_psd(P0)
         Z = self._rng.standard_normal((nx, N))
         self._X = np.array(x0, dtype=float)[:, None] + L @ Z   # (nx, N)
-        self._w = np.full(N, 1.0 / N)   # uniform weights
 
     # ── Internal helpers ──────────────────────────────────────────────────
 
@@ -84,7 +109,9 @@ class ContinuousDiscreteParticleFilter:
         w: np.ndarray, rng: np.random.Generator
     ) -> np.ndarray:
         """
-        Systematic resampling.  Returns an index array of length N.
+        Systematic resampling (ControlToolbox §SDE-CD-PF).  Single uniform
+        draw q_1 ~ U[0, 1/N), equally-spaced resampling points
+        q^{(i)} = (i-1)/N + q_1, weight CDF lookup.
 
         Parameters
         ----------
@@ -93,12 +120,12 @@ class ContinuousDiscreteParticleFilter:
 
         Returns
         -------
-        indices : (N,) int ndarray.
+        indices : (N,) int ndarray of resampled particle indices.
         """
         N = len(w)
         cumsum = np.cumsum(w)
-        u0 = rng.uniform(0.0, 1.0 / N)
-        positions = u0 + np.arange(N) / N
+        q1 = rng.uniform(0.0, 1.0 / N)
+        positions = q1 + np.arange(N) / N
         indices = np.searchsorted(cumsum, positions)
         return np.clip(indices, 0, N - 1)
 
@@ -106,25 +133,20 @@ class ContinuousDiscreteParticleFilter:
 
     @property
     def x_hat(self) -> np.ndarray:
-        """Weighted particle mean x̂ ∈ ℝⁿˣ (copy)."""
-        return (self._X * self._w[None, :]).sum(axis=1).copy()
+        """Particle sample mean x̂ ∈ ℝⁿˣ (copy)."""
+        return self._X.mean(axis=1).copy()
 
     @property
     def P(self) -> np.ndarray:
-        """Weighted particle covariance P ∈ ℝⁿˣˣⁿˣ (copy)."""
-        mu = self.x_hat
-        diff = self._X - mu[:, None]   # (nx, N)
-        return (diff * self._w[None, :]) @ diff.T
+        """Bessel-corrected sample covariance P ∈ ℝⁿˣˣⁿˣ (copy)."""
+        N = self._N
+        diff = self._X - self._X.mean(axis=1, keepdims=True)
+        return (diff @ diff.T) / (N - 1)
 
     @property
     def particles(self) -> np.ndarray:
         """Particle matrix X ∈ ℝⁿˣˣᴺ (copy)."""
         return self._X.copy()
-
-    @property
-    def weights(self) -> np.ndarray:
-        """Normalised particle weights w ∈ ℝᴺ (copy)."""
-        return self._w.copy()
 
     # ── Filter steps ──────────────────────────────────────────────────────
 
@@ -136,40 +158,25 @@ class ContinuousDiscreteParticleFilter:
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Propagate all particles from t to t + dt via Euler-Maruyama.
+        Time update: propagate each particle independently through the
+        full SDE via Euler-Maruyama with state-dependent diffusion.
 
         Parameters
         ----------
-        u : (nu,) ndarray      — control input.
-        d : (nd,) ndarray      — disturbance.
-        p : (nparams,) ndarray — parameter vector.
-        t : float              — current time.
+        u : (nu,) ndarray  — control input over [t, t+dt].
+        d : (nd,) ndarray  — disturbance over [t, t+dt].
+        p : (nparams,) ndarray  — parameter vector.
+        t : float          — current time.
 
         Returns
         -------
-        x_pred : (nx,) weighted mean after propagation.
-        P_pred : (nx, nx) weighted covariance after propagation.
+        x_pred : (nx,) sample mean after propagation.
+        P_pred : (nx, nx) Bessel-corrected sample covariance.
         """
-        model = self._model
-        h = self._h_sub
-        sqrt_h = np.sqrt(h)
-        N = self._N
-
-        # Diffusion: sigma encodes full noise magnitude, sigma @ sigma^T = Q
-        x_mean0 = self._X.mean(axis=1)
-        sigma_val = model.sigma(x_mean0, u, d, p, t)  # (nx, nw)
-        nw = sigma_val.shape[1]
-
-        t_j = t
-        for _ in range(self._n_steps):
-            W = self._rng.standard_normal((nw, N))
-            # Stack f evaluations: (nx, N)
-            F = np.column_stack([
-                model.f(self._X[:, i], u, d, p, t_j) for i in range(N)
-            ])
-            self._X = self._X + h * F + sigma_val @ (sqrt_h * W)
-            t_j += h
-
+        self._X = _propagate_em_ensemble(
+            self._model, self._X, u, d, p, t,
+            h=self._h_sub, n_steps=self._n_steps, rng=self._rng,
+        )
         return self.x_hat, self.P
 
     def update(
@@ -181,57 +188,64 @@ class ContinuousDiscreteParticleFilter:
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Update particle weights by the observation likelihood, then resample
-        if the effective sample size is below the threshold.
+        Measurement update by likelihood-weighted systematic resampling.
 
         Parameters
         ----------
-        y    : (ny,) ndarray      — observation.
-        u    : (nu,) ndarray      — input at measurement time.
-        d    : (nd,) ndarray      — disturbance at measurement time.
+        y    : (nym,) ndarray  — observation.
+        u    : (nu,) ndarray   — input at measurement time.
+        d    : (nd,) ndarray   — disturbance at measurement time.
         p    : (nparams,) ndarray — parameter vector.
-        mask : (ny,) bool ndarray, optional — active output mask.
+        mask : (nym,) bool ndarray, optional — active output mask.
 
         Returns
         -------
-        x_hat : (nx,) updated weighted mean.
-        P     : (nx, nx) updated weighted covariance.
+        x_hat : (nx,) updated sample mean.
+        P     : (nx, nx) Bessel-corrected sample covariance.
         """
         model = self._model
         N = self._N
         R = model.Rm
 
-        # Predicted observations for each particle
-        HX = np.column_stack([
-            model.hm(self._X[:, i], u, d, p, 0.0) for i in range(N)
-        ])   # (ny, N)
+        # Predicted measurements for each particle  (nym, N)
+        Z = _ensemble_measurements(model, self._X, u, d, p)
 
-        # Apply mask
         if mask is not None:
-            y = y[mask]
-            HX = HX[mask, :]
-            R = R[np.ix_(mask, mask)]
+            active = np.where(mask)[0]
+            if len(active) == 0:
+                return self.x_hat, self.P
+            y_sub = y[active]
+            Z = Z[active, :]
+            R_sub = R[np.ix_(active, active)]
+        else:
+            y_sub = y
+            R_sub = R
 
-        # Log-likelihood for each particle
-        R_inv = np.linalg.inv(R)
+        # Per-particle log-likelihood (Gaussian with covariance R)
+        sign, log_det = np.linalg.slogdet(R_sub)
+        if sign <= 0:
+            raise ValueError("Measurement covariance R is not positive definite.")
+        log_norm = -0.5 * (y_sub.shape[0] * np.log(2.0 * np.pi) + log_det)
+        # Pre-factor exp(log_norm) is the same for every particle and cancels
+        # after normalisation; we keep it for log-likelihood interpretability.
+        R_inv = np.linalg.inv(R_sub)
         log_w = np.empty(N)
         for i in range(N):
-            innov_i = y - HX[:, i]
-            log_w[i] = -0.5 * innov_i @ R_inv @ innov_i
+            innov = y_sub - Z[:, i]
+            log_w[i] = log_norm - 0.5 * innov @ R_inv @ innov
 
-        # Update and normalise weights in log-space for numerical stability
-        log_w_new = np.log(self._w + 1e-300) + log_w
-        log_w_new -= log_w_new.max()   # shift for stability
-        w_new = np.exp(log_w_new)
-        w_new /= w_new.sum()
-        self._w = w_new
+        # Normalise via log-sum-exp for numerical stability
+        log_w_max = log_w.max()
+        w = np.exp(log_w - log_w_max)
+        s = w.sum()
+        if not np.isfinite(s) or s <= 0.0:
+            # Degenerate likelihoods — keep the cloud untouched
+            return self.x_hat, self.P
+        w /= s
 
-        # Systematic resampling when N_eff < threshold * N
-        N_eff = 1.0 / np.sum(self._w ** 2)
-        if N_eff < self._resample_threshold * N:
-            idx = self._systematic_resample(self._w, self._rng)
-            self._X = self._X[:, idx]
-            self._w = np.full(N, 1.0 / N)
+        # Systematic resampling (every step, per CD-PF spec)
+        idx = self._systematic_resample(w, self._rng)
+        self._X = self._X[:, idx]
 
         return self.x_hat, self.P
 
@@ -244,6 +258,6 @@ class ContinuousDiscreteParticleFilter:
         t: float,
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Combined predict + update step."""
+        """Combined time + measurement update."""
         self.predict(u, d, p, t)
         return self.update(y, u, d, p, mask=mask)
