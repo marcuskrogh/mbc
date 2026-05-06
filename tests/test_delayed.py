@@ -194,8 +194,8 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
     def hm(self, x, u, d, p, t):
         return x.copy()  # full-state observation (both states)
 
-    def g(self, x, u, d, p, t):
-        return x.copy()  # controlled outputs: both states
+    def gm(self, x, u, d, p, t):
+        return x.copy()  # outputs: both states
 
     @property
     def nz(self) -> int:

@@ -1,25 +1,45 @@
 """
-Euler-Maruyama simulator for continuous-discrete SDE models (Ph.D. Ch. 5).
+Numerical integrator for continuous-discrete SDE models
+(ControlToolbox §SDE — *Numerical Integration*).
 
-Implements two numerical integration schemes for the Itô SDE:
+Implements two integration schemes for the Itô SDE
 
-    dx = f(x, u, d, t) dt + g(x, u, d, t) dw,   w ~ N(0, Q_c)
+    dx(t) = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),
+    dw ~ N(0, I dt).
 
-**Explicit-Explicit (EE) scheme** — both drift and diffusion evaluated at
-the beginning of each sub-step:
+over an interval ``[t_k, t_{k+1}]`` of length ``dt`` partitioned into
+``N`` equidistant sub-steps of size ``Δt = dt / N`` with conventions
+(ControlToolbox §SDE):
 
-    x_{k+1} = x_k + f(x_k, u, d, t_k) h + g(x_k, u, d, t_k) √h w_k
+    x_{k,n} ≈ x(t_k + n Δt),
+    u_{k,n} = u_k                       (zero-order hold)
+    d_{k,n} = d_k                       (zero-order hold)
+    Δω_{k,n} = z_{k,n} √Δt,  z_{k,n} ~ N(0, I)
 
-**Implicit-Explicit (IE) scheme** — drift evaluated implicitly at t_{k+1},
-diffusion evaluated explicitly:
+**Explicit-Explicit Euler-Maruyama (EE)** — both drift and diffusion
+evaluated at the current sub-step:
 
-    x_{k+1} = x_k + f(x_{k+1}, u, d, t_{k+1}) h + g(x_k, u, d, t_k) √h w_k
+    x_{k,n+1} = x_{k,n} + f(x_{k,n}, u_k, d_k, p, t_{k,n}) Δt
+                       + sigma(x_{k,n}, u_k, d_k, p, t_{k,n}) Δω_{k,n}
 
-where ``h = dt / n_steps`` is the sub-step size and w_k ~ N(0, Q_c).
+**Implicit-Explicit (IE)** — drift evaluated at the *next* sub-step
+(implicit), diffusion evaluated explicitly:
 
-The implicit step for IE is solved via :func:`_newton_solve`.
+    x_{k,n+1} = x_{k,n} + f(x_{k,n+1}, u_k, d_k, p, t_{k,n+1}) Δt
+                       + sigma(x_{k,n}, u_k, d_k, p, t_{k,n}) Δω_{k,n}
 
-Reference:  Ph.D. thesis, Ch. 5.
+The implicit equation is solved by Newton's method on the residual
+
+    R(x_{k,n+1}) = x_{k,n+1} − x_{k,n}
+                   − f(x_{k,n+1}, u_k, d_k, p, t_{k,n+1}) Δt
+                   − sigma(x_{k,n}, u_k, d_k, p, t_{k,n}) Δω_{k,n} = 0,
+
+with Jacobian
+
+    ∂R/∂x = I − (∂f/∂x)(x_{k,n+1}, …) Δt.
+
+Use the EE scheme when the drift dynamics are non-stiff and the IE
+scheme when stiff.
 """
 
 from __future__ import annotations
@@ -32,7 +52,8 @@ from .._utils import _newton_solve
 
 class SDESimulator:
     """
-    Euler-Maruyama simulator for continuous-discrete SDE models (Ph.D. Ch. 5).
+    Euler-Maruyama / implicit-explicit simulator for continuous-discrete
+    SDE models (ControlToolbox §SDE).
 
     Parameters
     ----------
@@ -42,13 +63,17 @@ class SDESimulator:
         Measurement sampling interval (seconds).  This defines the
         coarse time step between observations.
     n_steps : int, optional
-        Number of Euler-Maruyama sub-steps per measurement interval.
+        Number of integration sub-steps per measurement interval.
         Default: 10.
     scheme : {"EE", "IE"}, optional
-        Integration scheme.  ``"EE"`` = Explicit-Explicit (default),
-        ``"IE"`` = Implicit-Explicit.
+        Integration scheme.  ``"EE"`` = explicit-explicit Euler-Maruyama
+        (default), ``"IE"`` = implicit-explicit (implicit drift).
     seed : int or None, optional
         Random seed for reproducibility.
+    newton_tol : float, optional
+        Newton tolerance for the IE drift solve.  Default: 1e-12.
+    newton_max_iter : int, optional
+        Maximum Newton iterations for the IE drift solve.  Default: 50.
     """
 
     def __init__(
@@ -58,6 +83,8 @@ class SDESimulator:
         n_steps: int = 10,
         scheme: str = "EE",
         seed: int | None = None,
+        newton_tol: float = 1e-12,
+        newton_max_iter: int = 50,
     ) -> None:
         if scheme not in ("EE", "IE"):
             raise ValueError(f"Unknown scheme '{scheme}'; choose 'EE' or 'IE'.")
@@ -66,6 +93,8 @@ class SDESimulator:
         self._n_steps = n_steps
         self._scheme = scheme
         self._rng = np.random.default_rng(seed)
+        self._newton_tol = newton_tol
+        self._newton_max_iter = newton_max_iter
 
     def step(
         self,
@@ -78,9 +107,9 @@ class SDESimulator:
         """
         Simulate one measurement interval from t to t + dt.
 
-        Applies ``n_steps`` Euler-Maruyama sub-steps with step size
-        ``h = dt / n_steps``.  The input u and disturbance d are held
-        constant over the interval (zero-order hold).
+        Applies ``n_steps`` sub-steps with step size ``Δt = dt / n_steps``.
+        The input u and disturbance d are held constant over the interval
+        (zero-order hold).
 
         Parameters
         ----------
@@ -102,7 +131,6 @@ class SDESimulator:
         t_cur = t
 
         for _ in range(self._n_steps):
-            # Diffusion: sigma encodes continuous-time noise magnitude; dw ~ N(0, I dt)
             sigma_val = self._model.sigma(x_cur, u, d, p, t_cur)  # (nx, nw)
             nw = sigma_val.shape[1]
             z = self._rng.standard_normal(nw)
@@ -111,8 +139,7 @@ class SDESimulator:
             if self._scheme == "EE":
                 f_val = self._model.f(x_cur, u, d, p, t_cur)
                 x_cur = x_cur + f_val * h + noise
-            else:  # IE — implicit drift, explicit diffusion
-                # Solve:  F(x_next) = x_next − (x_cur + noise) − f(x_next,…) h = 0
+            else:  # IE
                 rhs = x_cur + noise
                 t_next = t_cur + h
 
@@ -122,7 +149,10 @@ class SDESimulator:
                 def jacobian(xn: np.ndarray) -> np.ndarray:
                     return np.eye(nx) - h * self._model.dfdx(xn, u, d, p, t_next)
 
-                x_cur = _newton_solve(residual, jacobian, x_cur.copy(), tol=1e-12)
+                x_cur = _newton_solve(
+                    residual, jacobian, x_cur.copy(),
+                    tol=self._newton_tol, max_iter=self._newton_max_iter,
+                )
 
             t_cur += h
 

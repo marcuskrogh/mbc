@@ -1,19 +1,44 @@
 """
-Euler-Maruyama simulator for continuous-discrete SDAE models (Ph.D. Ch. 6).
+Numerical integrator for continuous-discrete SDAE models
+(ControlToolbox §SDAE — *Numerical Integration: Implicit-Explicit Method*).
 
-Extends ``SDESimulator`` to handle differential-algebraic systems:
+The SDAE model is
 
-    dx = f(x, y, u, d, p, t) dt + sigma(x, y, u, d, p, t) dw(t),
-    dw(t) ~ N(0, I dt),
-    0 = h(x, y, u, d, p, t)
+    dx(t) = f(x, y, u, d, p, t) dt + sigma(x, y, u, d, p, t) dw(t),
+    dw ~ N(0, I dt),
+    0 = g(x, y, u, d, p, t).
 
-At each Euler-Maruyama sub-step:
-  1. The Euler drift update is applied to x.
-  2. The algebraic constraint ``h(x, y, u, d, p, t) = 0`` is solved for y
-     via :func:`_newton_solve`.
-  3. Diffusion noise is added.
+The interval ``[t_k, t_{k+1}]`` is divided into ``N`` equidistant sub-steps
+of size ``Δt = dt / N`` with conventions
 
-Reference:  Ph.D. thesis, Ch. 6.
+    x_{k,n} ≈ x(t_k + n Δt),   y_{k,n} ≈ y(t_k + n Δt),
+    u_{k,n} = u_k,             d_{k,n} = d_k,            (zero-order hold)
+    Δω_{k,n} = z_{k,n} √Δt,    z_{k,n} ~ N(0, I).
+
+Implicit-Explicit Update
+------------------------
+Drift and algebraic constraint are evaluated at the *next* sub-step
+(implicit); diffusion is explicit.  Combined variable
+``z_{k,i} = (x_{k,i}, y_{k,i})``.  At each sub-step solve
+
+    R(z_{k,n+1}) = [
+        x_{k,n+1} − x_{k,n} − f(x_{k,n+1}, y_{k,n+1}, u_k, d_k, p, t_{k,n+1}) Δt
+                            − sigma(x_{k,n}, y_{k,n}, u_k, d_k, p, t_{k,n}) Δω_{k,n};
+        g(x_{k,n+1}, y_{k,n+1}, p)
+    ] = 0
+
+with residual Jacobian
+
+    ∂R/∂z = [
+        I − (∂f/∂x) Δt,    −(∂f/∂y) Δt;
+        ∂g/∂x,              ∂g/∂y
+    ]
+
+evaluated at (x_{k,n+1}, y_{k,n+1}).  Roots are computed by Newton's method.
+
+For consistent initial conditions the user-provided ``y0`` must satisfy
+``g(x0, y0, ...) = 0``.  No explicit-explicit variant exists — the SDAE
+always requires the Newton solve.
 """
 
 from __future__ import annotations
@@ -26,7 +51,8 @@ from .._utils import _newton_solve
 
 class SDAESimulator:
     """
-    Euler-Maruyama simulator for continuous-discrete SDAE models (Ph.D. Ch. 6).
+    Implicit-explicit Euler-Maruyama simulator for SDAE models
+    (ControlToolbox §SDAE).
 
     Parameters
     ----------
@@ -35,12 +61,9 @@ class SDAESimulator:
     dt : float
         Measurement sampling interval (seconds).
     n_steps : int, optional
-        Number of Euler-Maruyama sub-steps per interval.  Default: 10.
-    scheme : {"EE", "IE"}, optional
-        Integration scheme.  Default: ``"EE"``.
+        Number of integration sub-steps per interval.  Default: 10.
     newton_tol : float, optional
-        Convergence tolerance for the Newton solver on ``h = 0``.
-        Default: 1e-10.
+        Newton convergence tolerance.  Default: 1e-10.
     newton_max_iter : int, optional
         Maximum Newton iterations per sub-step.  Default: 50.
     seed : int or None, optional
@@ -52,40 +75,31 @@ class SDAESimulator:
         model: ContinuousDiscreteDAEModel,
         dt: float,
         n_steps: int = 10,
-        scheme: str = "EE",
         newton_tol: float = 1e-10,
         newton_max_iter: int = 50,
         seed: int | None = None,
     ) -> None:
-        if scheme not in ("EE", "IE"):
-            raise ValueError(f"Unknown scheme '{scheme}'; choose 'EE' or 'IE'.")
         self._model = model
         self._dt = dt
         self._n_steps = n_steps
-        self._scheme = scheme
         self._newton_tol = newton_tol
         self._newton_max_iter = newton_max_iter
         self._rng = np.random.default_rng(seed)
 
-    def _solve_constraint(
+    def _consistent_y(
         self,
         x: np.ndarray,
-        y: np.ndarray,
+        y_init: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
-        """
-        Solve h(x, y, u, d, p, t) = 0 for y via :func:`_newton_solve`.
-
-        Uses ``y`` as the initial guess and iterates until
-        ``‖h‖ < newton_tol`` or ``newton_max_iter`` steps have been taken.
-        """
+        """Solve g(x, y, ...) = 0 for y by Newton iteration."""
         return _newton_solve(
-            residual=lambda y_: self._model.h(x, y_, u, d, p, t),
-            jacobian=lambda y_: self._model.dhdy(x, y_, u, d, p, t),
-            x0=y,
+            residual=lambda y_: self._model.g(x, y_, u, d, p, t),
+            jacobian=lambda y_: self._model.dgdy(x, y_, u, d, p, t),
+            x0=y_init,
             tol=self._newton_tol,
             max_iter=self._newton_max_iter,
         )
@@ -100,7 +114,8 @@ class SDAESimulator:
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Simulate one measurement interval from t to t + dt.
+        Simulate one measurement interval from t to t + dt using the
+        implicit-explicit Newton scheme.
 
         Parameters
         ----------
@@ -118,57 +133,53 @@ class SDAESimulator:
         """
         h = self._dt / self._n_steps
         sqrt_h = np.sqrt(h)
+        model = self._model
         nx = x.shape[0]
+        ny = y.shape[0]
 
         x_cur = x.copy()
         y_cur = y.copy()
         t_cur = t
 
         for _ in range(self._n_steps):
-            # Diffusion: sigma encodes continuous-time noise magnitude; dw ~ N(0, I dt)
-            sigma_val = self._model.sigma(x_cur, y_cur, u, d, p, t_cur)  # (nx, nw)
+            # Diffusion evaluated explicitly at the start of the sub-step
+            sigma_val = model.sigma(x_cur, y_cur, u, d, p, t_cur)  # (nx, nw)
             nw = sigma_val.shape[1]
             xi = self._rng.standard_normal(nw)
-            dW = sigma_val @ xi * sqrt_h
+            noise = sigma_val @ xi * sqrt_h
 
-            if self._scheme == "EE":
-                # 1. Euler drift step on x
-                f_val = self._model.f(x_cur, y_cur, u, d, p, t_cur)
-                x_next = x_cur + f_val * h
-                # 2. Solve algebraic constraint at the new x
-                y_next = self._solve_constraint(x_next, y_cur, u, d, p, t_cur + h)
-                # 3. Add diffusion noise
-                x_next = x_next + dW
-                # Re-solve constraint after noise perturbation
-                y_next = self._solve_constraint(x_next, y_next, u, d, p, t_cur + h)
-            else:  # IE — implicit drift, explicit diffusion
-                # Noise term first (explicit)
-                noise = dW
-                # Solve coupled system:
-                #   F(x_next) = x_next − (x_cur + noise) − f(x_next, y_next,…) h = 0
-                #   h(x_next, y_next, …) = 0
-                # via alternating Newton: y given x (inner), then x (outer).
-                rhs = x_cur + noise
-                t_next = t_cur + h
-                y_ref = [y_cur.copy()]
+            t_next = t_cur + h
+            rhs_x = x_cur + noise
 
-                def residual(xn: np.ndarray) -> np.ndarray:
-                    y_ref[0] = self._solve_constraint(xn, y_ref[0], u, d, p, t_next)
-                    return xn - rhs - self._model.f(xn, y_ref[0], u, d, p, t_next) * h
+            def residual(z: np.ndarray) -> np.ndarray:
+                xn = z[:nx]
+                yn = z[nx:]
+                f_val = model.f(xn, yn, u, d, p, t_next)
+                g_val = model.g(xn, yn, u, d, p, t_next)
+                return np.concatenate([
+                    xn - rhs_x - f_val * h,
+                    g_val,
+                ])
 
-                def jacobian(xn: np.ndarray) -> np.ndarray:
-                    return (np.eye(nx)
-                            - h * self._model.dfdx(xn, y_ref[0], u, d, p, t_next))
+            def jacobian(z: np.ndarray) -> np.ndarray:
+                xn = z[:nx]
+                yn = z[nx:]
+                dfdx = model.dfdx(xn, yn, u, d, p, t_next)
+                dfdy = model.dfdy(xn, yn, u, d, p, t_next)
+                dgdx = model.dgdx(xn, yn, u, d, p, t_next)
+                dgdy = model.dgdy(xn, yn, u, d, p, t_next)
+                top = np.concatenate([np.eye(nx) - dfdx * h, -dfdy * h], axis=1)
+                bot = np.concatenate([dgdx, dgdy], axis=1)
+                return np.concatenate([top, bot], axis=0)
 
-                x_next = _newton_solve(
-                    residual, jacobian, x_cur.copy(),
-                    tol=self._newton_tol, max_iter=self._newton_max_iter,
-                )
-                y_next = self._solve_constraint(x_next, y_ref[0], u, d, p, t_next)
-
-            x_cur = x_next
-            y_cur = y_next
-            t_cur += h
+            z0 = np.concatenate([x_cur, y_cur])
+            z_new = _newton_solve(
+                residual, jacobian, z0,
+                tol=self._newton_tol, max_iter=self._newton_max_iter,
+            )
+            x_cur = z_new[:nx]
+            y_cur = z_new[nx:]
+            t_cur = t_next
 
         return x_cur, y_cur
 
@@ -189,7 +200,7 @@ class SDAESimulator:
         x0 : (nx,) ndarray
             Initial differential state at t0.
         y0 : (ny,) ndarray
-            Initial algebraic state (consistent with h(x0, y0, ...) = 0).
+            Initial algebraic state (consistent with g(x0, y0, ...) = 0).
         U : (T, nu) ndarray
             Input trajectory.
         D : (T, nd) ndarray

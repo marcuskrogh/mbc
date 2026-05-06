@@ -1,22 +1,51 @@
 """
-Continuous-Discrete Ensemble Kalman Filter (Ph.D. Ch. 7.3).
+Continuous-Discrete Ensemble Kalman Filter (CD-EnKF) for SDE systems
+(ControlToolbox §State Estimation for Nonlinear SDE Systems —
+*Continuous-Discrete Ensemble Kalman Filter*).
 
-The CD-EnKF maintains an ensemble of N particles that are each
-propagated through the nonlinear SDE via Euler-Maruyama integration.
-The ensemble mean and sample covariance replace the analytical
-Gaussian approximation used by the EKF and UKF.
+The CD-EnKF approximates the state distribution by a randomly sampled
+ensemble of N_p particles.  Each particle is propagated independently
+through the full stochastic dynamics with its own realisation of the
+Wiener process.  Statistics (mean, covariance, cross-covariance) are
+computed as Bessel-corrected sample averages.  The measurement update
+applies the Kalman gain to each particle individually using a perturbed
+measurement so that the ensemble spread is consistent with the posterior
+covariance.
 
-Prediction:
-    Each particle x_i is integrated independently:
-        x_i(t+dt) ≈ x_i(t) + f(x_i, u, d, p, t) dt + g(x_i, u, d, p, t) √dt w_i
-    where w_i ~ N(0, Q_c).
+Initialisation
+--------------
+The ensemble {x̂^{(i)}_{0|0}}_{i=1}^{N_p} is sampled from the prior; when
+no analytic prior is available, draw from N(x̂_{0|0}, P_{0|0}).
 
-Measurement update (perturbed observations):
-    y_i = y + v_i,  v_i ~ N(0, R)
-    K   = P_xy P_yy⁻¹        (estimated from ensemble cross-covariance)
-    x_i ← x_i + K (y_i − h(x_i, u, d, p))
+Time update — per particle Euler-Maruyama
+-----------------------------------------
+For each i = 1, …, N_p, integrate
 
-Reference:  Ph.D. thesis, Ch. 7.3.
+    dx̂_k^{(i)}(t) = f(x̂_k^{(i)}, u, d, p, t) dt
+                  + sigma(x̂_k^{(i)}, u, d, p, t) dω_k^{(i)}(t)
+
+with independent standard Wiener increments dω_k^{(i)} per particle.
+The discretisation uses ``n_steps`` Euler-Maruyama sub-steps with
+state-dependent diffusion evaluated at each particle.
+
+Predicted statistics (Bessel-corrected):
+
+    x̂_{k+1|k} = (1/N_p) Σ_i x̂_{k+1|k}^{(i)}
+    P_{k+1|k} = (1/(N_p−1)) Σ_i (x̂_{k+1|k}^{(i)} − x̂_{k+1|k})(…)ᵀ
+
+Measurement update — perturbed observations
+-------------------------------------------
+Predicted measurement ensemble z^{m,(i)} = hm(x̂_{k|k-1}^{(i)}, p), sample
+statistics ŷ^m_{k|k-1}, R_zz, R_xy with Bessel correction, then
+
+    R_e = R_zz + R,
+    K   = R_xy R_e⁻¹,
+    y^{m,(i)}_k = y^m_k + v_k^{(i)},   v_k^{(i)} ~ N(0, R),
+    x̂_{k|k}^{(i)} = x̂_{k|k-1}^{(i)} + K (y^{m,(i)}_k − z^{m,(i)}).
+
+The per-particle perturbation prevents ensemble collapse — without it the
+ensemble covariance shrinks by the deterministic factor (I − K C) and
+underestimates the posterior covariance.
 """
 
 from __future__ import annotations
@@ -24,16 +53,19 @@ from __future__ import annotations
 import numpy as np
 
 from ..models import ContinuousDiscreteModel
+from .._utils import _cholesky_psd
+from ._ensemble import _ensemble_measurements, _propagate_em_ensemble
 
 
 class ContinuousDiscreteEnKF:
     """
-    Continuous-Discrete Ensemble Kalman Filter (Ph.D. Ch. 7.3).
+    Continuous-Discrete Ensemble Kalman Filter for SDE systems
+    (ControlToolbox §SDE State Estimation — *CD-EnKF*).
 
     Parameters
     ----------
     model : ContinuousDiscreteModel
-        Nonlinear continuous-discrete system.
+        Nonlinear continuous-discrete SDE system.
     x0 : (nx,) ndarray
         Initial state estimate (ensemble mean).
     P0 : (nx, nx) ndarray
@@ -41,7 +73,7 @@ class ContinuousDiscreteEnKF:
     dt : float
         Measurement sampling interval (seconds).
     N : int, optional
-        Ensemble size.  Default: 100.
+        Ensemble size N_p.  Default: 100.
     n_steps : int, optional
         Euler-Maruyama sub-steps per measurement interval.  Default: 10.
     seed : int or None, optional
@@ -69,7 +101,7 @@ class ContinuousDiscreteEnKF:
         self._nx = nx
 
         # Initialise ensemble by sampling from N(x0, P0)
-        L = np.linalg.cholesky(P0)
+        L = _cholesky_psd(P0)
         Z = self._rng.standard_normal((nx, N))
         self._X = np.array(x0, dtype=float)[:, None] + L @ Z   # (nx, N)
 
@@ -82,7 +114,7 @@ class ContinuousDiscreteEnKF:
 
     @property
     def P(self) -> np.ndarray:
-        """Ensemble sample covariance P ∈ ℝⁿˣˣⁿˣ (copy)."""
+        """Bessel-corrected ensemble sample covariance P ∈ ℝⁿˣˣⁿˣ (copy)."""
         A = self._X - self._X.mean(axis=1, keepdims=True)
         return (A @ A.T) / (self._N - 1)
 
@@ -101,43 +133,25 @@ class ContinuousDiscreteEnKF:
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Propagate all ensemble members from t to t + dt via Euler-Maruyama.
+        Time update: propagate each ensemble member independently through
+        the full SDE via Euler-Maruyama with state-dependent diffusion.
 
         Parameters
         ----------
-        u : (nu,) ndarray      — control input.
-        d : (nd,) ndarray      — disturbance.
-        p : (nparams,) ndarray — parameter vector.
-        t : float              — current time.
+        u : (nu,) ndarray  — control input over [t, t+dt].
+        d : (nd,) ndarray  — disturbance over [t, t+dt].
+        p : (nparams,) ndarray  — parameter vector.
+        t : float          — current time.
 
         Returns
         -------
         x_pred : (nx,) ensemble mean after propagation.
-        P_pred : (nx, nx) ensemble sample covariance after propagation.
+        P_pred : (nx, nx) Bessel-corrected ensemble covariance.
         """
-        model = self._model
-        h = self._h_sub
-        sqrt_h = np.sqrt(h)
-        nx = self._nx
-        N = self._N
-
-        # Diffusion: sigma encodes continuous-time noise magnitude; dw ~ N(0, I dt)
-        x_mean0 = self._X.mean(axis=1)
-        sigma_val = model.sigma(x_mean0, u, d, p, t)  # (nx, nw)
-        nw = sigma_val.shape[1]
-
-        t_j = t
-        for _ in range(self._n_steps):
-            # Standard-normal noise: (nw, N)
-            W = self._rng.standard_normal((nw, N))
-            # Stack f evaluations: (nx, N)
-            F = np.column_stack([
-                model.f(self._X[:, i], u, d, p, t_j) for i in range(N)
-            ])
-            # Euler-Maruyama: noise ~ N(0, Q * h) via sigma @ W
-            self._X = self._X + h * F + sigma_val @ (sqrt_h * W)
-            t_j += h
-
+        self._X = _propagate_em_ensemble(
+            self._model, self._X, u, d, p, t,
+            h=self._h_sub, n_steps=self._n_steps, rng=self._rng,
+        )
         return self.x_hat, self.P
 
     def update(
@@ -149,58 +163,61 @@ class ContinuousDiscreteEnKF:
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Apply perturbed-observations ensemble measurement update.
+        Measurement update via perturbed-observations Kalman correction
+        applied per particle.
 
         Parameters
         ----------
-        y    : (ny,) ndarray      — observation.
-        u    : (nu,) ndarray      — input at measurement time.
-        d    : (nd,) ndarray      — disturbance at measurement time.
+        y    : (nym,) ndarray  — observation.
+        u    : (nu,) ndarray   — input at measurement time.
+        d    : (nd,) ndarray   — disturbance at measurement time.
         p    : (nparams,) ndarray — parameter vector.
-        mask : (ny,) bool ndarray, optional — active output mask.
+        mask : (nym,) bool ndarray, optional — active output mask.
 
         Returns
         -------
         x_hat : (nx,) updated ensemble mean.
-        P     : (nx, nx) updated ensemble sample covariance.
+        P     : (nx, nx) Bessel-corrected ensemble covariance.
         """
         model = self._model
         N = self._N
         R = model.Rm
 
-        # Map ensemble through observation function — shape (ny, N)
-        HX = np.column_stack([
-            model.hm(self._X[:, i], u, d, p, 0.0) for i in range(N)
-        ])
+        # Predicted measurement ensemble  (nym, N)
+        Z = _ensemble_measurements(model, self._X, u, d, p)
 
-        # Apply mask
         if mask is not None:
-            y = y[mask]
-            HX = HX[mask, :]
-            R = R[np.ix_(mask, mask)]
+            active = np.where(mask)[0]
+            if len(active) == 0:
+                return self.x_hat, self.P
+            y_sub = y[active]
+            Z = Z[active, :]
+            R_sub = R[np.ix_(active, active)]
+        else:
+            y_sub = y
+            R_sub = R
 
-        ny_act = y.shape[0]
+        ny_act = y_sub.shape[0]
 
-        # Ensemble anomalies in state and observation space
-        x_mean = self._X.mean(axis=1, keepdims=True)   # (nx, 1)
-        y_mean = HX.mean(axis=1, keepdims=True)         # (ny, 1)
-        A  = (self._X - x_mean) / np.sqrt(N - 1)       # (nx, N)
-        HA = (HX - y_mean)      / np.sqrt(N - 1)       # (ny, N)
+        # Sample anomalies (Bessel-corrected via division by √(N − 1))
+        x_mean = self._X.mean(axis=1, keepdims=True)        # (nx, 1)
+        z_mean = Z.mean(axis=1, keepdims=True)              # (nym, 1)
+        A_x = (self._X - x_mean) / np.sqrt(N - 1)           # (nx, N)
+        A_z = (Z - z_mean) / np.sqrt(N - 1)                 # (nym, N)
 
-        # Cross-covariance and innovation covariance
-        Pxy = A @ HA.T          # (nx, ny)
-        Pyy = HA @ HA.T + R     # (ny, ny)
+        R_xy = A_x @ A_z.T          # (nx, nym)
+        R_zz = A_z @ A_z.T          # (nym, nym)
+        R_e = R_zz + R_sub
 
-        # Kalman gain
-        K = Pxy @ np.linalg.solve(Pyy.T, np.eye(ny_act)).T   # (nx, ny)
+        # Single Kalman gain shared across all particles
+        K = np.linalg.solve(R_e.T, R_xy.T).T                 # (nx, nym)
 
-        # Perturbed observations: shape (ny, N)
-        V = self._rng.multivariate_normal(np.zeros(ny_act), R, size=N).T
-        Y_pert = y[:, None] + V   # (ny, N)
+        # Perturbed measurements per particle
+        V = self._rng.multivariate_normal(np.zeros(ny_act), R_sub, size=N).T  # (nym, N)
+        Y_pert = y_sub[:, None] + V
 
-        # Update each ensemble member
         for i in range(N):
-            innov_i = Y_pert[:, i] - HX[:, i]
+            innov_i = Y_pert[:, i] - Z[:, i]
             self._X[:, i] = self._X[:, i] + K @ innov_i
 
         return self.x_hat, self.P
@@ -214,6 +231,6 @@ class ContinuousDiscreteEnKF:
         t: float,
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Combined predict + update step."""
+        """Combined time + measurement update."""
         self.predict(u, d, p, t)
         return self.update(y, u, d, p, mask=mask)

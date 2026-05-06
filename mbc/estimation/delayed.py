@@ -53,6 +53,8 @@ from typing import Any
 
 import numpy as np
 
+from .._utils import _cholesky_psd
+
 
 
 # ── Internal helpers ──────────────────────────────────────────────────────────
@@ -98,11 +100,6 @@ def _to_cvx_mat(arr: np.ndarray):
 
     n, m = arr.shape
     return cvx_matrix(arr.ravel(order="F").tolist(), (n, m))
-
-
-# Small regularisation added to P when a Cholesky factor is needed but the
-# matrix is near-singular.  Used when restoring ensemble / particle state.
-_CHOLESKY_REGULARIZATION: float = 1e-10
 
 
 def _ny_of(y) -> int:
@@ -199,14 +196,9 @@ class DelayedObservationFilter:
                     f"{type(est)!r} does not expose expected internal fields "
                     f"(_nx, _N, _rng): {exc}"
                 ) from exc
-            try:
-                L = np.linalg.cholesky(P_np)
-            except np.linalg.LinAlgError:
-                L = np.linalg.cholesky(P_np + _CHOLESKY_REGULARIZATION * np.eye(nx))
+            L = _cholesky_psd(P_np)
             Z = rng.standard_normal((nx, N))
             est._X = x_np[:, None] + L @ Z
-            if isinstance(est, ContinuousDiscreteParticleFilter):
-                est._w = np.full(N, 1.0 / N)
         else:
             raise TypeError(
                 f"DelayedObservationFilter: unsupported estimator type {type(est)!r}"
