@@ -552,6 +552,63 @@ finite-difference computation in the EKF and DAE-EKF:
 | `dhmdd` | `(x, u, d, p, t) → (nym, nd)` | Forward FD |
 | `dhmdp` | `(x, u, d, p, t) → (nym, np)` | Forward FD |
 
+**Example** — van de Vusse CSTR (A → B → C, 2A → D):
+
+```python
+import numpy as np
+from mbc.models import ContinuousDiscreteModel
+
+class VanDeVusseCSTR(ContinuousDiscreteModel):
+    """
+    Van de Vusse CSTR: states [c_A, c_B] (mol/L), input [D] (dilution rate 1/h).
+    No disturbance, no parameters — all kinetics fixed.
+    """
+    _k1, _k2, _k3, _c_Af = 50.0, 100.0, 10.0, 10.0   # kinetic constants
+
+    @property
+    def nx(self): return 2   # c_A, c_B
+    @property
+    def nu(self): return 1   # dilution rate D = F/V
+    @property
+    def nd(self): return 0   # no measured disturbance
+    @property
+    def nw(self): return 2   # noise on both states
+    @property
+    def nym(self): return 1  # measure c_B only
+    @property
+    def nz(self): return 1   # control c_B
+    @property
+    def Rm(self): return np.array([[0.05]])
+
+    def f(self, x, u, d, p, t):
+        c_A, c_B = x; D = u[0]
+        return np.array([
+            (self._c_Af - c_A) * D - self._k1 * c_A - self._k3 * c_A**2,
+            -c_B * D + self._k1 * c_A - self._k2 * c_B,
+        ])
+
+    def sigma(self, x, u, d, p, t):
+        return np.diag([0.1, np.sqrt(0.005)])  # constant diffusion; sigma @ sigma.T = diag([0.01, 0.005])
+
+    def hm(self, x, u, d, p, t):
+        return np.array([x[1]])   # measure c_B
+
+    def g(self, x, u, d, p, t):
+        return np.array([x[1]])   # control c_B
+
+m = VanDeVusseCSTR()
+print(m.nx, m.nu, m.nd, m.nw, m.nym, m.nz)  # 2  1  0  2  1  1
+
+# Evaluate model functions at a nominal operating point
+x0  = np.array([3.0, 1.1])          # [c_A, c_B] mol/L
+u0  = np.array([0.5])               # dilution rate 1/h
+d0  = np.zeros(m.nd)                # no disturbance
+p0  = np.zeros(0)                   # no parameters
+print(m.f(x0, u0, d0, p0, t=0.0))  # (2,) drift vector
+print(m.hm(x0, u0, d0, p0, t=0.0)) # (1,) predicted measurement
+print(m.g(x0, u0, d0, p0, t=0.0))  # (1,) controlled output
+```
+
 #### `LinearContinuousDiscreteModel` — `mbc.models`
 
 Extends `ContinuousDiscreteModel` for linear systems.  The state evolves
@@ -742,6 +799,79 @@ concrete subclasses.
 | `dhmdy` | `(x, y, u, d, p, t) → (nym, ny)` | Forward FD |
 
 Accepted by `SDAESimulator` and `ContinuousDiscreteDAEEKF`.
+
+**Example** — isomerisation reactor with fast equilibrium (A ⇌ B):
+
+The total concentration `C_tot = C_A + C_B` is the differential state.  The
+split between A and B is determined by the fast equilibrium `K_eq = C_B / C_A`,
+which is enforced as an algebraic constraint.
+
+```python
+import numpy as np
+from mbc.models import ContinuousDiscreteDAEModel
+
+class IsomerisationReactor(ContinuousDiscreteDAEModel):
+    """
+    Fast isomerisation A ⇌ B with equilibrium constant K_eq.
+
+    Differential state : x = [C_tot]   total concentration (mol/L)
+    Algebraic state    : y = [C_A]     concentration of species A (mol/L)
+    Algebraic constraint: K_eq * C_A = C_B = C_tot - C_A
+                          → h(x, y) = (K_eq + 1) * C_A - C_tot = 0
+    Drift              : dC_tot/dt = F/V * (C_feed - C_tot)
+    Input              : u = [F/V]  specific feed rate (1/min)
+    Measurement        : ym = C_A  (UV absorber measuring species A)
+    """
+    _K_eq = 3.0     # equilibrium constant K_eq = C_B / C_A
+    _C_feed = 5.0   # feed concentration (mol/L)
+
+    @property
+    def nx(self): return 1   # differential: C_tot
+    @property
+    def ny(self): return 1   # algebraic: C_A
+    @property
+    def nu(self): return 1   # input: F/V
+    @property
+    def nd(self): return 0
+    @property
+    def nw(self): return 1
+    @property
+    def nym(self): return 1  # measure C_A
+    @property
+    def nz(self): return 1   # control C_A
+    @property
+    def Rm(self): return np.array([[0.01]])
+
+    def f(self, x, y, u, d, p, t):
+        C_tot = x[0]; FV = u[0]
+        return np.array([FV * (self._C_feed - C_tot)])
+
+    def sigma(self, x, y, u, d, p, t):
+        return np.array([[0.02]])   # small additive noise on C_tot
+
+    def h(self, x, y, u, d, p, t):
+        # Constraint: (K_eq + 1) * C_A - C_tot = 0
+        return np.array([(self._K_eq + 1.0) * y[0] - x[0]])
+
+    def g(self, x, y, u, d, p, t):
+        return np.array([y[0]])   # controlled output: C_A
+
+    def hm(self, x, y, u, d, p, t):
+        return np.array([y[0]])   # measure C_A
+
+m = IsomerisationReactor()
+print(m.nx, m.ny, m.nu, m.nym, m.nz)  # 1  1  1  1  1
+
+# Evaluate at a consistent operating point
+C_tot = np.array([4.0])
+C_A   = np.array([C_tot[0] / (m._K_eq + 1)])   # = 1.0 mol/L
+u0    = np.array([0.2])
+d0    = np.zeros(0); p0 = np.zeros(0)
+
+print(m.h(C_tot, C_A, u0, d0, p0, t=0.0))   # [0.0] — constraint satisfied
+print(m.f(C_tot, C_A, u0, d0, p0, t=0.0))   # drift dC_tot/dt
+print(m.hm(C_tot, C_A, u0, d0, p0, t=0.0))  # predicted measurement C_A
+```
 
 ---
 
@@ -1931,19 +2061,34 @@ from mbc.identification.likelihood import ped_neg_log_likelihood
 neg_ll = ped_neg_log_likelihood(
     model_factory,   # callable: θ → model
     theta,           # (p,) ndarray — parameter vector
-    history,         # list of {"ym": ndarray, "u": ndarray, "d": ndarray}
+    history,         # list of {"y": ndarray, "u": ndarray, "d": ndarray}
     Q,               # (nx,nx) ndarray — process noise covariance
     R,               # (nx,nx) ndarray — measurement noise covariance
 )
 ```
 
-**History format**: each entry `{"ym": (nx,) ndarray, "u": (nu,) ndarray, "d": (nd,) ndarray}`
-records one time step.
+**History format**: each entry `{"y": (nx,) ndarray, "u": (nu,) ndarray, "d": (nd,) ndarray}`
+records one time step.  Note: the linear PED uses key `"y"` (full-state measurement, `Cm = I`);
+the nonlinear CD variant (`cd_ped_neg_log_likelihood`) uses `"ym"` instead.
 
 ### `ped_neg_log_likelihood_gradient` — `mbc.identification.likelihood`
 
 Forward finite-difference gradient `∂(−log L)/∂θ` of the PED log-likelihood.
 Step size `h = 1e-5` by default.
+
+```python
+from mbc.identification.likelihood import ped_neg_log_likelihood_gradient
+
+grad = ped_neg_log_likelihood_gradient(
+    model_factory,   # callable: θ → model
+    theta,           # (p,) ndarray — parameter vector
+    history,         # list of {"y": ndarray, "u": ndarray, "d": ndarray}
+    Q,               # (nx,nx) ndarray — process noise covariance
+    R,               # (nx,nx) ndarray — measurement noise covariance
+    h=1e-5,          # optional: finite-difference step size
+)
+# grad : (p,) ndarray — gradient of the negative log-likelihood w.r.t. θ
+```
 
 ### `ParameterEstimator` — `mbc.identification`
 
