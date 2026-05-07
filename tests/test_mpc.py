@@ -297,9 +297,9 @@ class TestMPCController:
 
     def _make_ctrl(self, N=10):
         model = DoubleIntegrator()
-        Q_kf = matrix(np.eye(2) * 1e-4)
-        R_kf = matrix(np.eye(1) * 0.01)
-        kf = KalmanFilter(model, Q=Q_kf, R=R_kf)
+        # Qd, Rm read directly from the model (LinearDiscreteModel
+        # provides them as abstract properties).
+        kf = KalmanFilter(model)
         Q_ocp = matrix(np.eye(1))
         R_ocp = matrix(np.eye(1) * 0.1)
         ocp = OptimalControlProblem(model, N=N, Q=Q_ocp, R=R_ocp, y_offset=20.0)
@@ -366,9 +366,7 @@ class TestMPCController:
             def u_bounds(self): return np.array([-5.0]), np.array([5.0])
 
         model = ScalarLinearDiscrete()
-        Q_kf = matrix(np.eye(1) * 1e-4)
-        R_kf = matrix(np.eye(1) * 0.01)
-        kf = KalmanFilter(model, Q=Q_kf, R=R_kf)
+        kf = KalmanFilter(model)
         Q_ocp = matrix(np.eye(1) * 5.0)
         R_ocp = matrix(np.eye(1) * 0.1)
         ocp = OptimalControlProblem(model, N=10, Q=Q_ocp, R=R_ocp, y_offset=20.0)

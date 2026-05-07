@@ -8,6 +8,12 @@ Two main estimator flavours are covered:
      DelayedObservationFilter (using the van de Vusse CSTR model, extended to
      observe both states).
 
+The wrapper exposes a single unified API
+
+    step(ym, u, d, p=None, t=None, mask=None, delay=None) → (x_hat, P, …)
+
+matching the underlying estimator (linear DT or CD).
+
 Test structure
 --------------
 Unit tests:
@@ -29,23 +35,10 @@ import warnings
 
 import numpy as np
 import pytest
-from cvxopt import matrix as cvx_matrix
 
 from mbc.estimation import KalmanFilter, ContinuousDiscreteEKF
 from mbc.estimation.delayed import DelayedObservationFilter
 from mbc.models import LinearDiscreteModel, ContinuousDiscreteModel
-
-
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
-
-def _np_to_cvx_col(arr: np.ndarray):
-    return cvx_matrix(arr.tolist(), (len(arr), 1))
-
-
-def _cvx_col_to_np(v) -> np.ndarray:
-    n = v.size[0] * v.size[1]
-    return np.array([float(v[i]) for i in range(n)])
 
 
 # ── Simple 2-state linear model ───────────────────────────────────────────────
@@ -53,81 +46,49 @@ def _cvx_col_to_np(v) -> np.ndarray:
 
 class _TwoStateModel(LinearDiscreteModel):
     """
-    Two-state linear system with two observable outputs (C = I₂).
+    Two-state linear system with two observable outputs (Cm = I₂).
 
-    State  : x = [x₁, x₂]
-    Input  : u = [u₁]         (scalar)
-    Disturbance: d = [d₁]     (scalar, not used in dynamics for simplicity)
-    Output : y = [x₁, x₂]
+    State        : x = [x₁, x₂]
+    Input        : u = [u₁]                 (scalar)
+    Disturbance  : d = [d₁]                 (scalar, not used in dynamics)
+    Measurement  : ym = [x₁, x₂]
 
     Discrete dynamics (dt = 1):
         x₁[k+1] = 0.90 x₁[k] + 0.10 u[k]
         x₂[k+1] = 0.85 x₂[k] + 0.10 u[k]
     """
 
-    # ── LinearDiscreteModel interface ─────────────────────────────────────
-
     def __init__(self):
         self._x = [0.0, 0.0]
 
     @property
-    def nx(self) -> int:
-        return 2
+    def nx(self) -> int: return 2
+    @property
+    def nu(self) -> int: return 1
+    @property
+    def nd(self) -> int: return 1
+    @property
+    def Cm(self) -> np.ndarray: return np.eye(2)
+    @property
+    def Ad(self) -> np.ndarray: return np.array([[0.9, 0.0], [0.0, 0.85]])
+    @property
+    def Bd(self) -> np.ndarray: return np.array([[0.1], [0.1]])
+    @property
+    def Ed(self) -> np.ndarray: return np.zeros((2, 1))
+    @property
+    def Qd(self) -> np.ndarray: return 0.01 * np.eye(2)
+    @property
+    def Rm(self) -> np.ndarray: return 0.1 * np.eye(2)
 
     @property
-    def nu(self) -> int:
-        return 1
-
-    @property
-    def nd(self) -> int:
-        return 1
-
-    @property
-    def Cm(self) -> np.ndarray:
-        """Output matrix Cm = I₂ (numpy)."""
-        return np.eye(2)
-
-    @property
-    def Ad(self) -> np.ndarray:
-        """Discrete state-transition matrix."""
-        return np.array([[0.9, 0.0], [0.0, 0.85]])
-
-    @property
-    def Bd(self) -> np.ndarray:
-        """Discrete input matrix."""
-        return np.array([[0.1], [0.1]])
-
-    @property
-    def Ed(self) -> np.ndarray:
-        """Discrete disturbance matrix (unused)."""
-        return np.zeros((2, 1))
-
-    @property
-    def Qd(self) -> np.ndarray:
-        """Process noise covariance."""
-        return 0.01 * np.eye(2)
-
-    @property
-    def Rm(self) -> np.ndarray:
-        """Measurement noise covariance."""
-        return 0.1 * np.eye(2)
-
-    @property
-    def x(self) -> list:
-        """Initial state x₀ = [0, 0]."""
-        return list(self._x)
-
+    def x(self) -> list: return list(self._x)
     @x.setter
-    def x(self, val) -> None:
-        self._x = list(val)
+    def x(self, val) -> None: self._x = list(val)
 
     @property
-    def x_ref(self) -> np.ndarray:
-        return np.zeros(2)
-
+    def x_ref(self) -> np.ndarray: return np.zeros(2)
     @property
-    def u_bounds(self):
-        return np.array([-1.0]), np.array([1.0])
+    def u_bounds(self): return np.array([-1.0]), np.array([1.0])
 
     def predict_offset(self, d_np: np.ndarray) -> np.ndarray:
         return np.zeros(2)
@@ -138,16 +99,12 @@ class _TwoStateModel(LinearDiscreteModel):
 
 class _TwoOutputCSTR(ContinuousDiscreteModel):
     """
-    Two-state CD model; both states are observable (h(x) = x).
+    Two-state CD model with both states observable (hm(x) = x).
 
-    Adapted from the van de Vusse CSTR used in test_ekf.py but with
-    two output channels so we can test channel-level delayed observations.
-
-    State  : x = [c_A (mol/L), c_B (mol/L)]
-    Input  : u = [D_rate (1/h)]
-    Disturbance: d = []   (none)
-    Output : y = [c_A, c_B]   ← both states observed
-    Params : p = []
+    State       : x = [c_A (mol/L), c_B (mol/L)]
+    Input       : u = [D_rate (1/h)]
+    Disturbance : d = []   (none)
+    Output      : ym = [c_A, c_B]
     """
 
     _k1 = 50.0
@@ -158,28 +115,17 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
     _R_val = np.diag([0.05, 0.05])
 
     @property
-    def nx(self) -> int:
-        return 2
-
+    def nx(self) -> int: return 2
     @property
-    def nu(self) -> int:
-        return 1
-
+    def nu(self) -> int: return 1
     @property
-    def nd(self) -> int:
-        return 0
-
+    def nd(self) -> int: return 0
     @property
-    def nym(self) -> int:
-        return 2
-
+    def nym(self) -> int: return 2
     @property
-    def nw(self) -> int:
-        return 2
-
+    def nw(self) -> int: return 2
     @property
-    def Rm(self) -> np.ndarray:
-        return self._R_val.copy()
+    def Rm(self) -> np.ndarray: return self._R_val.copy()
 
     def f(self, x, u, d, p, t):
         c_A, c_B = x
@@ -192,14 +138,13 @@ class _TwoOutputCSTR(ContinuousDiscreteModel):
         return np.eye(2)
 
     def hm(self, x, u, d, p, t):
-        return x.copy()  # full-state observation (both states)
+        return x.copy()
 
     def gm(self, x, u, d, p, t):
-        return x.copy()  # outputs: both states
+        return x.copy()
 
     @property
-    def nz(self) -> int:
-        return 2
+    def nz(self) -> int: return 2
 
 
 _VDV_SS = np.array([0.097141, 0.048329])
@@ -218,17 +163,14 @@ def two_state_model():
 
 @pytest.fixture()
 def two_state_kf(two_state_model):
-    Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-    R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-    return KalmanFilter(two_state_model, Q=Q, R=R)
+    """Bare KalmanFilter — Qd, Rm read from the model."""
+    return KalmanFilter(two_state_model)
 
 
 @pytest.fixture()
 def two_state_kf2(two_state_model):
-    """Second independent KalmanFilter for comparison tests."""
-    Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-    R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-    return KalmanFilter(two_state_model, Q=Q, R=R)
+    """A second independent KalmanFilter for comparison tests."""
+    return KalmanFilter(two_state_model)
 
 
 @pytest.fixture()
@@ -262,12 +204,11 @@ def _simulate_linear(T: int, seed: int = 0):
 
     Returns
     -------
-    X_true : (T+1, 2) true states
+    X_true  : (T+1, 2) true states
     Y_noisy : (T, 2) noisy observations (sigma=0.1 each)
-    U : (T, 1) random inputs in [-1, 1]
+    U       : (T, 1) random inputs in [-0.5, 0.5]
     """
     rng = np.random.default_rng(seed)
-    model = _TwoStateModel()
     Q_proc = np.diag([0.01, 0.01])
     R_meas = 0.1 * np.eye(2)
 
@@ -276,9 +217,12 @@ def _simulate_linear(T: int, seed: int = 0):
     Y_noisy = []
     U = []
 
+    Ad = np.array([[0.9, 0.0], [0.0, 0.85]])
+    Bd = np.array([[0.1], [0.1]])
+
     for _ in range(T):
         u = rng.uniform(-0.5, 0.5, size=1)
-        x = np.array([0.9, 0.0, 0.0, 0.85]).reshape(2, 2) @ x + np.array([0.1, 0.1]) * u[0]
+        x = Ad @ x + Bd[:, 0] * u[0]
         x += rng.multivariate_normal(np.zeros(2), Q_proc)
         y = x + rng.multivariate_normal(np.zeros(2), R_meas)
         X_true.append(x.copy())
@@ -288,118 +232,69 @@ def _simulate_linear(T: int, seed: int = 0):
     return np.array(X_true), np.array(Y_noisy), np.array(U)
 
 
-def _run_kf_no_delay(kf, Y, U, D_val=0.0):
-    """Run the bare KalmanFilter through a trajectory without delays."""
-    d_cvx = _np_to_cvx_col(np.array([D_val]))
-    X_est = []
-    for k, (y_np, u_np) in enumerate(zip(Y, U)):
-        y_cvx = _np_to_cvx_col(y_np)
-        kf.update(y_cvx, d_cvx)
-        kf.record_action(_np_to_cvx_col(u_np))
-        X_est.append(kf.x_hat)
-    return np.array(X_est)
-
-
-def _run_delayed_kf(delayed_kf, Y, U, delay, D_val=0.0):
-    """
-    Run the DelayedObservationFilter through a trajectory.
-
-    Channel 1 is always observed immediately.
-    Channel 0 is observed with ``delay[0]`` steps delay.
-    At each step k, the delayed observation for step k−delay[0] arrives.
-    """
-    d_cvx = _np_to_cvx_col(np.array([D_val]))
-    delay_arr = np.asarray(delay, dtype=int)
-    X_est = []
-    for k, (y_np, u_np) in enumerate(zip(Y, U)):
-        y_cvx = _np_to_cvx_col(y_np)
-        delayed_kf.update(y_cvx, d_cvx, delay=delay_arr)
-        delayed_kf.record_action(_np_to_cvx_col(u_np))
-        X_est.append(delayed_kf.x_hat)
-    return np.array(X_est)
-
-
-# ── Unit tests: transparency ───────────────────────────────────────────────────
+# ── Unit tests: transparency ──────────────────────────────────────────────────
 
 
 class TestTransparency:
     """Wrapper should be identical to the bare estimator when delay=None."""
 
-    def test_no_delay_equals_bare_estimator(self, two_state_model, two_state_kf, two_state_kf2):
-        """With delay=None, DelayedObservationFilter must match the bare KF."""
-        Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-        R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-
+    def test_no_delay_equals_bare_estimator(
+        self, two_state_model, two_state_kf, two_state_kf2
+    ):
+        """With ``delay=None`` the wrapped KF must match the bare KF."""
         kf_bare = two_state_kf2
-        kf_wrapped = DelayedObservationFilter(two_state_kf, lag_max=10)
+        kf_wrap = DelayedObservationFilter(two_state_kf, lag_max=10)
 
         _, Y, U = _simulate_linear(20, seed=7)
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
+        d = np.array([0.0])
 
-        for y_np, u_np in zip(Y, U):
-            y_cvx = _np_to_cvx_col(y_np)
-            u_cvx = _np_to_cvx_col(u_np)
-
-            x_bare = kf_bare.update(y_cvx, d_cvx)
-            kf_bare.record_action(u_cvx)
-
-            x_wrapped = kf_wrapped.update(y_cvx, d_cvx)  # delay=None
-            kf_wrapped.record_action(u_cvx)
+        for ym, u in zip(Y, U):
+            x_bare, _ = kf_bare.step(ym, u, d)
+            x_wrap, _ = kf_wrap.step(ym, u, d)
 
             np.testing.assert_allclose(
                 np.asarray(x_bare).ravel(),
-                np.asarray(x_wrapped).ravel(),
+                np.asarray(x_wrap).ravel(),
                 atol=1e-12,
                 err_msg="Wrapped KF diverged from bare KF with delay=None",
             )
 
-    def test_all_zeros_delay_equals_bare_estimator(self, two_state_model, two_state_kf, two_state_kf2):
-        """delay=np.zeros(ny) should behave identically to delay=None."""
-        Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-        R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-
+    def test_all_zeros_delay_equals_bare_estimator(
+        self, two_state_model, two_state_kf, two_state_kf2
+    ):
+        """``delay = np.zeros(ny)`` should behave identically to ``delay=None``."""
         kf_bare = two_state_kf2
-        kf_wrapped = DelayedObservationFilter(two_state_kf, lag_max=10)
+        kf_wrap = DelayedObservationFilter(two_state_kf, lag_max=10)
 
         _, Y, U = _simulate_linear(20, seed=13)
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
+        d = np.array([0.0])
         delay_zero = np.array([0, 0])
 
-        for y_np, u_np in zip(Y, U):
-            y_cvx = _np_to_cvx_col(y_np)
-            u_cvx = _np_to_cvx_col(u_np)
-
-            x_bare = kf_bare.update(y_cvx, d_cvx)
-            kf_bare.record_action(u_cvx)
-
-            x_wrapped = kf_wrapped.update(y_cvx, d_cvx, delay=delay_zero)
-            kf_wrapped.record_action(u_cvx)
+        for ym, u in zip(Y, U):
+            x_bare, _ = kf_bare.step(ym, u, d)
+            x_wrap, _ = kf_wrap.step(ym, u, d, delay=delay_zero)
 
             np.testing.assert_allclose(
                 np.asarray(x_bare).ravel(),
-                np.asarray(x_wrapped).ravel(),
+                np.asarray(x_wrap).ravel(),
                 atol=1e-12,
                 err_msg="delay=zeros must match delay=None",
             )
 
     def test_properties_delegated(self, delayed_kf, two_state_kf):
-        """x_hat, P, and last_innovation must be delegated to the inner KF."""
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-        y_cvx = _np_to_cvx_col(np.array([0.5, 0.3]))
+        """``x_hat``, ``P``, and ``last_innovation`` must be delegated."""
+        u = np.zeros(1)
+        d = np.array([0.0])
+        ym = np.array([0.5, 0.3])
 
-        delayed_kf.update(y_cvx, d_cvx)
-        delayed_kf.record_action(_np_to_cvx_col(np.array([0.0])))
+        delayed_kf.step(ym, u, d)
 
-        # x_hat from wrapper and from inner estimator must be the same object or equal value
         np.testing.assert_allclose(
-            delayed_kf.x_hat,
-            two_state_kf.x_hat,
-            atol=1e-12,
+            delayed_kf.x_hat, two_state_kf.x_hat, atol=1e-12,
         )
-        # P comparison
-        P_wrap = delayed_kf.P
-        P_inner = two_state_kf.P
-        np.testing.assert_allclose(P_wrap, P_inner, atol=1e-12)
+        np.testing.assert_allclose(
+            delayed_kf.P, two_state_kf.P, atol=1e-12,
+        )
 
 
 # ── Unit tests: buffer management ─────────────────────────────────────────────
@@ -409,70 +304,58 @@ class TestBufferManagement:
     """Internal buffer should grow correctly and respect lag_max."""
 
     def test_buffer_grows_with_updates(self, delayed_kf):
-        """Buffer length must equal the number of updates (up to lag_max)."""
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-        y_cvx = _np_to_cvx_col(np.array([0.1, 0.2]))
-        u_cvx = _np_to_cvx_col(np.array([0.0]))
+        u = np.zeros(1)
+        d = np.array([0.0])
+        ym = np.array([0.1, 0.2])
 
         for k in range(1, 8):
-            delayed_kf.update(y_cvx, d_cvx)
-            delayed_kf.record_action(u_cvx)
+            delayed_kf.step(ym, u, d)
             assert len(delayed_kf._buf) == k
 
     def test_buffer_capped_at_lag_max(self):
-        """Buffer must not exceed lag_max entries."""
         model = _TwoStateModel()
-        Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-        R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-        kf = KalmanFilter(model, Q=Q, R=R)
+        kf = KalmanFilter(model)
         filt = DelayedObservationFilter(kf, lag_max=5)
 
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-        y_cvx = _np_to_cvx_col(np.array([0.1, 0.2]))
-        u_cvx = _np_to_cvx_col(np.array([0.0]))
+        u = np.zeros(1)
+        d = np.array([0.0])
+        ym = np.array([0.1, 0.2])
 
         for _ in range(15):
-            filt.update(y_cvx, d_cvx)
-            filt.record_action(u_cvx)
+            filt.step(ym, u, d)
 
         assert len(filt._buf) == 5  # lag_max
 
     def test_delay_exceeds_buffer_issues_warning(self):
         """A delay larger than the current buffer depth must issue RuntimeWarning."""
         model = _TwoStateModel()
-        Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-        R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-        kf = KalmanFilter(model, Q=Q, R=R)
+        kf = KalmanFilter(model)
         filt = DelayedObservationFilter(kf, lag_max=10)
 
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-        y_cvx = _np_to_cvx_col(np.array([0.1, 0.2]))
-        u_cvx = _np_to_cvx_col(np.array([0.0]))
+        u = np.zeros(1)
+        d = np.array([0.0])
+        ym = np.array([0.1, 0.2])
 
-        # Only 2 entries in buffer but we ask for delay=5.
-        filt.update(y_cvx, d_cvx)
-        filt.record_action(u_cvx)
-        filt.update(y_cvx, d_cvx)
-        filt.record_action(u_cvx)
+        # Two entries in buffer but we ask for delay=5.
+        filt.step(ym, u, d)
+        filt.step(ym, u, d)
 
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
-            filt.update(y_cvx, d_cvx, delay=np.array([5, 0]))
-            filt.record_action(u_cvx)
+            filt.step(ym, u, d, delay=np.array([5, 0]))
 
         assert any(issubclass(w.category, RuntimeWarning) for w in caught)
 
     def test_buffer_entries_have_correct_keys(self, delayed_kf):
-        """Each buffer entry must contain x_hat, P, y, d, mask, u."""
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-        y_cvx = _np_to_cvx_col(np.array([0.3, 0.4]))
-        u_cvx = _np_to_cvx_col(np.array([0.1]))
+        """Each buffer entry must contain x_hat, P, ym, u, d, mask."""
+        u = np.array([0.1])
+        d = np.array([0.0])
+        ym = np.array([0.3, 0.4])
 
-        delayed_kf.update(y_cvx, d_cvx)
-        delayed_kf.record_action(u_cvx)
+        delayed_kf.step(ym, u, d)
 
         entry = delayed_kf._buf[-1]
-        for key in ("x_hat", "P", "y", "d", "mask", "u"):
+        for key in ("x_hat", "P", "ym", "u", "d", "mask"):
             assert key in entry, f"Buffer entry missing key '{key}'"
 
         np.testing.assert_allclose(entry["u"], np.array([0.1]), atol=1e-12)
@@ -484,83 +367,64 @@ class TestBufferManagement:
 class TestSingleDelayedChannel:
     """Single delayed channel must update the current estimate correctly."""
 
-    def test_delayed_channel_changes_estimate(self, two_state_model, two_state_kf):
+    def test_delayed_channel_changes_estimate(
+        self, two_state_model, two_state_kf
+    ):
         """With a delayed channel the estimate must differ from ignore-delay."""
-        Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-        R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-        kf_ignore = KalmanFilter(two_state_model, Q=Q, R=R)
+        kf_ignore = KalmanFilter(two_state_model)
         filt = DelayedObservationFilter(two_state_kf, lag_max=10)
 
         _, Y, U = _simulate_linear(10, seed=42)
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-        delay_arr = np.array([0, 3])  # channel 1 delayed by 3 steps
+        d = np.array([0.0])
+        delay_arr = np.array([0, 3])    # channel 1 delayed by 3 steps
 
         X_ignore, X_delayed = [], []
 
-        for y_np, u_np in zip(Y, U):
-            y_cvx = _np_to_cvx_col(y_np)
-            u_cvx = _np_to_cvx_col(u_np)
-
-            # Filter that ignores channel 1 entirely
-            y_ch0 = _np_to_cvx_col(np.array([y_np[0], 0.0]))
-            kf_ignore.update(y_ch0, d_cvx, mask=[True, False])
-            kf_ignore.record_action(u_cvx)
+        for ym, u in zip(Y, U):
+            # Filter that ignores channel 1 entirely (mask out)
+            kf_ignore.step(ym, u, d, mask=[True, False])
             X_ignore.append(kf_ignore.x_hat)
 
             # Filter with delayed channel 1
-            filt.update(y_cvx, d_cvx, delay=delay_arr)
-            filt.record_action(u_cvx)
+            filt.step(ym, u, d, delay=delay_arr)
             X_delayed.append(filt.x_hat)
 
         X_ignore = np.array(X_ignore)
         X_delayed = np.array(X_delayed)
 
-        # The estimates must differ once the delay passes
         tail_diff = np.abs(X_ignore[-3:] - X_delayed[-3:]).mean()
         assert tail_diff > 1e-8, (
             "Delayed KF should differ from ignore-delay KF after lag passes"
         )
 
     def test_delayed_channel_reduces_rmse(self, two_state_model):
-        """
-        Using a delayed observation (vs ignoring it) should improve accuracy
-        in a longer simulation run.
-        """
+        """Using a delayed observation should improve accuracy over ignoring it."""
         T = 50
         tau = 3
-        _, Y, U = _simulate_linear(T, seed=99)
-        X_true = np.array([np.zeros(2)])
-        x = np.zeros(2)
-        for u_np in U:
-            x = np.array([0.9, 0.0, 0.0, 0.85]).reshape(2, 2) @ x + np.array([0.1, 0.1]) * u_np[0]
-            X_true = np.vstack([X_true, x])
-        X_true = X_true[1:]  # align with observations
+        # ``_simulate_linear`` returns the actual *noisy* trajectory of length
+        # T+1 with X_true[0] = x_0; the measurements ``Y[k]`` correspond to
+        # ``X_true[k+1]``, so align by slicing off the initial state.
+        X_true_full, Y, U = _simulate_linear(T, seed=99)
+        X_true = X_true_full[1:]
 
-        def _make_kf():
-            Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-            R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-            return KalmanFilter(two_state_model, Q=Q, R=R)
+        d = np.array([0.0])
 
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-
-        # Filter A: only channel 0 (no channel 1 information)
-        kf_a = _make_kf()
+        # Filter A: only channel 0 (channel 1 ignored)
+        kf_a = KalmanFilter(two_state_model)
         X_a = []
-        for y_np, u_np in zip(Y, U):
-            y_cvx = _np_to_cvx_col(y_np)
-            kf_a.update(y_cvx, d_cvx, mask=[True, False])
-            kf_a.record_action(_np_to_cvx_col(u_np))
+        for ym, u in zip(Y, U):
+            kf_a.step(ym, u, d, mask=[True, False])
             X_a.append(kf_a.x_hat)
         X_a = np.array(X_a)
 
         # Filter B: channel 0 immediate + channel 1 delayed by tau
-        kf_b = DelayedObservationFilter(_make_kf(), lag_max=2 * tau)
+        kf_b = DelayedObservationFilter(
+            KalmanFilter(two_state_model), lag_max=2 * tau,
+        )
         delay_arr = np.array([0, tau])
         X_b = []
-        for y_np, u_np in zip(Y, U):
-            y_cvx = _np_to_cvx_col(y_np)
-            kf_b.update(y_cvx, d_cvx, delay=delay_arr)
-            kf_b.record_action(_np_to_cvx_col(u_np))
+        for ym, u in zip(Y, U):
+            kf_b.step(ym, u, d, delay=delay_arr)
             X_b.append(kf_b.x_hat)
         X_b = np.array(X_b)
 
@@ -580,71 +444,56 @@ class TestMultipleDelayedChannels:
     """Two channels with different delays must both be incorporated."""
 
     def test_two_channels_with_different_delays(self, two_state_model):
-        """Running with two delayed channels (tau=2, tau=3) must not error
-        and must give an estimate that incorporates both measurements."""
-        Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-        R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-        kf = KalmanFilter(two_state_model, Q=Q, R=R)
+        """delays = (2, 3) — wrapper must not error and produce finite estimates."""
+        kf = KalmanFilter(two_state_model)
         filt = DelayedObservationFilter(kf, lag_max=10)
 
         _, Y, U = _simulate_linear(15, seed=55)
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-        # Channel 0: delay=2, channel 1: delay=3
+        d = np.array([0.0])
         delay_arr = np.array([2, 3])
 
         X_delayed = []
-        for y_np, u_np in zip(Y, U):
-            y_cvx = _np_to_cvx_col(y_np)
-            filt.update(y_cvx, d_cvx, delay=delay_arr)
-            filt.record_action(_np_to_cvx_col(u_np))
+        for ym, u in zip(Y, U):
+            filt.step(ym, u, d, delay=delay_arr)
             X_delayed.append(filt.x_hat)
 
         X_delayed = np.array(X_delayed)
-
-        # Estimates must be finite
-        assert np.all(np.isfinite(X_delayed)), "Estimates must be finite"
+        assert np.all(np.isfinite(X_delayed))
 
     def test_mixed_immediate_and_delayed(self, two_state_model):
-        """Channel 0 immediate, channel 1 delayed by 2 — must not error."""
-        Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-        R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-        kf = KalmanFilter(two_state_model, Q=Q, R=R)
+        """Channel 0 immediate, channel 1 delayed by 2."""
+        kf = KalmanFilter(two_state_model)
         filt = DelayedObservationFilter(kf, lag_max=10)
 
         _, Y, U = _simulate_linear(20, seed=77)
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
-        delay_arr = np.array([0, 2])  # channel 0 immediate, channel 1 delayed
+        d = np.array([0.0])
+        delay_arr = np.array([0, 2])
 
-        for y_np, u_np in zip(Y, U):
-            y_cvx = _np_to_cvx_col(y_np)
-            x_hat = filt.update(y_cvx, d_cvx, delay=delay_arr)
-            filt.record_action(_np_to_cvx_col(u_np))
-            x_np = np.asarray(x_hat).ravel()
-            assert np.all(np.isfinite(x_np))
+        for ym, u in zip(Y, U):
+            x_hat, _ = filt.step(ym, u, d, delay=delay_arr)
+            assert np.all(np.isfinite(np.asarray(x_hat).ravel()))
 
     def test_covariance_positive_definite(self, two_state_model):
         """Posterior covariance must remain symmetric positive-definite."""
-        Q = cvx_matrix([0.01, 0.0, 0.0, 0.01], (2, 2))
-        R = cvx_matrix([0.1, 0.0, 0.0, 0.1], (2, 2))
-        kf = KalmanFilter(two_state_model, Q=Q, R=R)
+        kf = KalmanFilter(two_state_model)
         filt = DelayedObservationFilter(kf, lag_max=10)
 
         _, Y, U = _simulate_linear(15, seed=33)
-        d_cvx = _np_to_cvx_col(np.array([0.0]))
+        d = np.array([0.0])
         delay_arr = np.array([0, 3])
 
-        for y_np, u_np in zip(Y, U):
-            y_cvx = _np_to_cvx_col(y_np)
-            filt.update(y_cvx, d_cvx, delay=delay_arr)
-            filt.record_action(_np_to_cvx_col(u_np))
+        for ym, u in zip(Y, U):
+            filt.step(ym, u, d, delay=delay_arr)
 
         P_np = filt.P
         eigvals = np.linalg.eigvalsh(P_np)
-        assert np.all(eigvals > 0), f"P must be positive-definite; eigenvalues: {eigvals}"
+        assert np.all(eigvals > 0), (
+            f"P must be positive-definite; eigenvalues: {eigvals}"
+        )
         np.testing.assert_allclose(P_np, P_np.T, atol=1e-10)
 
 
-# ── System tests: CD estimator (EKF) ─────────────────────────────────────────
+# ── System tests: CD estimator (EKF) ──────────────────────────────────────────
 
 
 class TestDelayedEKF:
@@ -659,10 +508,9 @@ class TestDelayedEKF:
         x = _VDV_SS + np.array([0.05, 0.02])
         X_true = [x.copy()]
         Y_noisy = []
-        D_rate = _VDV_D_RATE
 
         for _ in range(T):
-            dx = model.f(x, D_rate, _VDV_D, _VDV_P, 0.0)
+            dx = model.f(x, _VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
             x = x + dt * dx + rng.multivariate_normal(np.zeros(2), 1e-6 * np.eye(2))
             y = x + rng.multivariate_normal(np.zeros(2), 0.001 * np.eye(2))
             X_true.append(x.copy())
@@ -675,8 +523,12 @@ class TestDelayedEKF:
         x0 = _VDV_SS + np.array([0.05, 0.02])
         P0 = np.diag([0.1, 0.1])
 
-        ekf_bare = ContinuousDiscreteEKF(two_output_cstr, x0.copy(), P0.copy(), dt=0.01, n_steps=10)
-        ekf_wrap = ContinuousDiscreteEKF(two_output_cstr, x0.copy(), P0.copy(), dt=0.01, n_steps=10)
+        ekf_bare = ContinuousDiscreteEKF(
+            two_output_cstr, x0.copy(), P0.copy(), dt=0.01, n_steps=10,
+        )
+        ekf_wrap = ContinuousDiscreteEKF(
+            two_output_cstr, x0.copy(), P0.copy(), dt=0.01, n_steps=10,
+        )
         filt = DelayedObservationFilter(ekf_wrap, lag_max=10)
 
         _, Y = self._simulate_vdv(15, seed=5)
@@ -685,9 +537,9 @@ class TestDelayedEKF:
         p = _VDV_P
         t = 0.0
 
-        for y_np in Y:
-            x_bare, _ = ekf_bare.step(y_np, u, d, p, t)
-            x_wrap, _ = filt.step(y_np, u, d, p, t)  # delay=None
+        for ym in Y:
+            x_bare, _ = ekf_bare.step(ym, u, d, p, t)
+            x_wrap, _ = filt.step(ym, u, d, p, t)
 
             np.testing.assert_allclose(
                 np.asarray(x_bare).ravel(),
@@ -698,22 +550,24 @@ class TestDelayedEKF:
             t += 0.01
 
     def test_delayed_channel_finite_and_reasonable(self, two_output_cstr):
-        """Wrapped EKF with a delayed channel should produce finite estimates."""
+        """Wrapped EKF with a delayed channel must produce finite estimates."""
         x0 = _VDV_SS + np.array([0.05, 0.02])
         P0 = np.diag([0.1, 0.1])
 
-        ekf = ContinuousDiscreteEKF(two_output_cstr, x0.copy(), P0.copy(), dt=0.01, n_steps=10)
+        ekf = ContinuousDiscreteEKF(
+            two_output_cstr, x0.copy(), P0.copy(), dt=0.01, n_steps=10,
+        )
         filt = DelayedObservationFilter(ekf, lag_max=10)
 
         _, Y = self._simulate_vdv(20, seed=11)
         u = _VDV_D_RATE
         d = _VDV_D
         p = _VDV_P
-        delay_arr = np.array([0, 3])  # channel 1 delayed by 3 steps
+        delay_arr = np.array([0, 3])
         t = 0.0
 
-        for y_np in Y:
-            x_est, P_est = filt.step(y_np, u, d, p, t, delay=delay_arr)
+        for ym in Y:
+            x_est, P_est = filt.step(ym, u, d, p, t, delay=delay_arr)
             assert np.all(np.isfinite(np.asarray(x_est).ravel()))
             assert np.all(np.isfinite(P_est))
             t += 0.01
@@ -722,19 +576,25 @@ class TestDelayedEKF:
         """Covariance must remain positive-definite after delayed EKF steps."""
         x0 = _VDV_SS + np.array([0.05, 0.02])
         P0 = np.diag([0.1, 0.1])
-        ekf = ContinuousDiscreteEKF(two_output_cstr, x0.copy(), P0.copy(), dt=0.01, n_steps=10)
+        ekf = ContinuousDiscreteEKF(
+            two_output_cstr, x0.copy(), P0.copy(), dt=0.01, n_steps=10,
+        )
         filt = DelayedObservationFilter(ekf, lag_max=10)
 
         _, Y = self._simulate_vdv(15, seed=17)
         delay_arr = np.array([0, 2])
         t = 0.0
 
-        for y_np in Y:
-            x_est, P_est = filt.step(y_np, _VDV_D_RATE, _VDV_D, _VDV_P, t, delay=delay_arr)
+        for ym in Y:
+            x_est, P_est = filt.step(
+                ym, _VDV_D_RATE, _VDV_D, _VDV_P, t, delay=delay_arr,
+            )
             t += 0.01
 
         P_final = np.asarray(P_est, dtype=float)
         if P_final.ndim == 1:
             P_final = P_final.reshape(2, 2)
         eigvals = np.linalg.eigvalsh(P_final)
-        assert np.all(eigvals > 0), f"P must be positive-definite; eigenvalues: {eigvals}"
+        assert np.all(eigvals > 0), (
+            f"P must be positive-definite; eigenvalues: {eigvals}"
+        )

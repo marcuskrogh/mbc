@@ -1,17 +1,29 @@
 """
-Generic Model Predictive Controller.
+Model Predictive Controller for linear discrete-time systems.
 
-Composes a KalmanFilter and an OptimalControlProblem for any
-LinearDiscreteModel and implements the receding-horizon policy.
+Composes a :class:`~mbc.estimation.KalmanFilter` and an
+:class:`OptimalControlProblem` for any
+:class:`~mbc.models.LinearDiscreteModel` and implements the receding-horizon
+policy described in ControlToolbox §EMPC — *ENMPC Algorithm*, specialised
+to the linear case.
+
+At each measurement time t_k:
+
+    1. **Measure**   ym[k]                                  (passed to ``step``)
+    2. **Estimate**  x̂[k|k] = κ(x̂[k-1|k-1], u[k-1], d[k-1], ym[k])
+                                                            (estimator.step)
+    3. **Optimise**  U* = λ(x̂[k|k], …)                       (ocp.solve)
+    4. **Apply**     u[k] = U*[0:nu]                          (returned to caller)
 """
 
 from __future__ import annotations
 
 from typing import Tuple, TYPE_CHECKING
 
+import numpy as np
 from cvxopt import matrix
 
-from .._utils import _zeros
+from .._utils import _zeros, _np_to_cvx
 from ..estimation import KalmanFilter
 from .ocp import OptimalControlProblem
 
@@ -21,15 +33,14 @@ if TYPE_CHECKING:
 
 class MPCController:
     """
-    Generic model predictive controller.
+    Model predictive controller for a linear discrete-time plant.
 
-    Composes a KalmanFilter and an OptimalControlProblem for any
-    LinearDiscreteModel and implements the receding-horizon policy:
+    Combines a :class:`~mbc.estimation.KalmanFilter` (estimator) and an
+    :class:`OptimalControlProblem` (OCP) into a closed-loop controller.
 
-      1. Estimate  x̂[k] ← estimator.update(y[k], d[k])
-      2. Optimise  U*    ← ocp.solve(x̂[k], D, r)
-      3. Apply     u[k]  = U*[0]   (receding horizon, discard rest)
-      4. Record    estimator.record_action(u[k])
+    The previously-applied input ``u_{k-1}`` and disturbance ``d_{k-1}``
+    are tracked internally so that the estimator's predict step has the
+    correct ZOH inputs over the just-completed interval.
 
     Parameters
     ----------
@@ -47,35 +58,53 @@ class MPCController:
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
-        self._u_prev: matrix = matrix(0.0, (model.nu, 1))
+        # Previous applied (u, d) — used by the estimator's predict step.
+        self._u_prev_np: np.ndarray = np.zeros(model.nu)
+        self._d_prev_np: np.ndarray = np.zeros(model.nd)
 
     def step(
         self,
-        y: matrix,
+        ym: matrix,
         D: matrix,
     ) -> Tuple[matrix, matrix, matrix]:
         """
-        Execute one MPC step.
+        Execute one closed-loop MPC step.
 
         Parameters
         ----------
-        y : (l, 1) current measurement vector  (cvxopt column).
-        D : (N·p, 1) stacked disturbance forecast  (cvxopt column).
+        ym : (nym, 1) cvxopt column  — measurement ``ym[k]``.
+        D  : (N · nd, 1) cvxopt column  — stacked disturbance forecast
+             ``[d[k]; d[k+1]; …; d[k + N − 1]]``.
 
         Returns
         -------
-        u     : (m, 1) optimal input for the current step.
-        U_seq : (N·m, 1) full optimal input sequence.
-        X_seq : (N·n, 1) predicted state trajectory.
+        u     : (nu, 1) cvxopt column — optimal input ``u_k``.
+        U_seq : (N · nu, 1) full optimal input sequence.
+        X_seq : (N · nx, 1) predicted state trajectory.
         """
-        n_u = self._model.nu
-        n_d = self._model.nd
-        d0 = D[:n_d]
-        x_hat = self._estimator.update(y, d0)
-        U_seq, X_seq = self._ocp.solve(
-            x_hat, D, self._model.x_ref, u_prev=self._u_prev,
+        nu = self._model.nu
+        nd = self._model.nd
+
+        # Step 2: estimate using the previously-applied (u, d)
+        ym_np = np.array(list(ym), dtype=float)
+        x_hat_np, _ = self._estimator.step(
+            ym_np, self._u_prev_np, self._d_prev_np,
         )
-        u = U_seq[:n_u]
-        self._u_prev = matrix(u)
-        self._estimator.record_action(u)
+
+        # Step 3: optimise (OCP returns cvxopt columns)
+        x_hat_cvx = _np_to_cvx(x_hat_np.reshape(-1, 1))
+        x_ref_cvx = _np_to_cvx(
+            np.asarray(self._model.x_ref, dtype=float).reshape(-1, 1)
+        )
+        U_seq, X_seq = self._ocp.solve(
+            x_hat_cvx, D, x_ref_cvx, u_prev=matrix(self._u_prev_np.tolist(), (nu, 1)),
+        )
+
+        # Step 4: extract the first action; cache (u_now, d_now) for next step
+        u = U_seq[:nu]
+        u_now_np = np.array(list(u), dtype=float)
+        d_now_np = np.array(list(D[:nd]), dtype=float)
+        self._u_prev_np = u_now_np
+        self._d_prev_np = d_now_np
+
         return u, U_seq, X_seq
