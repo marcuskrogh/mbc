@@ -27,6 +27,7 @@ from mbc.models import (
     LinearDiscreteModel,
     LinearContinuousDiscreteModel,
     ContinuousDiscreteModel,
+    ContinuousDiscreteDAEModel,
 )
 from mbc.estimation import KalmanFilter, CDKalmanFilter, ContinuousDiscreteEKF
 from mbc.control import (
@@ -540,7 +541,7 @@ class TestCDTrackingOptimalControlProblem:
         ocp, model = self._make_ocp(N=5)
         x0 = np.array([0.0])
         d_traj = np.zeros((5, model.nd))
-        u_opt, cost = ocp.solve(x0, d_traj)
+        u_opt, cost, _ = ocp.solve(x0, d_traj)
         assert u_opt.shape == (5, model.nu)
         assert np.isfinite(cost)
 
@@ -555,7 +556,7 @@ class TestCDTrackingOptimalControlProblem:
         ocp, model = self._make_ocp(N=5)
         x0 = np.array([0.0])
         d_traj = np.zeros((5, model.nd))
-        u_opt, _ = ocp.solve(x0, d_traj)
+        u_opt, _, _ = ocp.solve(x0, d_traj)
         assert np.all(u_opt >= -3.0 - 1e-6)
         assert np.all(u_opt <= 3.0 + 1e-6)
 
@@ -564,7 +565,7 @@ class TestCDTrackingOptimalControlProblem:
         ocp, model = self._make_ocp(N=10)
         x0 = np.array([0.0])
         d_traj = np.zeros((10, model.nd))
-        u_opt, _ = ocp.solve(x0, d_traj)
+        u_opt, _, _ = ocp.solve(x0, d_traj)
         # Simulate forward with optimal u
         x = x0.copy()
         p = np.array([])
@@ -594,8 +595,8 @@ class TestCDTrackingOptimalControlProblem:
             S=np.eye(1) * 10.0,
             u_min=np.array([-5.0]), u_max=np.array([5.0]), dt=1.0,
         )
-        u_no_rom, _ = ocp_no_rom.solve(x0, d_traj)
-        u_rom, _ = ocp_rom.solve(x0, d_traj)
+        u_no_rom, _, _ = ocp_no_rom.solve(x0, d_traj)
+        u_rom, _, _ = ocp_rom.solve(x0, d_traj)
         var_no_rom = float(np.var(np.diff(u_no_rom, axis=0)))
         var_rom = float(np.var(np.diff(u_rom, axis=0)))
         assert var_rom <= var_no_rom + 1e-6
@@ -616,7 +617,7 @@ class TestCDTrackingOptimalControlProblem:
             x_max=np.array([2.0]), rho_x=1e3,
             u_min=np.array([-5.0]), u_max=np.array([5.0]), dt=1.0,
         )
-        u_opt, _ = ocp.solve(x0, d_traj)
+        u_opt, _, _ = ocp.solve(x0, d_traj)
         # First input should be negative (pushing x down toward constraint)
         assert u_opt[0, 0] < 0.0 + 1e-3, (
             f"Expected negative u[0] with soft upper state constraint, got {u_opt[0, 0]:.3f}"
@@ -632,8 +633,10 @@ class TestEconomicOptimalControlProblem:
     def _make_model_ocp(self, N=5, **kw):
         model = ScalarNonlinear()
 
-        # Economic cost: minimise -x (maximise state = maximise x toward x=2)
-        def lagrange(x, u, d):
+        # Economic cost: minimise −x + 0.5 u² (i.e. push x toward larger values
+        # while paying for input).  ControlToolbox §EMPC Lagrange signature is
+        # ``l(t, x, y, u, theta)``.
+        def lagrange(t, x, y, u, theta):
             return -float(x[0]) + 0.5 * float(u[0] ** 2)
 
         ocp = EconomicOptimalControlProblem(
@@ -650,7 +653,7 @@ class TestEconomicOptimalControlProblem:
         ocp, model = self._make_model_ocp(N=5)
         x0 = np.array([0.0])
         d_traj = np.zeros((5, model.nd))
-        u_opt, cost = ocp.solve(x0, d_traj)
+        u_opt, cost, _ = ocp.solve(x0, d_traj)
         assert u_opt.shape == (5, model.nu)
         assert np.isfinite(cost)
 
@@ -665,7 +668,7 @@ class TestEconomicOptimalControlProblem:
         ocp, model = self._make_model_ocp(N=5)
         x0 = np.array([0.0])
         d_traj = np.zeros((5, model.nd))
-        u_opt, _ = ocp.solve(x0, d_traj)
+        u_opt, _, _ = ocp.solve(x0, d_traj)
         assert np.all(u_opt >= -3.0 - 1e-6)
         assert np.all(u_opt <= 3.0 + 1e-6)
 
@@ -675,7 +678,7 @@ class TestEconomicOptimalControlProblem:
         x0 = np.array([0.0])
         d_traj = np.zeros((5, model.nd))
         u_prev = np.ones((5, 1)) * 0.5
-        u_opt, cost = ocp.solve(x0, d_traj, u_prev=u_prev)
+        u_opt, cost, _ = ocp.solve(x0, d_traj, u_prev=u_prev)
         assert u_opt.shape == (5, model.nu)
         assert np.isfinite(cost)
 
@@ -684,16 +687,16 @@ class TestEconomicOptimalControlProblem:
         model = ScalarNonlinear()
         N = 5
 
-        # Without terminal cost
-        def lag(x, u, d):
+        # Lagrange: ControlToolbox §EMPC signature ``l(t, x, y, u, theta)``.
+        def lag(t, x, y, u, theta):
             return 0.1 * float(u[0] ** 2)
 
         ocp_no_mayer = EconomicOptimalControlProblem(
             model, N=N, lagrange=lag, dt=1.0,
         )
 
-        # With Mayer term penalising terminal state x[N] far from 1
-        def mayer(x):
+        # Mayer: ControlToolbox §EMPC signature ``l_hat(x, y, theta)``.
+        def mayer(x, y, theta):
             return 100.0 * float((x[0] - 1.0) ** 2)
 
         ocp_mayer = EconomicOptimalControlProblem(
@@ -702,10 +705,10 @@ class TestEconomicOptimalControlProblem:
 
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
-        u_no, _ = ocp_no_mayer.solve(x0, d_traj)
-        u_mayer, _ = ocp_mayer.solve(x0, d_traj)
+        u_no, _, _ = ocp_no_mayer.solve(x0, d_traj)
+        u_mayer, _, _ = ocp_mayer.solve(x0, d_traj)
 
-        # Simulate both and compare terminal states
+        # Simulate both forward and compare terminal states
         p = np.array([])
         x_no = x0.copy()
         x_with = x0.copy()
@@ -720,22 +723,127 @@ class TestEconomicOptimalControlProblem:
         model = ScalarNonlinear()
         N = 5
 
-        def lag(x, u, d):
+        def lag(t, x, y, u, theta):
             return 0.01 * float(u[0] ** 2)
 
         ocp = EconomicOptimalControlProblem(
             model, N=N, lagrange=lag,
             z_min=np.array([1.5]),
-            rho_z=1e3,
+            rho_z_2=1e3,
             u_min=np.array([-5.0]),
             u_max=np.array([5.0]),
             dt=1.0,
         )
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
-        u_opt, _ = ocp.solve(x0, d_traj)
+        u_opt, _, _ = ocp.solve(x0, d_traj)
         # First input should be positive (pushing x toward z_min)
         assert u_opt[0, 0] > 0.0 - 1e-3
+
+
+# ── Tests: EconomicOptimalControlProblem on SDAE plant ──────────────────────
+
+
+class _IsomerisationReactor(ContinuousDiscreteDAEModel):
+    """
+    Minimal SDAE plant for testing the EOCP's SDAE code path.
+
+    Differential state : x = [C_tot]      total concentration (mol/L)
+    Algebraic state    : y = [C_A]        species-A concentration (mol/L)
+    Algebraic constraint: (K_eq + 1) * C_A − C_tot = 0
+    Drift              : dC_tot/dt = u * (C_feed − C_tot)
+    Output             : z = C_A
+    """
+
+    _K_eq = 3.0
+    _C_feed = 5.0
+
+    @property
+    def nx(self): return 1
+    @property
+    def ny(self): return 1
+    @property
+    def nu(self): return 1
+    @property
+    def nd(self): return 0
+    @property
+    def nw(self): return 1
+    @property
+    def nym(self): return 1
+    @property
+    def nz(self): return 1
+    @property
+    def Rm(self): return np.array([[0.01]])
+
+    def f(self, x, y, u, d, p, t):
+        return np.array([u[0] * (self._C_feed - x[0])])
+
+    def sigma(self, x, y, u, d, p, t):
+        return np.array([[0.02]])
+
+    def g(self, x, y, u, d, p, t):
+        return np.array([(self._K_eq + 1.0) * y[0] - x[0]])
+
+    def gm(self, x, y, u, d, p, t):
+        return np.array([y[0]])
+
+    def hm(self, x, y, u, d, p, t):
+        return np.array([y[0]])
+
+
+class TestEconomicOCPOnSDAE:
+    """The EOCP's direct-simultaneous formulation must satisfy g(x, y, p) = 0
+    to machine precision at every sub-step (ControlToolbox §EMPC)."""
+
+    def _make_ocp(self, N=5, n_steps=2):
+        model = _IsomerisationReactor()
+        ocp = EconomicOptimalControlProblem(
+            model, N=N,
+            Q_z=np.array([[1.0]]), z_ref=np.array([1.5]),
+            u_min=np.array([0.0]), u_max=np.array([1.0]),
+            n_steps=n_steps, dt=1.0,
+        )
+        return ocp, model
+
+    def test_solve_returns_X_and_Y(self):
+        ocp, model = self._make_ocp(N=5, n_steps=2)
+        x0 = np.array([4.0])               # consistent with C_A = 1.0
+        d_traj = np.zeros((5, 0))
+        u_opt, cost, info = ocp.solve(x0, d_traj)
+        M = 5 * 2
+        assert u_opt.shape == (5, model.nu)
+        assert info["X"].shape == (M + 1, model.nx)
+        assert info["Y"].shape == (M + 1, model.ny)
+        assert np.isfinite(cost)
+
+    def test_algebraic_constraint_satisfied(self):
+        """g(x_n, y_n, p) = 0 must hold at every sub-step of the optimal trajectory."""
+        ocp, model = self._make_ocp(N=5, n_steps=2)
+        x0 = np.array([4.0])
+        d_traj = np.zeros((5, 0))
+        _, _, info = ocp.solve(x0, d_traj)
+        X, Y = info["X"], info["Y"]
+        zeros_u = np.zeros(model.nu)
+        zeros_d = np.zeros(0)
+        empty_p = np.array([], dtype=float)
+        for n in range(X.shape[0]):
+            g_val = model.g(X[n], Y[n], zeros_u, zeros_d, empty_p, 0.0)
+            assert np.allclose(g_val, 0.0, atol=1e-6), (
+                f"Algebraic constraint violated at sub-step {n}: g = {g_val}"
+            )
+
+    def test_tracking_drives_y_toward_zref(self):
+        """With Q_z=1 and z_ref=1.5, the optimal y_M should be closer to 1.5
+        than the initial y_0 = 1.0."""
+        ocp, model = self._make_ocp(N=8, n_steps=2)
+        x0 = np.array([4.0])               # → y_0 = 1.0 by constraint
+        d_traj = np.zeros((8, 0))
+        _, _, info = ocp.solve(x0, d_traj)
+        y_initial = info["Y"][0, 0]
+        y_final = info["Y"][-1, 0]
+        assert abs(y_final - 1.5) < abs(y_initial - 1.5), (
+            f"Tracking failed: y_final={y_final:.4f}, y_initial={y_initial:.4f}"
+        )
 
 
 # ── Tests: CDNMPCController ───────────────────────────────────────────────────
@@ -759,7 +867,7 @@ class TestCDNMPCController:
                 dt=1.0,
             )
         else:
-            def lag(x, u, d):
+            def lag(t, x, y, u, theta):
                 return -float(x[0]) + 0.1 * float(u[0] ** 2)
             ocp = EconomicOptimalControlProblem(
                 model, N=N, lagrange=lag,
