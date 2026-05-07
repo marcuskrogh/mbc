@@ -50,17 +50,22 @@ MPC solvers (`KalmanFilter`, `OptimalControlProblem`, `CDKalmanFilter`,
 
 #### `LinearDiscreteModel` — `mbc.models`
 
-Abstract base class for a linear discrete-time stochastic state-space model:
+Abstract base class for a linear discrete-time stochastic state-space model
+— the discrete-time analogue of
+:class:`~mbc.models.LinearContinuousDiscreteModel`, using the same
+ControlToolbox notation:
 
 ```
 x[k+1] = Ad x[k] + Bd u[k] + Ed d[k] + Gd w[k],   w[k] ~ N(0, Qd)
-z[k]   = Cz x[k] + Dz u[k] + Fz d[k]
+z[k]   = Cz x[k] + Dz u[k] + Fz d[k]                      (output ``g^m``)
 ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
+                                                          (measurement ``h^m``)
 ```
 
-where `x ∈ ℝⁿˣ` is the state, `u ∈ ℝⁿᵘ` is the control input, `d ∈ ℝⁿᵈ` is a
-measured disturbance, `z ∈ ℝⁿᶻ` is the controlled output, and `ym ∈ ℝⁿʸᵐ` is
-the measurement.  All system matrices are constant (LTI).
+where `x ∈ ℝⁿˣ` is the state, `u ∈ ℝⁿᵘ` is the control input,
+`d ∈ ℝⁿᵈ` is a measured disturbance, `z ∈ ℝⁿᶻ` is the (continuous-output
+analogue) ``g^m``, and `ym ∈ ℝⁿʸᵐ` is the discrete noisy measurement
+``h^m``.  All system matrices are constant (LTI).
 
 **Abstract interface** — subclasses must implement:
 
@@ -73,7 +78,7 @@ the measurement.  All system matrices are constant (LTI).
 | `Bd` | `(nx, nu) ndarray` | Discrete input matrix |
 | `Ed` | `(nx, nd) ndarray` | Discrete disturbance matrix |
 | `Cm` | `(nym, nx) ndarray` | Measurement output matrix |
-| `Qd` | `(nx, nx) ndarray` | Discrete process-noise covariance |
+| `Qd` | `(nw, nw) ndarray` | Discrete process-noise covariance |
 | `Rm` | `(nym, nym) ndarray` | Measurement noise covariance |
 | `x` | `list[float]` | Current state (read/write) |
 | `x_ref` | `(nx,) ndarray` | State setpoint / reference |
@@ -83,14 +88,15 @@ the measurement.  All system matrices are constant (LTI).
 
 | Member | Default | Description |
 |--------|---------|-------------|
-| `Gd` | `I` (identity) | Noise input matrix Gd ∈ ℝⁿˣˣⁿˣ |
-| `Cz` | `Cm` | Controlled output matrix Cz ∈ ℝⁿᶻˣⁿˣ |
-| `Dz` | zeros | Controlled output feedthrough Dz ∈ ℝⁿᶻˣⁿᵘ |
-| `Fz` | zeros | Controlled output disturbance feedthrough Fz ∈ ℝⁿᶻˣⁿᵈ |
+| `Gd` | `I` (identity) | Noise input matrix Gd ∈ ℝⁿˣˣⁿʷ |
+| `Cz` | `Cm` | Output matrix Cz ∈ ℝⁿᶻˣⁿˣ (discrete analogue of ``g^m``) |
+| `Dz` | zeros | Output feedthrough Dz ∈ ℝⁿᶻˣⁿᵘ |
+| `Fz` | zeros | Output disturbance feedthrough Fz ∈ ℝⁿᶻˣⁿᵈ |
 | `Dm` | zeros | Measurement input feedthrough Dm ∈ ℝⁿʸᵐˣⁿᵘ |
 | `Fm` | zeros | Measurement disturbance feedthrough Fm ∈ ℝⁿʸᵐˣⁿᵈ |
 | `nym` | `Cm.shape[0]` | Measurement dimension (derived) |
-| `nz` | `Cz.shape[0]` | Controlled output dimension (derived) |
+| `nz` | `Cz.shape[0]` | Output dimension (derived) |
+| `nw` | `Gd.shape[1]` | Process-noise dimension (derived) |
 | `predict_offset(d)` | zeros | Additive prediction bias `offset(d)` |
 | `params` | `array([])` | Flat parameter vector for identification |
 | `with_params(theta)` | raises | Construct new model from parameter vector |
@@ -140,201 +146,168 @@ print(m.nz)   # 1  (= Cz.shape[0]; Cz defaults to Cm)
 
 #### `KalmanFilter` — `mbc.estimation`
 
-Standard discrete-time Kalman filter with Joseph-stabilised covariance update,
-noise-input-matrix support, and missing-observation handling (M.Sc. thesis, Ch. 5).
+Discrete-time Kalman filter with Joseph-stabilised covariance update — the
+linear specialisation of the continuous-discrete EKF
+(:class:`~mbc.estimation.ContinuousDiscreteEKF`) and a direct counterpart of
+the M.Sc. thesis Ch. 5 formulation.  The notation matches the
+ControlToolbox §SDE / §SDAE state-estimation conventions:
 
-**Model**: `LinearDiscreteModel` (LTI or LPV).
+| Symbol | Meaning |
+|--------|---------|
+| ``x̂_{k\|k-1}`` | predicted state estimate |
+| ``x̂_{k\|k}``   | filtered (corrected) state estimate |
+| ``P_{k\|k-1}`` | predicted covariance |
+| ``P_{k\|k}``   | filtered covariance |
+| ``e_k``        | innovation ``ym_k − Cm x̂_{k\|k-1}`` |
+| ``R_e``        | innovation covariance ``Cm P_{k\|k-1} Cmᵀ + Rm`` |
+| ``K_k``        | Kalman gain |
 
-**Algorithm** — at each measurement time k, given `ym[k]` and `d[k]`:
+**Model**: :class:`~mbc.models.LinearDiscreteModel`.  ``Qd``, ``Rm``, and ``Gd``
+are read directly from the model — there is no separate constructor knob.
 
-*Prediction* (time update):
+**Time update over ``[t_{k-1}, t_k]``**
 
 ```
-x̂⁻[k]  = Ad x̂[k-1] + Bd u[k-1] + Ed d[k-1] + offset(d[k-1])
-
-P⁻[k]  = Ad P[k-1] Adᵀ + Qd             (standard form, Gd = I)
-       or Ad P[k-1] Adᵀ + Gd Qd Gdᵀ     (noise-separated form, Gd provided)
+x̂_{k|k-1} = Ad x̂_{k-1|k-1} + Bd u[k−1] + Ed d[k−1] + offset(d[k−1])
+P_{k|k-1} = Ad P_{k-1|k-1} Adᵀ + Gd Qd Gdᵀ
 ```
 
-*Filtering* (measurement update, Joseph stabilised form):
+Inputs and disturbances are zero-order hold over each sampling interval.
+
+**Measurement update at ``t_k`` (Joseph form)**
 
 ```
-ν[k]  = ym[k] − Cm x̂⁻[k]               innovation
-S[k]  = Cm P⁻[k] Cmᵀ + Rm              innovation covariance
-K[k]  = P⁻[k] Cmᵀ S[k]⁻¹              Kalman gain
-x̂[k]  = x̂⁻[k] + K[k] ν[k]             corrected state
+ŷ^m_{k|k-1} = Cm x̂_{k|k-1}
+e_k         = ym_k − ŷ^m_{k|k-1}                    (innovation)
+R_e         = Cm P_{k|k-1} Cmᵀ + Rm                  (innovation covariance)
+K_k         = P_{k|k-1} Cmᵀ R_e⁻¹                    (Kalman gain)
 
-IKCm  = I − K[k] Cm
-P[k]  = IKCm P⁻[k] IKCmᵀ + K[k] Rm K[k]ᵀ   Joseph form (PSD-preserving)
+x̂_{k|k} = x̂_{k|k-1} + K_k e_k
+P_{k|k} = (I − K_k Cm) P_{k|k-1} (I − K_k Cm)ᵀ + K_k Rm K_kᵀ        (Joseph)
 ```
 
-The gain `K` is computed by solving the linear system `S[k] Kᵀ = (P⁻ Cᵀ)ᵀ`
-via Cholesky factorisation (`cvxopt.lapack.posv`), which exploits the
-positive-definiteness of `S` and avoids forming `S⁻¹` explicitly.
+The gain is computed by solving the linear system ``R_e Kᵀ = Cm P_{k|k-1}``
+via :func:`numpy.linalg.solve`, exploiting the positive definiteness of
+``R_e`` without forming ``R_e⁻¹`` explicitly.  The Joseph stabilising form
+preserves symmetry and positive semi-definiteness of ``P_{k|k}`` in
+finite-precision arithmetic.
 
-The **Joseph form** `P = IKCm P⁻ IKCmᵀ + K Rm Kᵀ` guarantees that the
-posterior covariance remains symmetric positive semi-definite in finite-precision
-arithmetic, unlike the conventional form `P = (I−KCm) P⁻` which can accumulate
-numerical skew.
+**Missing observations** — the optional ``mask`` argument of
+``update(ym, mask)`` and ``step(ym, u, d, mask=mask)`` controls which output
+channels are used in the measurement update.  When ``mask[i] = False`` channel
+``i`` is excluded; if every entry is ``False`` the update step is skipped
+entirely (prediction-only).
 
-**Bootstrap**: on the first call to `update`, before any prediction has been
-run, the state is initialised from the measurement via the Moore–Penrose
-pseudoinverse: `x̂ = Cm⁺ ym`.  This is computed via `numpy.linalg.lstsq`,
-which returns the minimum-norm least-squares solution and handles both the
-underdetermined case (`nym < nx`, common when only a subset of states is
-measured) and the overdetermined case (`nym ≥ nx`).  For `Cm = I` (full state
-observation) this reduces to `x̂ = ym`.
+**Delayed observations** — wrap any estimator in
+:class:`~mbc.estimation.DelayedObservationFilter` and pass an integer
+``delay`` array (one entry per output channel) to :meth:`step`.
 
-**Missing observations** (M.Sc. Ch. 5.5): the optional `mask` argument of
-`update(ym, d, mask)` controls which output channels are used in the measurement
-update.  When `mask[i] = False`, output `i` is excluded.  If all entries are
-`False` the measurement update is skipped entirely (prediction-only step), which
-is the correct treatment for time steps where no sensor reading is available.
-The filter continues to propagate the covariance forward using only the
-prediction step.
-
-When only a subset of outputs are available, the filter constructs sub-matrices
-`Cm_sub`, `Rm_sub`, and `ym_sub` restricted to the active rows before calling
-`filter(ym_sub, x_pred, P_pred, Cm_sub)`.  The reduced `Rm_sub` is the
-sub-block of `Rm` corresponding to the active output pairs.
-
-**Delayed observations**: measurements with a known reporting delay (e.g.
-laboratory assays) are handled by `DelayedObservationFilter` (§1.2), which wraps
-any estimator and adds a `delay` argument to `update` / `step`.
-
-**Noise separation** (M.Sc. Ch. 5.4): the standard prediction covariance step
-`P⁻ = A P Aᵀ + Q` assumes `Q` is the full state-noise covariance (i.e. the
-process noise enters every state channel equally).  When the process noise acts
-on only a subset of states via a noise input matrix `G ∈ ℝⁿˣᵍ`, the correct
-prediction is `P⁻ = A P Aᵀ + G Q Gᵀ` where `Q ∈ ℝᵍˣᵍ` is the smaller
-noise covariance.  Pass `noise_matrix=G` to `__init__` to activate this form.
-
-**Parameters**:
+**Constructor**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `LinearDiscreteModel` | — | Plant model |
-| `Q` | `(nx,nx) matrix` | `0.01·I` | Process noise covariance (Qd override) |
-| `R` | `(nym,nym) matrix` | `0.1·I` | Measurement noise covariance (Rm override) |
-| `P0` | `(nx,nx) matrix` | `I` | Initial state error covariance |
-| `noise_matrix` | `(nx,g) matrix` or `None` | `None` | Noise input matrix Gd; `None` uses Gd=I |
+| `model` | `LinearDiscreteModel` | — | Plant model — provides ``Ad``, ``Bd``, ``Ed``, ``Gd``, ``Cm``, ``Qd``, ``Rm``. |
+| `x0` | `(nx,) ndarray` | `np.array(model.x)` | Initial state estimate ``x̂_{0\|0}``. |
+| `P0` | `(nx, nx) ndarray` | `I_{nx}` | Initial state error covariance ``P_{0\|0}``. |
 
-**Usage**:
+**Methods** (all signatures match
+:class:`~mbc.estimation.ContinuousDiscreteEKF`):
 
 ```python
 from mbc.estimation import KalmanFilter
 
-kf = KalmanFilter(model, Q=Q, R=R, P0=P0, noise_matrix=G)
+kf = KalmanFilter(model, x0=x0, P0=P0)
 
-# At each time step:
-x_hat = kf.update(ym, d, mask=None)  # (nx,1) state estimate
-kf.record_action(u)                   # store u[k] for next prediction
+# Building blocks
+x_pred, P_pred = kf.predict(u_prev, d_prev)         # time update
+x_hat,  P     = kf.update (ym, mask=None)           # measurement update
+
+# Combined predict + update — same signature as the CD-EKF (p, t are
+# accepted for interface compatibility but ignored for LTI plants)
+x_hat, P = kf.step(ym, u_prev, d_prev, mask=None)
 ```
 
 **Public properties**:
 
 | Property | Type | Description |
 |----------|------|-------------|
-| `x_hat` | `(nx,) ndarray` | Current state estimate x̂[k] (copy) |
-| `P` | `(nx,nx) ndarray` | Current covariance P[k] (copy) |
-| `last_innovation` | `list[float]` or `None` | Most recent innovation ν = ym − Cm x̂⁻ |
+| `x_hat` | `(nx,) ndarray` | Current state estimate (copy) |
+| `P`     | `(nx,nx) ndarray` | Current covariance (copy) |
+| `last_innovation` | `list[float]` or `None` | Most recent ``e_k`` |
 
 #### `DelayedObservationFilter` — `mbc.estimation`
 
-A transparent wrapper that adds per-channel reporting-delay handling to **any**
-state estimator.  Its call interface is identical to the wrapped estimator plus
-one optional `delay` argument; it can therefore be substituted into
-`MPCController`, `CDMPCController`, or `CDNMPCController` without any change to
-the controller code.
+Transparent wrapper that adds per-channel reporting-delay handling to any
+estimator that exposes the unified ``step(ym, u, d, p=None, t=None,
+mask=None) → (x_hat, P, …)`` interface — i.e. all estimators in
+:mod:`mbc.estimation`, both discrete (KF, CDKF) and continuous-discrete (EKF,
+UKF, EnKF, PF, DAE-EKF).  The wrapper itself exposes a single uniform
+``step(ym, u, d, p=None, t=None, mask=None, delay=None)`` method, so it can
+be substituted into :class:`MPCController`, :class:`CDMPCController`, or
+:class:`CDNMPCController` without any change to the controller code.
 
 **Motivation**: some measurement channels have a fixed or variable reporting
-delay — a laboratory analyser returns a result `τ` sampling steps after the
-sample was taken, while on-line sensors have `τ = 0`.  Passing all channels
-together in a single `update` call (with their respective delays declared)
+delay — a laboratory analyser returns a result ``τ`` sampling steps after the
+sample was taken, while on-line sensors have ``τ = 0``.  Passing all channels
+together in a single ``step`` call (with their respective delays declared)
 allows the filter to apply each measurement at the correct point in time.
 
-**Interface** (discrete-time):
+**``delay`` argument** — a ``(nym,)`` integer ndarray where ``delay[i]`` is
+the number of sampling steps by which output channel ``i`` arrived late.
+``delay[i] = 0`` (or ``delay = None``) means a current-step observation: the
+wrapper behaves identically to the unwrapped estimator.
 
-```python
-x_hat = filt.update(y, d, mask=None, delay=None)   # returns (n,1)
-filt.record_action(u)
-```
-
-**Interface** (continuous-discrete, wrapping a CD estimator):
-
-```python
-x_hat, P = filt.step(y, u, d, t, mask=None, delay=None)
-x_hat, P = filt.predict(u, d, t)
-x_hat, P = filt.update(y, d, mask=None, delay=None)
-```
-
-**`delay` argument**: a `(ny,)` integer `ndarray` where `delay[i]` is the number
-of sampling steps by which output channel `i` arrived late.  `delay[i] = 0`
-means a current-step observation (no delay).  `None` is equivalent to all zeros
-— the filter behaves identically to the unwrapped estimator.
-
-**Parameters**:
+**Constructor**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `estimator` | any estimator | — | Wrapped estimator (KF, EKF, UKF, EnKF, PF, DAE-EKF, …) |
-| `lag_max` | `int` | — | Maximum delay in steps that the buffer can accommodate |
+| `estimator` | any supported estimator | — | Wrapped estimator. |
+| `lag_max` | `int` | — | Maximum delay (in sampling steps) the internal ring buffer can accommodate. |
 
-**Properties** (`x_hat`, `P`, `last_innovation`): delegated to the wrapped
-estimator — the caller sees no difference from a plain estimator.
+**Properties** (``x_hat``, ``P``, ``last_innovation``) are delegated to the
+wrapped estimator.
 
-**Internal algorithm** — at each call to `update(y, d, mask, delay)`:
+**Algorithm** — at each call to ``step(ym, u, d, p=None, t=None, mask=None,
+delay=None)``:
 
 ```
-Partition channels by delay:
-    immediate = [i for i where delay[i] == 0 (or delay is None)]
-    delayed   = [(i, tau) for i where delay[i] = tau > 0]
+1. Partition channels by delay:
+       immediate = [i for i where delay[i] == 0 (or delay is None)]
+       delayed   = [(i, τ) for i where delay[i] = τ > 0]
 
-1. Standard update for immediate channels:
-      Apply wrapped_estimator.update(y[immediate], d, mask=immediate_mask)
-      Append (x̂, P, u, d, y, mask, t) to the internal buffer (deque, maxlen=lag_max)
+2. Immediate update — call the wrapped estimator's step with the immediate-only
+   mask, then push {x_hat, P, ym, u, d, p, t, mask} onto the internal buffer.
 
-2. For each (i, tau) in delayed channels (sorted by tau ascending):
-      a. Retrieve buffer entry at position -(tau+1):
-             x̂_0, P_0 = buffer[-(tau+1)]["x_hat"], buffer[-(tau+1)]["P"]
-      b. Temporarily restore the wrapped estimator to (x̂_0, P_0)
-      c. Apply update for channel i only (mask = single-channel, y_i = y[i]):
-             x̂_upd, P_upd = wrapped_estimator.update(y_i, d, mask=channel_i_mask)
-      d. Re-propagate forward through the buffer from -(tau) to -1:
-             for each entry j (oldest delayed entry to most recent):
-                 (x̂, P) = wrapped_estimator.predict(entry["u"], entry["d"], ...)
-                 if entry had active channels:
-                     (x̂, P) = wrapped_estimator.update(entry["y"], entry["d"],
-                                                         entry["mask"])
-      e. Set wrapped estimator state to the re-propagated (x̂, P)
-      f. Update the buffer entries [-(tau) .. -1] with the re-computed posteriors
+3. For each (i, τ) in delayed channels (sorted by τ ascending):
+   a. Restore the wrapped estimator's (x̂, P) to the posterior at step k − τ
+      (read from buffer[-(τ+1)]).
+   b. Apply a measurement-only correction for channel i at that prior state.
+   c. Replay forward through buffer entries [-(τ) … -1] using the wrapped
+      estimator's step(ym, u, d, p, t, mask) to bring the posterior chain
+      back up to date.
 
-3. Restore wrapped estimator to the final (x̂, P)
+4. Return the (now corrected) current (x̂, P) to the caller.
 ```
 
-If `delay[i] > lag_max`, channel `i` is silently dropped (the required prior has
-been evicted from the buffer) and a warning is issued.
+If ``delay[i] > lag_max`` (or exceeds the current buffer depth), channel
+``i`` is dropped with a :class:`RuntimeWarning`.
 
-**Usage with `MPCController`** (discrete):
+**Usage with `MPCController`** (linear discrete-time):
 
 ```python
 from mbc.estimation import KalmanFilter, DelayedObservationFilter
 from mbc.control import OptimalControlProblem, MPCController
 
-kf   = KalmanFilter(model, Q=Q, R=R)
-filt = DelayedObservationFilter(kf, lag_max=10)   # up to 10-step lab delay
-
-ocp  = OptimalControlProblem(model, N=20, Q=Q_y, R=R_u)
+kf   = KalmanFilter(model, x0=x0, P0=P0)
+filt = DelayedObservationFilter(kf, lag_max=10)
+ocp  = OptimalControlProblem(model, N=20, Q=Q_z, R=R_u)
 ctrl = MPCController(model, estimator=filt, ocp=ocp)
 
-# Normal on-line sensor (delay=0) + lab result with 5-step delay:
-delay = np.array([0, 0, 5])     # 3 output channels; channel 2 is the lab assay
-u, U_seq, X_seq = ctrl.step(y, D)   # MPC calls filt.update(y, d) internally
-# — when a lab result is ready, set y[2] to the assay value and pass delay;
-#   outside the MPC loop, call filt.update(y, d, delay=delay) directly before ctrl.step
+# MPC step (delay handling is internal to the wrapper):
+u, U_seq, X_seq = ctrl.step(ym, D)
 ```
 
-**Usage with `CDNMPCController`** (continuous-discrete):
+**Usage with `CDNMPCController`** (nonlinear continuous-discrete):
 
 ```python
 from mbc.estimation import ContinuousDiscreteEKF, DelayedObservationFilter
@@ -342,12 +315,12 @@ from mbc.control import EconomicOptimalControlProblem, CDNMPCController
 
 ekf  = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
 filt = DelayedObservationFilter(ekf, lag_max=10)
-
 ocp  = EconomicOptimalControlProblem(model, N=20, dt=1.0, lagrange=cost_fn)
 ctrl = CDNMPCController(estimator=filt, ocp=ocp)
 
-u = ctrl.step(ym, d, p, t)                          # no lab result this step
-u = ctrl.step(ym, d, p, t, delay=np.array([0, 3]))  # channel 1 delayed by 3 steps
+u = ctrl.step(ym, d_traj, p, t)                          # no lab result this step
+# (delays are typically wired through the wrapper directly when calling step:)
+x_hat, P = filt.step(ym, u_prev, d, p, t, delay=np.array([0, 3]))
 ```
 
 ---
@@ -356,19 +329,32 @@ u = ctrl.step(ym, d, p, t, delay=np.array([0, 3]))  # channel 1 delayed by 3 ste
 
 #### `OptimalControlProblem` — `mbc.control`
 
-Finite-horizon quadratic OCP with hard input and soft output constraints,
-solved by a condensed (batch/lifted) QP at each step (M.Sc. thesis, Ch. 6).
+Finite-horizon quadratic OCP with hard input and soft *output* constraints —
+the linear specialisation of the ControlToolbox §EMPC formulation.  When
+the plant dynamics are linear and the OCP is restricted to quadratic stage
+costs and box / soft-box constraints, the entire NLP reduces to a single
+finite-horizon **quadratic program** that the lifted (batch) form solves
+directly with ``cvxopt.solvers.qp`` — strictly more efficient than the
+direct-simultaneous formulation used by
+:class:`~mbc.control.EconomicOptimalControlProblem` for nonlinear plants.
+
+The OCP tracks the **output** ``z[k] = Cz x[k] + Dz u[k] + Fz d[k]`` —
+the discrete analogue of the continuous output ``g^m`` from
+:class:`~mbc.models.ContinuousDiscreteModel`.  When the plant has
+``Cz = Cm`` (the default of :class:`~mbc.models.LinearDiscreteModel`) the
+output and the measurement coincide and the OCP tracks the measured channel
+directly.
 
 **Cost function** over prediction horizon N:
 
 ```
-J(U) = Σ_{k=0}^{N-1} [ ‖ym[k+1] − r‖²_Q + ‖u[k]‖²_R + ‖Δu[k]‖²_S ]
-     + ‖ym[N] − r‖²_P
+J(U) = Σ_{k=0}^{N-1} [ ‖z[k+1] − z_ref‖²_Q + ‖u[k]‖²_R + ‖Δu[k]‖²_S ]
+     + ‖z[N] − z_ref‖²_P
      + ρ Σ_{k=0}^{N-1} ‖ε[k+1]‖²
 ```
 
 where:
-- `r = Cm x_ref` is the measurement setpoint derived from `model.x_ref`
+- `z_ref = Cz x_ref` is the output setpoint derived from `model.x_ref`
 - `Δu[k] = u[k] − u[k-1]` is the input rate of movement (requires `u_prev`)
 - `ε[k] ≥ 0` are slack variables for soft output constraint violations
 - `ρ` is the violation penalty weight
@@ -377,20 +363,20 @@ where:
 
 ```
 u_min ≤ u[k] ≤ u_max                                (hard input box)
-ym[k+1] ≥ Cm x_ref − δ − ε[k+1]                    (soft lower output bound)
-ym[k+1] ≤ Cm x_ref + δ + ε[k+1]                    (soft upper output bound)
+z[k+1] ≥ z_ref − δ − ε[k+1]                         (soft lower output bound)
+z[k+1] ≤ z_ref + δ + ε[k+1]                         (soft upper output bound)
 ε[k+1] ≥ 0                                          (slack non-negativity)
 ```
 
-The output bounds are centred at the reference `Cm x_ref` with half-width
-`δ = y_offset`.  Violations are penalised quadratically via `ρ ‖ε‖²` rather
-than infeasible hard constraints, which guarantees the QP is always feasible.
+The output bounds are centred at the reference ``z_ref`` with half-width
+``δ = y_offset``.  Violations are penalised quadratically via ``ρ ‖ε‖²``,
+which guarantees the QP is always feasible.
 
-**Batch (lifted) prediction matrices**:
+**Batch (lifted) prediction matrices**
 
-The state trajectory over the horizon is expressed as an affine function of the
-input sequence `U = [u[0]; u[1]; …; u[N-1]]` and the disturbance forecast
-`D = [d[0]; d[1]; …; d[N-1]]`:
+The state trajectory over the horizon is an affine function of the input
+sequence ``U = [u[0]; u[1]; …; u[N-1]]`` and the disturbance forecast
+``D = [d[0]; d[1]; …; d[N-1]]``:
 
 ```
 X = Ψ x₀ + Γ U + Λ D
@@ -401,20 +387,16 @@ where:
   Λ ∈ ℝᴺⁿˣˣᴺⁿᵈ   with Λ_{k,j} = Ad^{k-j} Ed
 ```
 
-The output predictions are `Ym = C̄m X` where `C̄m = blkdiag(Cm, …, Cm)`.  The cost
-and constraints are expressed entirely in terms of `U` and the slack `ε`,
-giving the QP decision variable `z = [U; ε]`:
+The output predictions are ``Z = C̄_z X`` with ``C̄_z = blkdiag(Cz, …, Cz)``.
+The cost and constraints are expressed entirely in terms of ``U`` and the
+slack ``ε``, giving the QP decision variable ``z_qp = [U; ε]``:
 
 ```
-min_z  ½ zᵀ H z + fᵀ z
-s.t.   G z ≤ h
+min_{z_qp}  ½ z_qpᵀ H z_qp + fᵀ z_qp
+s.t.        G z_qp ≤ h
 ```
 
-Solved with `cvxopt.solvers.qp`.  The Hessian `H` is block-diagonal:
-`H = blkdiag(Cm Γᵀ Q̄ Cm Γ + R̄ + D_diff^T S̄ D_diff, ρ I_{Nl})`.
-
-The model matrices `Ad`, `Bd`, `Ed` are accessed directly from `model.Ad`,
-`model.Bd`, `model.Ed` at each `solve` call.
+solved with :func:`cvxopt.solvers.qp`.
 
 **Parameters**:
 
@@ -422,27 +404,28 @@ The model matrices `Ad`, `Bd`, `Ed` are accessed directly from `model.Ad`,
 |-----------|------|---------|-------------|
 | `model` | `LinearDiscreteModel` | — | Plant model |
 | `N` | `int` | — | Prediction horizon |
-| `Q` | `(nym,nym) matrix` | — | Stage output tracking cost |
-| `R` | `(nu,nu) matrix` | — | Stage input cost |
-| `P` | `(nym,nym) matrix` | `Q` | Terminal output tracking cost |
-| `S` | `(nu,nu) matrix` or `None` | `None` | Rate-of-movement cost; `None` disables |
-| `rho` | `float` | `1e4` | Soft constraint violation penalty |
-| `y_offset` | `float` | `2.0` | Half-width δ of soft output band |
+| `Q` | `(nz, nz) matrix` | — | Stage output tracking cost ``‖z − z_ref‖²_Q`` |
+| `R` | `(nu, nu) matrix` | — | Stage input cost ``‖u‖²_R`` |
+| `P` | `(nz, nz) matrix` | `Q` | Terminal output tracking cost |
+| `S` | `(nu, nu) matrix` or `None` | `None` | Quadratic ROM cost ``‖Δu‖²_S``; `None` disables |
+| `rho` | `float` | `1e4` | Soft-constraint slack quadratic penalty weight |
+| `y_offset` | `float` | `2.0` | Half-width δ of the symmetric soft-output band |
 
 **Usage**:
 
 ```python
 from mbc.control import OptimalControlProblem
 
-ocp = OptimalControlProblem(model, N=20, Q=Q_y, R=R_u, P=P_terminal, S=S_rate)
+ocp = OptimalControlProblem(model, N=20, Q=Q_z, R=R_u, P=P_terminal, S=S_rate)
 
 # D is the stacked disturbance forecast [d[0]; d[1]; ...; d[N-1]], shape (N*nd, 1)
 U_seq, X_seq = ocp.solve(x0=x_hat, D=D_forecast, x_ref=model.x_ref, u_prev=u_prev)
 u_current = U_seq[:model.nu]   # first element of the optimal sequence
 ```
 
-If the QP is infeasible (solver status ≠ "optimal"), `solve` returns zeros and
-logs a warning.  In practice the slack variables prevent infeasibility.
+If the QP is infeasible (solver status ≠ "optimal"), ``solve`` returns
+zero inputs and logs a warning.  In practice the slack variables prevent
+infeasibility.
 
 ---
 
@@ -450,29 +433,34 @@ logs a warning.  In practice the slack variables prevent infeasibility.
 
 #### `MPCController` — `mbc.control`
 
-Combines a `KalmanFilter` and an `OptimalControlProblem` into a receding-horizon
-feedback controller.
+Combines a :class:`~mbc.estimation.KalmanFilter` and an
+:class:`OptimalControlProblem` into a receding-horizon feedback controller —
+the linear-discrete-time specialisation of the ControlToolbox §EMPC ENMPC
+algorithm.
 
 **Closed-loop structure**:
 
 ```
-          ┌──────────────────────────────────────────────┐
-          │              MPCController                   │
-  y[k] ──┤──► KalmanFilter ──x̂[k]──► OCP ──U*──►u[k]──┼──► Plant ──► y[k+1]
-          │    (predict+filter)         (solve QP)       │
-          │         ▲                                    │
-          │    record_action(u[k])                       │
-          └──────────────────────────────────────────────┘
+        ┌────────────────────────────────────────────────────────┐
+        │                    MPCController                       │
+ym[k] ─┼─► KalmanFilter ── x̂[k|k] ── OCP ── U*[0] ── u[k] ────┼─► Plant
+        │   (predict u[k-1], d[k-1];   (lifted batch QP)        │
+        │    update with ym[k])                                  │
+        │       ▲                                                │
+        │    cache (u_prev, d_prev) for next step's predict      │
+        └────────────────────────────────────────────────────────┘
 ```
 
 **Receding-horizon policy** — at each measurement time k:
 
-1. **Estimate**: `x̂[k] ← estimator.update(ym[k], d[k])`
-2. **Optimise**: `(U*, X*) ← ocp.solve(x̂[k], D, model.x_ref, u_prev)`
-3. **Apply**: `u[k] = U*[0:nu]` (first element of the optimal sequence)
-4. **Record**: `estimator.record_action(u[k])` (stores `u[k]` for next prediction)
+1. **Measure**:  ``ym[k]``  (passed to ``step``)
+2. **Estimate**: ``x̂[k|k] = estimator.step(ym[k], u[k-1], d[k-1])``
+3. **Optimise**: ``(U*, X*) = ocp.solve(x̂[k|k], D, model.x_ref, u_prev=u[k-1])``
+4. **Apply**:    ``u[k] = U*[0:nu]``
+5. **Cache**:    store ``(u[k], d[k])`` as the new ``(u_prev, d_prev)`` for next step
 
-Steps 1–4 are performed by `step(y, D)` which returns `(u, U_seq, X_seq)`.
+Steps 1–5 are performed by ``step(ym, D)`` which returns
+``(u, U_seq, X_seq)``.
 
 **Parameters**:
 
@@ -485,15 +473,15 @@ Steps 1–4 are performed by `step(y, D)` which returns `(u, U_seq, X_seq)`.
 **Usage**:
 
 ```python
-from mbc.control import MPCController
+from mbc.control import MPCController, OptimalControlProblem
 from mbc.estimation import KalmanFilter
 
-kf  = KalmanFilter(model, Q=Q, R=R)
-ocp = OptimalControlProblem(model, N=20, Q=Q_y, R=R_u)
+kf   = KalmanFilter(model)                                # Qd, Rm read from model
+ocp  = OptimalControlProblem(model, N=20, Q=Q_z, R=R_u)
 ctrl = MPCController(model, estimator=kf, ocp=ocp)
 
-# At each time step:
-u, U_seq, X_seq = ctrl.step(y, D)   # D = stacked disturbance forecast (N*p, 1)
+# At each measurement time:
+u, U_seq, X_seq = ctrl.step(ym, D)   # D = stacked disturbance forecast (N·nd, 1)
 ```
 
 ---
@@ -1070,22 +1058,22 @@ its standard `predict` and `update` methods.
 
 #### `CDKalmanFilter` — `mbc.estimation`
 
-Kalman filter for a **linear** continuous-discrete stochastic system, implemented
-by directly integrating the continuous-time state ODE and matrix Riccati ODE
-(Ph.D. thesis, §7.3, specialised to the linear case).  The system matrices
-`A`, `B`, `E` are used directly — no ZOH or Van Loan pre-discretisation
-is applied inside the filter.
+Kalman filter for a **linear** continuous-discrete stochastic system —
+the linear specialisation of :class:`~mbc.estimation.ContinuousDiscreteEKF`
+(no Jacobian linearisation needed).  The continuous-time matrices
+``A``, ``B``, ``E`` are integrated directly by forward Euler — no ZOH
+or Van Loan pre-discretisation inside the filter.
 
-**Model**: `LinearContinuousDiscreteModel`.
+**Model**: :class:`~mbc.models.LinearContinuousDiscreteModel`.
 
-**Prediction** — forward-Euler integration of the state and Riccati ODEs over
-`[t_{k-1}, t_k]` using `n_steps` sub-steps of size `h = dt / n_steps`:
+**Time update over ``[t_{k-1}, t_k]``** — forward-Euler integration of
+the state and Lyapunov-type covariance ODEs with sub-step ``h = dt / n_steps``:
 
 ```
-For j = 0, 1, …, n_steps − 1:
+For n = 0, 1, …, n_steps − 1:
 
-    ẋ̂ = A x̂ + B u + E d                        (state ODE, §7.3a)
-    Ṗ = A P + P Aᵀ + G Gᵀ                      (Riccati ODE, §7.3b)
+    ẋ̂ = A x̂ + B u + E d                        (state ODE)
+    Ṗ = A P + P Aᵀ + G Gᵀ                      (Lyapunov ODE)
 
     x̂ ← x̂ + h · ẋ̂
     P  ← P  + h · Ṗ
@@ -1093,63 +1081,52 @@ For j = 0, 1, …, n_steps − 1:
 P ← ½(P + Pᵀ)                                  (symmetrise after integration)
 ```
 
-Inputs `u` and disturbances `d` are the values applied over the previous
-sampling interval (zero-order hold).  `G Gᵀ` is pre-computed and cached.
+Inputs ``u`` and disturbances ``d`` are zero-order hold over the just-
+completed sampling interval.  ``G Gᵀ`` is pre-computed and cached.
 
-**Filtering** — Joseph-stabilised measurement update (§7.8–7.11):
+**Measurement update at ``t_k`` (Joseph form)** — identical structure to
+:class:`~mbc.estimation.ContinuousDiscreteEKF` (with the constant Jacobian
+``Cm`` instead of ``∂hm/∂x``):
 
 ```
-e[k]  = ym[k] − Cm x̂[k|k-1]                   innovation
-R_e   = Cm P[k|k-1] Cmᵀ + Rm                  innovation covariance
-K     = P[k|k-1] Cmᵀ R_e⁻¹                    Kalman gain
-x̂[k]  = x̂[k|k-1] + K e[k]                    corrected state
+e_k    = ym_k − Cm x̂_{k|k-1}                  (innovation)
+R_e    = Cm P_{k|k-1} Cmᵀ + Rm                  (innovation covariance)
+K_k    = P_{k|k-1} Cmᵀ R_e⁻¹                    (Kalman gain)
 
-IKCm  = I − K Cm
-P[k]  = IKCm P[k|k-1] IKCmᵀ + K Rm Kᵀ        Joseph form (PSD-preserving)
+x̂_{k|k} = x̂_{k|k-1} + K_k e_k
+P_{k|k} = (I − K_k Cm) P_{k|k-1} (I − K_k Cm)ᵀ + K_k Rm K_kᵀ        (Joseph)
 ```
 
-The gain is computed by solving `R_e Kᵀ = Cm P⁻ᵀ` via `cvxopt.lapack.posv`
-(Cholesky on the symmetric positive-definite `R_e`).
+**Missing observations** — see :class:`KalmanFilter` for the identical
+masking logic.
 
-**Bootstrap**: on the first call to `update`, the state is initialised from the
-measurement via the minimum-norm pseudoinverse.  The system `Cm Cmᵀ α = ym` is
-solved for `α`, and `x̂ = Cmᵀ α` gives the minimum-norm solution
-`x̂ = Cmᵀ (Cm Cmᵀ)⁻¹ ym`.  This reduces to `x̂ = ym` when `Cm = I`.  This form is
-correct for full-row-rank `Cm` (the usual case where `nym ≤ nx`) and avoids the
-rank deficiency that arises in the normal-equation form when `Cm` has more columns
-than rows.
-
-**Missing observations** (M.Sc. Ch. 5.5): see `KalmanFilter` for the identical
-masking logic — active-output sub-matrices `Cm_sub`, `Rm_sub`, `ym_sub` are formed
-and passed to `filter(...)`.
-
-**Parameters**:
+**Constructor**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `LinearContinuousDiscreteModel` | — | Linear CD model |
-| `P0` | `(n,n) matrix` or `None` | `I` | Initial state error covariance |
+| `model` | `LinearContinuousDiscreteModel` | — | Linear CD plant |
+| `x0` | `(nx,) ndarray` | `np.array(model.x)` | Initial state estimate |
+| `P0` | `(nx, nx) ndarray` | `I_{nx}` | Initial state error covariance |
 | `n_steps` | `int` | `10` | Forward-Euler sub-steps per sampling interval |
 
-**Usage**:
+**Methods** (signatures match
+:class:`~mbc.estimation.ContinuousDiscreteEKF`):
 
 ```python
 from mbc.estimation import CDKalmanFilter
 
-kf = CDKalmanFilter(model, P0=None, n_steps=10)
+kf = CDKalmanFilter(model, x0=x0, P0=P0, n_steps=10)
 
-# At each measurement time:
-x_hat = kf.update(y, d, mask=None)   # (nx,) ndarray state estimate
-kf.record_action(u)                   # store u[k] for next prediction
+# Building blocks
+x_pred, P_pred = kf.predict(u_prev, d_prev)       # time update (ODE integration)
+x_hat,  P     = kf.update (ym, mask=None)         # measurement update (Joseph)
 
-# Inspect filter state:
-kf.x_hat             # (nx,) ndarray state estimate
-kf.P                 # (nx,nx) ndarray covariance
-kf.last_innovation   # list[float] or None
+# Combined predict + update (p, t accepted for interface compatibility)
+x_hat, P = kf.step(ym, u_prev, d_prev, mask=None)
 ```
 
-**Internal representation**: state `x̂` and covariance `P` are maintained as
-`numpy.ndarray` throughout.
+**Public properties**: ``x_hat`` ``(nx,)``, ``P`` ``(nx, nx)``,
+``last_innovation`` (list of floats or ``None``).
 
 ---
 
@@ -1843,15 +1820,18 @@ the MPC is the closed-loop composition.
 
 #### `CDMPCController` — `mbc.control`
 
-Combines a `CDKalmanFilter` (estimator) and a `CDOptimalControlProblem` (OCP) into
-a closed-loop receding-horizon controller for a linear continuous-discrete system.
+Combines a :class:`~mbc.estimation.CDKalmanFilter` (estimator) and a
+:class:`~mbc.control.CDOptimalControlProblem` (OCP) into a closed-loop
+receding-horizon controller for a linear continuous-discrete plant — the
+linear specialisation of the ControlToolbox §EMPC ENMPC algorithm.
 
 **Receding-horizon policy** — at each measurement time k:
 
-1. **Estimate**: `x̂[k] ← estimator.update(ym[k], d[k])`
-2. **Optimise**: `(U*, X*) ← ocp.solve(x̂[k], D, model.x_ref, u_prev)`
-3. **Apply**: `u[k] = U*[0:nu]`
-4. **Record**: `estimator.record_action(u[k])`
+1. **Measure**:  ``ym[k]``  (passed to ``step``)
+2. **Estimate**: ``x̂[k|k] = estimator.step(ym[k], u[k-1], d[k-1])``
+3. **Optimise**: ``(U*, X*) = ocp.solve(x̂[k|k], D, model.x_ref, u_prev=u[k-1])``
+4. **Apply**:    ``u[k] = U*[0:nu]``
+5. **Cache**:    store ``(u[k], d[k])`` as the new ``(u_prev, d_prev)`` for next step
 
 **Usage**:
 
@@ -1860,28 +1840,30 @@ from mbc.estimation import CDKalmanFilter
 from mbc.control import CDOptimalControlProblem, CDMPCController
 
 kf   = CDKalmanFilter(model, n_steps=10)
-ocp  = CDOptimalControlProblem(model, N=20, Q=Q_y, R=R_u)
+ocp  = CDOptimalControlProblem(model, N=20, Q=Q_z, R=R_u)
 ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
 
-u, U_seq, X_seq = ctrl.step(y, D)   # D = (N*p, 1) stacked disturbance forecast
+u, U_seq, X_seq = ctrl.step(ym, D)   # D = (N·nd, 1) stacked disturbance forecast
 ```
 
 **Closed-loop structure**:
 
 ```
-           ┌────────────────────────────────────────────────────┐
-           │              CDMPCController                        │
-  y[k] ───┤──► CDKalmanFilter ──x̂[k]──► CDOptOCP ──U*──►u[k]──┼──► Plant
-           │    (ODE integration)         (ZOH + QP)            │
-           │         ▲                                          │
-           │    record_action(u[k])                             │
-           └────────────────────────────────────────────────────┘
+        ┌──────────────────────────────────────────────────────────┐
+        │                    CDMPCController                       │
+ym[k] ─┼─► CDKalmanFilter ── x̂[k|k] ── CDOptOCP ── U*[0] ── u[k] ┼─► Plant
+        │  (continuous ODE              (ZOH-QP, lifted batch)    │
+        │   integration on A, B, E)                               │
+        │       ▲                                                 │
+        │    cache (u_prev, d_prev) for next step                 │
+        └──────────────────────────────────────────────────────────┘
 ```
 
-Note the split: the *estimator* uses the continuous-time matrices `A`, `B`,
-`E` directly via ODE integration; the *OCP* obtains ZOH-discretised matrices
-`(Ad, Bd, Ed)` via the internal `_CDModelAdapter` (computed from `A`, `B`, `E`,
-`dt` at construction time).  Both operate on the same `model` object.
+Note the split: the *estimator* uses the continuous-time matrices ``A``,
+``B``, ``E`` directly via ODE integration; the *OCP* obtains ZOH-discretised
+matrices ``(Ad, Bd, Ed)`` via the internal ``_CDModelAdapter`` (computed
+from ``A``, ``B``, ``E``, ``dt`` at construction time).  Both operate on
+the same ``model`` object.
 
 #### `CDNMPCController` — `mbc.control` *(ControlToolbox §EMPC — *ENMPC Algorithm*)*
 
