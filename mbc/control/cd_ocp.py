@@ -2,16 +2,18 @@
 Optimal Control Problems for continuous-discrete systems.
 
 ``CDOptimalControlProblem``
-    A thin, typed wrapper around ``OptimalControlProblem`` for
-    ``LinearContinuousDiscreteModel``.  Solves the receding-horizon QP via the
-    lifted (batch) formulation using ``cvxopt.solvers.qp``.
+    A thin, typed wrapper around :class:`OptimalControlProblem` for
+    :class:`~mbc.models.LinearContinuousDiscreteModel`.  Solves the
+    receding-horizon QP via the lifted (batch) formulation using
+    ``cvxopt.solvers.qp`` (M.Sc. thesis Ch. 5).
 
 ``CDTrackingOptimalControlProblem``
-    Nonlinear tracking OCP for any ``ContinuousDiscreteModel``.  Solves the
-    finite-horizon NLP with output tracking, input cost, rate-of-movement (ROM)
-    penalty and hard constraint, a linear input penalty, and soft state/output
-    constraints.  The NLP is solved by ``scipy.optimize.minimize`` (default:
-    SLSQP).
+    Convenience wrapper around
+    :class:`~mbc.control.EconomicOptimalControlProblem` that exposes a
+    tracking-OCP-friendly constructor (``Q``, ``R``, ``P``, ``S``, …).
+    The underlying NLP follows the ControlToolbox §EMPC direct-simultaneous
+    discretisation (implicit Euler + right-rectangular Lagrange) for both
+    SDE and SDAE plant models.
 
 Linear problem formulation (M.Sc. thesis, Ch. 5)
 -------------------------------------------------
@@ -40,29 +42,6 @@ The receding-horizon quadratic program over horizon N is:
 
 The lifted (batch) QP is solved using ``cvxopt.solvers.qp``.
 
-Nonlinear problem formulation (Ph.D. Ch. 9 — tracking variant)
----------------------------------------------------------------
-For a general nonlinear continuous-discrete model with output
-z = gm(x, u, d, p, t), the tracking OCP is:
-
-    min_{u_0,...,u_{N-1}}  J = Σₖ₌₀ᴺ⁻¹ [
-                                ‖z[k+1] − z_ref‖²_Q
-                              + ‖u[k]‖²_R
-                              + ‖Δu[k]‖²_S
-                              + c_uᵀ u[k]
-                              + ρ_x (‖max(0, x[k+1] − x_max)‖²
-                                   + ‖max(0, x_min − x[k+1])‖²)
-                              + ρ_z (‖max(0, z[k+1] − z_max)‖²
-                                   + ‖max(0, z_min − z[k+1])‖²)
-                            ]
-                          + ‖z[N] − z_ref‖²_P
-
-    s.t.  x[k+1] = f̄(x[k], u[k], d[k])   (Euler integration of mean drift)
-          u_min  ≤ u[k] ≤ u_max            (hard input box)
-          Δu_min ≤ u[k] − u[k−1] ≤ Δu_max (hard input ROM box)
-
-The NLP is solved by ``scipy.optimize.minimize`` (SLSQP by default).
-
 Notation
 ---------
     nx  – state dimension          x ∈ ℝⁿˣ
@@ -77,7 +56,6 @@ Notation
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Tuple, TYPE_CHECKING
 
 import numpy as np
@@ -225,97 +203,72 @@ class CDOptimalControlProblem(OptimalControlProblem):
         )
 
 
-# ── Nonlinear Tracking OCP ────────────────────────────────────────────────────
+# ── Nonlinear Tracking OCP (thin wrapper around the EOCP) ────────────────────
 
 
 class CDTrackingOptimalControlProblem:
     """
-    Nonlinear tracking OCP for continuous-discrete systems (NLP formulation).
+    Tracking OCP for continuous-discrete nonlinear systems — thin wrapper
+    around :class:`~mbc.control.EconomicOptimalControlProblem` that exposes a
+    quadratic-tracking-friendly constructor (``Q``, ``R``, ``P``, ``S``, ``c_u``).
 
-    Solves the finite-horizon NLP from a given initial state.  The predicted
-    trajectory is computed by explicit Euler integration of the mean dynamics
-    (no stochastic noise) over each sampling interval.
+    The underlying NLP is the ControlToolbox §EMPC direct-simultaneous
+    formulation (implicit Euler dynamics + right-rectangular Lagrange) —
+    correct for both SDE and SDAE plant models.
 
-    Cost function over prediction horizon N:
+    Cost function over prediction horizon N (with sub-step Δt = T_s / n_steps,
+    output ``z = gm(x, y, u, d, p, t)``):
 
-        J = Σ_{k=0}^{N-1} [
-                ‖z[k+1] − z_ref‖²_Q
-              + ‖u[k]‖²_R
-              + ‖Δu[k]‖²_S
-              + c_uᵀ u[k]
-              + ρ_x (‖max(0, x[k+1] − x_max)‖²
-                   + ‖max(0, x_min − x[k+1])‖²)
-              + ρ_z (‖max(0, z[k+1] − z_max)‖²
-                   + ‖max(0, z_min − z[k+1])‖²)
-            ]
-          + ‖z[N] − z_ref‖²_P
+        J = Σ_{n=0}^{M−1} [ ‖z_{n+1} − z_ref‖²_Q + u_{k(n)}^T R u_{k(n)} ] · Δt
+            + Σ_{k=0}^{N−1} [ ‖Δu_k‖²_S + c_u^T u_k ] · T_s
+            + (z_M − z_ref)^T P (z_M − z_ref)
+            + (soft state / output exact penalties)
 
-    where  z[k] = gm(x[k], u[k], d[k], p, t_k)  is the (continuous) output.
+    Hard constraints:
 
-    Constraints:
-
-        x[k+1] = f̄(x[k], u[k], d[k])   (mean dynamics, Euler integration)
-        u_min  ≤ u[k] ≤ u_max            (hard input box)
-        Δu_min ≤ u[k] − u[k−1] ≤ Δu_max (hard input ROM box)
-
-    Soft state and output constraints are encoded as quadratic penalty terms
-    with weights ``rho_x`` and ``rho_z`` respectively.
+        u_min ≤ u_k ≤ u_max
+        Δu_min ≤ u_k − u_{k−1} ≤ Δu_max
 
     Parameters
     ----------
-    model : ContinuousDiscreteModel
-        Nonlinear continuous-discrete model.  ``model.gm(x, u, d, p, t)``
-        provides the (continuous) output ``z``.
+    model : ContinuousDiscreteModel or ContinuousDiscreteDAEModel
+        Nonlinear continuous-discrete plant.  ``model.gm`` provides the
+        output ``z`` used in tracking and the soft-z constraints.
     N : int
-        Prediction horizon (number of sampling intervals).
+        Prediction horizon (number of control intervals).
     Q : (nz, nz) ndarray
         Stage output tracking cost  ‖z − z_ref‖²_Q.
     R : (nu, nu) ndarray
-        Stage input cost  ‖u‖²_R.
-    P : (nz, nz) ndarray or None, optional
-        Terminal output tracking cost  ‖z[N] − z_ref‖²_P.  Default: Q.
-    S : (nu, nu) ndarray or None, optional
-        Input rate-of-movement cost  ‖Δu‖²_S.  ``None`` disables the ROM
-        penalty term (ROM hard constraints can still be active via
-        ``du_min`` / ``du_max``).
-    c_u : (nu,) ndarray or None, optional
-        Linear input penalty vector  c_uᵀ u.  ``None`` disables the term.
-    z_ref : (nz,) ndarray or None, optional
-        Constant output reference / setpoint.  ``None`` uses zeros.
-    u_min : (nu,) ndarray or None, optional
-        Hard lower bound on inputs.  ``None`` = unconstrained.
-    u_max : (nu,) ndarray or None, optional
-        Hard upper bound on inputs.  ``None`` = unconstrained.
-    du_min : (nu,) ndarray or None, optional
-        Hard lower bound on input rate of movement  Δu[k] = u[k] − u[k−1].
-        ``None`` = unconstrained.
-    du_max : (nu,) ndarray or None, optional
-        Hard upper bound on input ROM.  ``None`` = unconstrained.
-    x_min : (nx,) ndarray or None, optional
-        Soft lower bound on state (penalised by ``rho_x``).  ``None`` disables.
-    x_max : (nx,) ndarray or None, optional
-        Soft upper bound on state.  ``None`` disables.
+        Stage input cost  ‖u‖²_R, applied per sub-step (right-rectangular).
+    P : (nz, nz) ndarray, optional
+        Terminal output tracking cost  ‖z_M − z_ref‖²_P.  Encoded as the
+        Mayer term of the underlying EOCP.
+    S : (nu, nu) ndarray, optional
+        Quadratic ROM penalty  ‖Δu_k‖²_S T_s  on Δu_k = u_k − u_{k−1}.
+    c_u : (nu,) ndarray, optional
+        Linear input penalty  c_u^T u_k T_s.
+    z_ref : (nz,) ndarray, optional
+        Constant tracking reference.  ``None`` → zeros.
+    u_min, u_max : (nu,) ndarray, optional
+        Hard input box.
+    du_min, du_max : (nu,) ndarray, optional
+        Hard input ROM box on Δu_k.
+    x_min, x_max : (nx,) ndarray, optional
+        Soft state box (slacked, exact-penalty form per spec).
     rho_x : float, optional
-        Quadratic penalty weight on soft state constraint violation.
-        Default: 1e4.
-    z_min : (nz,) ndarray or None, optional
-        Soft lower bound on controlled output (penalised by ``rho_z``).
-        ``None`` disables.
-    z_max : (nz,) ndarray or None, optional
-        Soft upper bound on controlled output.  ``None`` disables.
+        Quadratic penalty weight on state-slack variables.  Default: 1e4.
+    z_min, z_max : (nz,) ndarray, optional
+        Soft output box.
     rho_z : float, optional
-        Quadratic penalty weight on soft output constraint violation.
-        Default: 1e4.
+        Quadratic penalty weight on output-slack variables.  Default: 1e4.
     n_steps : int, optional
-        Explicit-Euler integration sub-steps per sampling interval.
-        Default: 10.
+        Implicit-Euler sub-steps per control interval.  Default: 10.
     solver : str, optional
-        NLP solver passed to ``scipy.optimize.minimize``.  Default: ``"SLSQP"``.
+        ``scipy.optimize.minimize`` method.  Default: ``"SLSQP"``.
     solver_options : dict or None, optional
-        Options forwarded to the solver.  ``None`` uses solver defaults.
+        Forwarded to the NLP solver.
     dt : float or None, optional
-        Sampling interval.  If ``None``, taken from ``model.dt`` if available,
-        else ``1.0``.
+        Sampling interval ``T_s``.  ``None`` → ``model.dt`` (if any) else 1.0.
     """
 
     def __init__(
@@ -343,246 +296,114 @@ class CDTrackingOptimalControlProblem:
         solver_options: dict | None = None,
         dt: float | None = None,
     ) -> None:
-        self._model = model
-        self._N = N
-        self._Q = np.asarray(Q, dtype=float)
-        self._R = np.asarray(R, dtype=float)
-        self._P = np.asarray(P, dtype=float) if P is not None else self._Q.copy()
-        self._S = np.asarray(S, dtype=float) if S is not None else None
-        self._c_u = np.asarray(c_u, dtype=float) if c_u is not None else None
-        self._z_ref = (
-            np.asarray(z_ref, dtype=float) if z_ref is not None
+        from .enmpc import EconomicOptimalControlProblem
+
+        Q_arr = np.asarray(Q, dtype=float)
+        R_arr = np.asarray(R, dtype=float)
+        z_ref_arr = (
+            np.asarray(z_ref, dtype=float)
+            if z_ref is not None
             else np.zeros(model.nz)
         )
-        self._u_min = np.asarray(u_min, dtype=float) if u_min is not None else None
-        self._u_max = np.asarray(u_max, dtype=float) if u_max is not None else None
-        self._du_min = np.asarray(du_min, dtype=float) if du_min is not None else None
-        self._du_max = np.asarray(du_max, dtype=float) if du_max is not None else None
-        self._x_min = np.asarray(x_min, dtype=float) if x_min is not None else None
-        self._x_max = np.asarray(x_max, dtype=float) if x_max is not None else None
-        self._rho_x = float(rho_x)
-        self._z_min = np.asarray(z_min, dtype=float) if z_min is not None else None
-        self._z_max = np.asarray(z_max, dtype=float) if z_max is not None else None
-        self._rho_z = float(rho_z)
-        self._n_steps = n_steps
-        self._solver = solver
-        self._solver_options = solver_options
-        self._dt: float = (
-            float(dt) if dt is not None else float(getattr(model, "dt", 1.0))
+
+        # Quadratic input cost ‖u‖²_R encoded as a Lagrange callable.
+        def _lagrange(t, x, y, u, theta, _R=R_arr):
+            return float(u @ _R @ u)
+
+        # Terminal tracking ‖z_M − z_ref‖²_P encoded as a Mayer callable.
+        if P is not None:
+            P_arr = np.asarray(P, dtype=float)
+            is_dae = hasattr(model, "ny") and hasattr(model, "g")
+            zeros_u = np.zeros(model.nu)
+            zeros_d = np.zeros(model.nd)
+
+            def _mayer(
+                x, y, theta,
+                _P=P_arr, _zref=z_ref_arr, _model=model,
+                _is_dae=is_dae, _zu=zeros_u, _zd=zeros_d,
+            ):
+                if _is_dae:
+                    z = _model.gm(x, y, _zu, _zd, theta, 0.0)
+                else:
+                    z = _model.gm(x, _zu, _zd, theta, 0.0)
+                e = z - _zref
+                return float(e @ _P @ e)
+        else:
+            _mayer = None
+
+        self._eocp = EconomicOptimalControlProblem(
+            model,
+            N,
+            lagrange=_lagrange,
+            mayer=_mayer,
+            Q_z=Q_arr,
+            z_ref=z_ref_arr,
+            Q_du=np.asarray(S, dtype=float) if S is not None else None,
+            p_u_eco=np.asarray(c_u, dtype=float) if c_u is not None else None,
+            u_min=u_min,
+            u_max=u_max,
+            du_min=du_min,
+            du_max=du_max,
+            x_min=x_min,
+            x_max=x_max,
+            rho_x_2=rho_x,
+            z_min=z_min,
+            z_max=z_max,
+            rho_z_2=rho_z,
+            n_steps=n_steps,
+            solver=solver,
+            solver_options=solver_options,
+            dt=dt,
         )
 
     @property
     def N(self) -> int:
-        """Prediction horizon (number of sampling intervals)."""
-        return self._N
+        """Prediction horizon (number of control intervals)."""
+        return self._eocp.N
 
     @property
     def nu(self) -> int:
         """Input dimension."""
-        return self._model.nu
-
-    def _predict_mean(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-        t: float,
-    ) -> np.ndarray:
-        """Integrate mean dynamics over one sampling interval (no noise)."""
-        h = self._dt / self._n_steps
-        x_cur = x.copy()
-        t_cur = t
-        for _ in range(self._n_steps):
-            x_cur = x_cur + self._model.f(x_cur, u, d, p, t_cur) * h
-            t_cur += h
-        return x_cur
+        return self._eocp.nu
 
     def solve(
         self,
         x0: np.ndarray,
         d_trajectory: np.ndarray,
         u_prev: np.ndarray | None = None,
+        x_prev: np.ndarray | None = None,
+        y_prev: np.ndarray | None = None,
         p: np.ndarray | None = None,
         t0: float = 0.0,
-    ) -> tuple[np.ndarray, float]:
+    ) -> tuple[np.ndarray, float, dict]:
         """
-        Solve the tracking OCP from initial state x0.
-
-        Parameters
-        ----------
-        x0 : (nx,) ndarray
-            Current state estimate (initial condition for the NLP).
-        d_trajectory : (N, nd) ndarray
-            Predicted disturbance trajectory over the horizon.
-        u_prev : (N, nu) ndarray or None, optional
-            Previous optimal input sequence used as a warm start.
-            Shifted by one step (last element repeated).  ``None`` initialises
-            from zeros.
-        p : (nparams,) ndarray or None, optional
-            Parameter vector.  ``None`` uses ``model.params``.
-        t0 : float, optional
-            Start time for the prediction horizon.  Default: 0.
+        Solve the tracking OCP from initial state ``x0``.
 
         Returns
         -------
-        u_opt : (N, nu) ndarray
-            Optimal input sequence.
-        cost : float
-            Optimal tracking cost.
+        u_opt : (N, nu) ndarray  — optimal input sequence.
+        cost  : float            — optimal NLP objective value.
+        info  : dict             — ``{"X", "Y", "result"}`` for warm-starting.
         """
-        from scipy.optimize import minimize, Bounds
-
-        N = self._N
-        nu = self._model.nu
-        p_ = self._model.params if p is None else p
-
-        # ── Previous input for ROM (first step uses u_prev[-1] if supplied) ──
-        u_prev_0 = u_prev[-1] if u_prev is not None else np.zeros(nu)
-
-        # ── Warm start ────────────────────────────────────────────────────────
-        if u_prev is not None:
-            u0 = np.empty_like(u_prev)
-            u0[:-1] = u_prev[1:]
-            u0[-1] = u_prev[-1]
-        else:
-            u0 = np.zeros((N, nu))
-        u0_flat = u0.ravel()
-
-        # ── Objective function ────────────────────────────────────────────────
-        def objective(u_flat: np.ndarray) -> float:
-            U = u_flat.reshape(N, nu)
-            x = x0.copy()
-            t = t0
-            total = 0.0
-            for k in range(N):
-                u_k = U[k]
-                u_km1 = U[k - 1] if k > 0 else u_prev_0
-
-                # Quadratic input cost
-                total += 0.5 * float(u_k @ self._R @ u_k)
-
-                # ROM penalty
-                if self._S is not None:
-                    du_k = u_k - u_km1
-                    total += 0.5 * float(du_k @ self._S @ du_k)
-
-                # Linear input penalty
-                if self._c_u is not None:
-                    total += float(self._c_u @ u_k)
-
-                # Propagate state
-                x = self._predict_mean(x, u_k, d_trajectory[k], p_, t)
-                t += self._dt
-
-                # Output
-                z_k = self._model.gm(x, u_k, d_trajectory[k], p_, t)
-                ez = z_k - self._z_ref
-
-                # Stage tracking cost (use terminal matrix P on last step)
-                W = self._P if k == N - 1 else self._Q
-                total += 0.5 * float(ez @ W @ ez)
-
-                # Soft state constraints
-                if self._x_min is not None:
-                    viol = np.maximum(0.0, self._x_min - x)
-                    total += self._rho_x * float(viol @ viol)
-                if self._x_max is not None:
-                    viol = np.maximum(0.0, x - self._x_max)
-                    total += self._rho_x * float(viol @ viol)
-
-                # Soft output constraints
-                if self._z_min is not None:
-                    viol = np.maximum(0.0, self._z_min - z_k)
-                    total += self._rho_z * float(viol @ viol)
-                if self._z_max is not None:
-                    viol = np.maximum(0.0, z_k - self._z_max)
-                    total += self._rho_z * float(viol @ viol)
-
-            return total
-
-        # ── Build scipy Bounds for hard input box ─────────────────────────────
-        if self._u_min is not None or self._u_max is not None:
-            lb = (
-                np.tile(self._u_min, N)
-                if self._u_min is not None
-                else np.full(N * nu, -np.inf)
-            )
-            ub = (
-                np.tile(self._u_max, N)
-                if self._u_max is not None
-                else np.full(N * nu, np.inf)
-            )
-            bounds = Bounds(lb, ub)
-        else:
-            bounds = None
-
-        # ── Build scipy constraints for hard ROM bounds ───────────────────────
-        scipy_constraints: list = []
-        if self._du_min is not None or self._du_max is not None:
-            du_lo = self._du_min
-            du_hi = self._du_max
-
-            def _make_rom_con(k_: int, lo: bool) -> Callable:
-                def _con(u_flat: np.ndarray) -> np.ndarray:
-                    u_k = u_flat[k_ * nu:(k_ + 1) * nu]
-                    u_km1 = u_flat[(k_ - 1) * nu:k_ * nu] if k_ > 0 else u_prev_0
-                    du = u_k - u_km1
-                    return du - du_lo if lo else du_hi - du
-                return _con
-
-            for k in range(N):
-                if du_lo is not None:
-                    scipy_constraints.append(
-                        {"type": "ineq", "fun": _make_rom_con(k, True)}
-                    )
-                if du_hi is not None:
-                    scipy_constraints.append(
-                        {"type": "ineq", "fun": _make_rom_con(k, False)}
-                    )
-
-        # ── Solve NLP ─────────────────────────────────────────────────────────
-        result = minimize(
-            objective,
-            u0_flat,
-            method=self._solver,
-            bounds=bounds,
-            constraints=scipy_constraints if scipy_constraints else (),
-            options=self._solver_options,
+        return self._eocp.solve(
+            x0, d_trajectory,
+            u_prev=u_prev, x_prev=x_prev, y_prev=y_prev,
+            p=p, t0=t0,
         )
-
-        u_opt = result.x.reshape(N, nu)
-        cost = float(result.fun)
-        return u_opt, cost
 
     def step(
         self,
         x0: np.ndarray,
         d_trajectory: np.ndarray,
         u_prev: np.ndarray | None = None,
+        x_prev: np.ndarray | None = None,
+        y_prev: np.ndarray | None = None,
         p: np.ndarray | None = None,
         t0: float = 0.0,
     ) -> np.ndarray:
-        """
-        Solve and return only the first optimal control action.
-
-        Parameters
-        ----------
-        x0 : (nx,) ndarray
-            Current state estimate.
-        d_trajectory : (N, nd) ndarray
-            Predicted disturbance trajectory.
-        u_prev : (N, nu) ndarray or None, optional
-            Previous optimal sequence for warm-starting.
-        p : (nparams,) ndarray or None, optional
-            Parameter vector.  ``None`` uses ``model.params``.
-        t0 : float, optional
-            Start time.  Default: 0.
-
-        Returns
-        -------
-        u0 : (nu,) ndarray
-            First element of the optimal input sequence.
-        """
-        u_opt, _ = self.solve(x0, d_trajectory, u_prev, p=p, t0=t0)
-        return u_opt[0]
+        """Solve and return only the first optimal control action."""
+        return self._eocp.step(
+            x0, d_trajectory,
+            u_prev=u_prev, x_prev=x_prev, y_prev=y_prev,
+            p=p, t0=t0,
+        )

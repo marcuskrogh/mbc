@@ -1594,6 +1594,15 @@ x_hat, y_hat, P = ekf.update(ym, u, d, p, mask=None)
 
 ### 2.4 Optimal Control Problems
 
+The nonlinear OCP for continuous-discrete SDE/SDAE plants follows the
+**ControlToolbox §EMPC** direct-simultaneous formulation: implicit Euler
+for the differential dynamics, the algebraic constraint `g = 0` enforced
+at every sub-step, and right-rectangular discretisation of the Lagrange
+integral.  Decision variables are the inputs `{u_k}_{k=0..N−1}` together
+with the differential and algebraic states `{x_n, y_n}_{n=0..M}` at every
+sub-step (M = N · n_steps) — multiple shooting, not single shooting.  The
+NLP is solved by `scipy.optimize.minimize` with SLSQP by default.
+
 #### `CDOptimalControlProblem` — `mbc.control`
 
 Receding-horizon QP for a `LinearContinuousDiscreteModel`.  A typed thin wrapper
@@ -1602,11 +1611,11 @@ Internally wraps the model in a `_CDModelAdapter` that computes ZOH-discretised
 matrices `(Ad, Bd, Ed)` from the continuous-time model matrices `(A, B, E)` at
 construction time and exposes them as numpy arrays for the QP solver.
 
-The cost function, constraints, batch-form prediction matrices, and QP solver are
-identical to `OptimalControlProblem` (see §1.3).  The only difference is the
-model type, which provides continuous-time matrices `(A, B, E)` via the
-`LinearContinuousDiscreteModel` interface rather than inheriting from
-`LinearDiscreteModel`.
+The cost function, constraints, batch-form prediction matrices, and QP solver
+are identical to `OptimalControlProblem` (see §1.3).  ZOH discretisation is
+*exact* for a linear ODE under ZOH inputs, so this linear specialisation is
+strictly more accurate than the implicit-Euler scheme used in the nonlinear
+OCP — and is the recommended choice whenever the plant model is linear.
 
 **Parameters**: identical to `OptimalControlProblem` with `model` of type
 `LinearContinuousDiscreteModel`.
@@ -1622,241 +1631,203 @@ U_seq, X_seq = ocp.solve(x0=x_hat, D=D_forecast, x_ref=model.x_ref, u_prev=u_pre
 
 ---
 
-#### `CDTrackingOptimalControlProblem` — `mbc.control`
+#### `EconomicOptimalControlProblem` — `mbc.control` *(ControlToolbox §EMPC)*
 
-Nonlinear tracking OCP for any `ContinuousDiscreteModel` (NLP formulation,
-Ph.D. Ch. 9 — tracking variant).  Unlike `CDOptimalControlProblem` (which is
-restricted to linear models solved as a QP), this class handles arbitrary
-nonlinear dynamics by solving the open-loop NLP at each sampling time using
-`scipy.optimize.minimize` (SLSQP by default).
+Economic Optimal Control Problem (EOCP) for **continuous-discrete nonlinear
+SDE / SDAE systems**.  This is the unified nonlinear-OCP class — it supports
+any convex combination of the spec's objective terms (tracking, ROM, input
+economy, general Lagrange/Mayer) with both hard and soft (slacked, exact-
+penalty) constraints.
 
-**Cost function** over prediction horizon N:
+The class accepts both `ContinuousDiscreteModel` (SDE) and
+`ContinuousDiscreteDAEModel` (SDAE) plant models.  When the plant is an
+SDAE, the algebraic state `y` is a decision variable of the NLP and the
+constraint `g(x, y, …) = 0` is enforced at every sub-step.
 
-```
-J = Σ_{k=0}^{N-1} [
-        ‖z[k+1] − z_ref‖²_Q
-      + ‖u[k]‖²_R
-      + ‖Δu[k]‖²_S
-      + c_uᵀ u[k]
-      + ρ_x (‖max(0, x[k+1] − x_max)‖² + ‖max(0, x_min − x[k+1])‖²)
-      + ρ_z (‖max(0, z[k+1] − z_max)‖² + ‖max(0, z_min − z[k+1])‖²)
-    ]
-  + ‖z[N] − z_ref‖²_P
-```
-
-where:
-- `z[k] = gm(x[k], u[k], d[k], p, t_k)` is the (continuous) output
-- `Δu[k] = u[k] − u[k−1]` is the input rate of movement (ROM)
-- `c_u` is a linear input penalty vector
-- `ρ_x`, `ρ_z` are soft constraint penalty weights
-- `P` defaults to `Q` if not supplied
-
-**Constraints**:
+##### Continuous-time OCP (Bolza form)
 
 ```
-x[k+1] = f̄(x[k], u[k], d[k])   (mean dynamics, n_steps Euler steps)
-u_min  ≤ u[k] ≤ u_max            (hard input box)
-Δu_min ≤ u[k] − u[k−1] ≤ Δu_max (hard input ROM box)
+min_{x, y, u}  φ = ∫_{t_0}^{t_f} l(t, x, y, u, θ) dt + l̂(x(t_f), y(t_f), θ)
+
+s.t.   x(t_0)        = x̂_{0|0}                 (from state estimator)
+       dx/dt         = f(x, y, u, d, θ)
+       0             = g(x, y, θ)               (SDAE only)
+       z(t)          = g^m(x, y, θ)
+       c_lb(t)       ≤ c(t, x, y, u, θ) ≤ c_ub(t)
 ```
 
-Soft state (`x_min`/`x_max`) and output (`z_min`/`z_max`) constraints are encoded
-as quadratic penalties in the objective rather than as hard constraints, ensuring
-the NLP is always feasible.
+with zero-order-hold inputs `u(t) = u_k` on `[t_k, t_{k+1}]`.
 
-**Prediction model**: explicit Euler integration of the mean drift `f` over each
-sampling interval:
+##### Discretisation (direct simultaneous)
+
+Each control interval `[t_k, t_{k+1}]` is split into `n_steps` equidistant
+sub-steps of size `Δt = T_s / n_steps`.  Decision variables:
 
 ```
-x̂_{k+1} ≈ x̂_k + Σ_{j=0}^{n_steps-1} h · f(x̂_j, u_k, d_k, p, t_k + j·h)
-         where  h = dt / n_steps
+{{x_{k,n}, y_{k,n}}_{n=0..n_steps},  u_k}_{k=0..N-1}
 ```
 
-**NLP decision variable**: the flattened input sequence
-`u_flat ∈ ℝ^{N·nu}`, reshaped as `u_flat.reshape(N, nu)` inside the objective.
+with continuity `x_{k+1, 0} = x_{k, n_steps}` (and likewise for `y`).
+Internally these are stored as a single flat sub-step grid `x_n, y_n` for
+`n = 0..M`.
 
-**Warm-starting**: the previous optimal sequence `u_prev` (shape `(N, nu)`) is
-shifted by one step (rows 1..N-1, then last row repeated) to produce the initial
-guess.  Pass `u_prev=None` on the first call (zero initialisation).
+**Sub-step dynamics residual** (implicit Euler — same form used by
+`SDAESimulator`):
 
-**Parameters**:
+```
+D(z_{n+1}, z_n, u_k, d_k, θ) = [
+    x_{n+1} − x_n − f(x_{n+1}, y_{n+1}, u_k, d_k, θ) Δt;
+    g(x_{n+1}, y_{n+1}, θ)
+] = 0
+```
+
+**Lagrange discretisation** — right-rectangular rule:
+
+```
+Φ_L = Σ_{n=0..M-1} l(t_{n+1}, x_{n+1}, y_{n+1}, u_{k(n)}, θ) Δt
+```
+
+##### Objective terms (convex combination)
+
+```
+φ_z       = Σ_n  ‖z_{n+1} − z̄_{n+1}‖²_{Q_z}                  Δt    setpoint tracking
+φ_{Δu}    = Σ_k  ‖u_k − u_{k−1}‖²_{Q_du}                       T_s   input ROM
+φ_{u,eco} = Σ_k  p_{u,eco}^T u_k                                T_s   linear input cost
+φ_{lag}   = Σ_n  l(t_{n+1}, x_{n+1}, y_{n+1}, u_{k(n)}, θ)     Δt    user Lagrange
+φ_M       =       l̂(x_M, y_M, θ)                                     user Mayer
+φ_pq      = Σ_n  [‖p_n‖²_{rho_·_2} + rho_·_1^T p_n + ‖q_n‖²_{rho_·_2} + rho_·_1^T q_n] Δt
+```
+
+The L1 (linear) component of `φ_pq` is an **exact penalty**: with a
+sufficiently large `rho_·_1`, the soft-constrained optimum coincides with
+the hard-constrained solution whenever the latter exists.
+
+##### Hard constraints
+
+```
+u_min  ≤ u_k                 ≤ u_max          (input box)
+du_min ≤ u_k − u_{k−1}       ≤ du_max         (input rate-of-movement box)
+```
+
+##### Soft (slacked) constraints
+
+```
+x_min − p_n ≤ x_n ≤ x_max + q_n,    p_n, q_n ≥ 0
+z_min − p_n ≤ z_n ≤ z_max + q_n,    p_n, q_n ≥ 0
+```
+
+with `z_n = g^m(x_n, y_n, …)`.  The slacks `p_n, q_n` are themselves NLP
+decision variables; they are penalised in the objective by the L1 + L2
+exact-penalty form `φ_pq` above.
+
+##### Parameters
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model (with `gm` for output) |
-| `N` | `int` | — | Prediction horizon |
-| `Q` | `(nz, nz) ndarray` | — | Stage output tracking cost |
-| `R` | `(nu, nu) ndarray` | — | Stage input cost |
-| `P` | `(nz, nz) ndarray` or `None` | `Q` | Terminal output tracking cost |
-| `S` | `(nu, nu) ndarray` or `None` | `None` | Input ROM quadratic cost; `None` disables |
-| `c_u` | `(nu,) ndarray` or `None` | `None` | Linear input penalty; `None` disables |
-| `z_ref` | `(nz,) ndarray` or `None` | zeros | Output reference / setpoint |
-| `u_min` | `(nu,) ndarray` or `None` | `None` | Hard lower input bound |
-| `u_max` | `(nu,) ndarray` or `None` | `None` | Hard upper input bound |
-| `du_min` | `(nu,) ndarray` or `None` | `None` | Hard lower ROM bound |
-| `du_max` | `(nu,) ndarray` or `None` | `None` | Hard upper ROM bound |
-| `x_min` | `(nx,) ndarray` or `None` | `None` | Soft lower state bound |
-| `x_max` | `(nx,) ndarray` or `None` | `None` | Soft upper state bound |
-| `rho_x` | `float` | `1e4` | Soft state penalty weight |
-| `z_min` | `(nz,) ndarray` or `None` | `None` | Soft lower output bound |
-| `z_max` | `(nz,) ndarray` or `None` | `None` | Soft upper output bound |
-| `rho_z` | `float` | `1e4` | Soft output penalty weight |
-| `n_steps` | `int` | `10` | Euler sub-steps per interval |
-| `solver` | `str` | `"SLSQP"` | NLP solver for `scipy.optimize.minimize` |
-| `solver_options` | `dict` or `None` | `None` | Options forwarded to the solver |
-| `dt` | `float` or `None` | `model.dt` or `1.0` | Sampling interval |
+| `model` | `ContinuousDiscreteModel` or `…DAEModel` | — | Plant model |
+| `N` | `int` | — | Prediction horizon (control intervals) |
+| `lagrange` | `(t, x, y, u, θ) → float` or `None` | `None` | General stage cost `l` |
+| `mayer` | `(x, y, θ) → float` or `None` | `None` | Terminal cost `l̂` |
+| `Q_z` | `(nz, nz) ndarray` or `None` | `None` | Tracking weight (requires `z_ref`) |
+| `z_ref` | `(nz,)` or `(M+1, nz) ndarray` | `None` | Tracking reference |
+| `Q_du` | `(nu, nu) ndarray` or `None` | `None` | Quadratic ROM penalty matrix |
+| `p_u_eco` | `(nu,) ndarray` or `None` | `None` | Linear input cost vector |
+| `u_min`, `u_max` | `(nu,) ndarray` or `None` | `None` | Hard input box |
+| `du_min`, `du_max` | `(nu,) ndarray` or `None` | `None` | Hard input ROM box |
+| `x_min`, `x_max` | `(nx,) ndarray` or `None` | `None` | Soft state box |
+| `z_min`, `z_max` | `(nz,) ndarray` or `None` | `None` | Soft output box |
+| `rho_x_1` | `float` | `0.0` | L1 weight on state slacks (exact penalty) |
+| `rho_x_2` | `float` | `1e4` | L2 weight on state slacks |
+| `rho_z_1` | `float` | `0.0` | L1 weight on output slacks (exact penalty) |
+| `rho_z_2` | `float` | `1e4` | L2 weight on output slacks |
+| `n_steps` | `int` | `10` | Implicit-Euler sub-steps per control interval |
+| `solver` | `str` | `"SLSQP"` | `scipy.optimize.minimize` method |
+| `solver_options` | `dict` or `None` | `None` | Forwarded to the solver |
+| `dt` | `float` or `None` | `model.dt` or `1.0` | Sampling interval `T_s` |
 
-**Public properties**:
+##### Public properties
 
 | Property | Type | Description |
 |----------|------|-------------|
 | `N` | `int` | Prediction horizon |
 | `nu` | `int` | Input dimension |
 
-**Methods**:
+##### Methods
+
+```python
+from mbc.control import EconomicOptimalControlProblem
+
+# Spec signature: lagrange(t, x, y, u, theta) -> float
+def lagrange(t, x, y, u, theta):
+    return float(u @ u)            # quadratic input cost as a stage term
+
+# Spec signature: mayer(x, y, theta) -> float
+def mayer(x, y, theta):
+    return 0.1 * float(x @ x)     # terminal state penalty
+
+ocp = EconomicOptimalControlProblem(
+    model, N=20, dt=1.0,
+    lagrange=lagrange, mayer=mayer,
+    Q_z=Q_z, z_ref=z_setpoint,        # tracking
+    Q_du=S_rom,                        # ROM
+    p_u_eco=cost_per_unit_input,       # input economy
+    u_min=u_lo, u_max=u_hi,
+    du_min=du_lo, du_max=du_hi,
+    x_min=x_lo, x_max=x_hi,
+    z_min=z_lo, z_max=z_hi,
+    rho_x_1=1e3, rho_x_2=1e4,         # exact-penalty + quadratic on x slacks
+    rho_z_1=1e3, rho_z_2=1e4,
+    n_steps=10,
+)
+
+# Full sequence solve — returns (u_opt, cost, info)
+u_opt, cost, info = ocp.solve(
+    x0=x_hat, d_trajectory=d_fcast,
+    u_prev=u_seq_prev, x_prev=info_prev["X"], y_prev=info_prev["Y"],
+    p=p, t0=t,
+)
+# info["X"]: (M+1, nx) — full state trajectory at every sub-step
+# info["Y"]: (M+1, ny) — algebraic-state trajectory (empty for SDE)
+
+# First action only (receding horizon)
+u0 = ocp.step(x_hat, d_fcast, u_prev=u_seq_prev, p=p, t0=t)
+```
+
+---
+
+#### `CDTrackingOptimalControlProblem` — `mbc.control`
+
+Convenience wrapper around `EconomicOptimalControlProblem` exposing a
+quadratic-tracking-friendly constructor (`Q`, `R`, `P`, `S`, `c_u`).
+Translates the standard tracking-OCP arguments into the underlying
+`EconomicOptimalControlProblem`:
+
+| Tracking-OCP arg | Maps to |
+|------------------|---------|
+| `Q` | `Q_z` |
+| `R` | a Lagrange callable `(t, x, y, u, θ) → u^T R u` |
+| `P` | a Mayer callable `(x, y, θ) → (z_M − z_ref)^T P (z_M − z_ref)` |
+| `S` | `Q_du` |
+| `c_u` | `p_u_eco` |
+| `rho_x` | `rho_x_2` |
+| `rho_z` | `rho_z_2` |
+
+Because the underlying problem is the same EOCP, both classes are
+interchangeable as the `ocp` argument of `CDNMPCController`.
 
 ```python
 from mbc.control import CDTrackingOptimalControlProblem
 
 ocp = CDTrackingOptimalControlProblem(
     model, N=20, Q=Q_z, R=R_u,
-    S=S_rom,                              # ROM penalty
-    c_u=np.zeros(model.nu),               # linear input penalty
-    z_ref=z_setpoint,                     # output reference
-    u_min=u_lo, u_max=u_hi,              # hard input box
-    du_min=du_lo, du_max=du_hi,          # hard ROM bounds
-    x_min=x_lo, x_max=x_hi, rho_x=1e4,  # soft state constraint
-    z_min=z_lo, z_max=z_hi, rho_z=1e4,  # soft output constraint
+    S=S_rom, c_u=np.zeros(model.nu), z_ref=z_setpoint,
+    u_min=u_lo, u_max=u_hi, du_min=du_lo, du_max=du_hi,
+    x_min=x_lo, x_max=x_hi, rho_x=1e4,
+    z_min=z_lo, z_max=z_hi, rho_z=1e4,
     dt=1.0, n_steps=10,
 )
-
-# Full sequence solve
-u_opt, cost = ocp.solve(x0=x_hat, d_trajectory=D, u_prev=u_seq_prev, p=p, t0=t)
-# u_opt : (N, nu) ndarray
-# cost  : float
-
-# First action only (receding horizon)
-u0 = ocp.step(x_hat, D, u_seq_prev, p=p, t0=t)   # returns (nu,) ndarray
-```
-
-**Compatibility**: the `solve` / `step` interface is identical to
-`EconomicOptimalControlProblem`, so both can be used as the `ocp` argument of
-`CDNMPCController` interchangeably.
-
----
-
-#### `EconomicOptimalControlProblem` — `mbc.control` *(Ph.D. Ch. 9)*
-
-Economic Optimal Control Problem (OCP) for a `ContinuousDiscreteModel`.  Unlike
-the tracking OCP, this OCP minimises an arbitrary economic objective comprising
-a Lagrange (stage) term `l_e(x, u, d)` and a Mayer (terminal) term `V_f(x_N)`.
-
-This class is an **OCP solver only** — it takes a state estimate `x̂` as input and
-returns an optimal input sequence.  To form a complete closed-loop controller,
-embed it in a `CDNMPCController` (§2.5) together with a continuous-discrete state
-estimator.
-
-**Problem formulation**:
-
-```
-min_{u_0, …, u_{N-1}}  J = Σ_{k=0}^{N-1} l_e(x_k, u_k, d_k) + V_f(x_N)
-                           + Σ_{k=1}^{N} [ρ_x‖max(0, x_k − x_max)‖²
-                                         + ρ_x‖max(0, x_min − x_k)‖²
-                                         + ρ_z‖max(0, z_k − z_max)‖²
-                                         + ρ_z‖max(0, z_min − z_k)‖²]
-
-subject to:
-    x_{k+1} = f̄(x_k, u_k, d_k)       (mean dynamics, Euler integration)
-    u_min  ≤ u[k] ≤ u_max              (hard input box)
-    Δu_min ≤ u[k] − u[k−1] ≤ Δu_max   (hard input ROM box)
-```
-
-Optional ROM and linear input penalties (`S`, `c_u`) can also be included; for
-more involved economic problems, embed these directly in the `lagrange` function.
-
-**NLP decision variable layout**: the optimisation variable is the flattened
-input sequence `u_flat ∈ ℝ^{N · nu}`, stored in row-major order:
-
-```
-u_flat = [u_0[0], …, u_0[nu-1], u_1[0], …, u_1[nu-1], …, u_{N-1}[nu-1]]
-```
-
-Reshaped as `u_flat.reshape(N, nu)` inside the objective and constraint functions.
-
-The NLP is solved with `scipy.optimize.minimize` using SLSQP by default.
-**Warm-starting**: the previous optimal sequence `u_prev` (shape `(N, nu)`) is
-shifted by one step and flattened to produce the initial guess.  If no `u_prev`
-is provided (first call), the initial guess is zeros.
-
-**Note on `dt`**: `ContinuousDiscreteModel` does not define `dt` as part of its
-abstract interface (unlike `LinearContinuousDiscreteModel`).
-`EconomicOptimalControlProblem` therefore accepts `dt` as an explicit constructor
-parameter; if omitted it falls back to `model.dt` (if available) or `1.0`.
-
-**Parameters**:
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model |
-| `N` | `int` | — | Prediction horizon |
-| `lagrange` | `(x, u, d) → float` or `None` | `None` | Economic stage cost `l_e` (Lagrange term) |
-| `mayer` | `(x) → float` or `None` | `None` | Terminal cost `V_f` (Mayer term) |
-| `u_min` | `(nu,) ndarray` or `None` | `None` | Hard lower input bound |
-| `u_max` | `(nu,) ndarray` or `None` | `None` | Hard upper input bound |
-| `du_min` | `(nu,) ndarray` or `None` | `None` | Hard lower ROM bound |
-| `du_max` | `(nu,) ndarray` or `None` | `None` | Hard upper ROM bound |
-| `S` | `(nu, nu) ndarray` or `None` | `None` | Input ROM quadratic cost |
-| `c_u` | `(nu,) ndarray` or `None` | `None` | Linear input penalty |
-| `x_min` | `(nx,) ndarray` or `None` | `None` | Soft lower state bound |
-| `x_max` | `(nx,) ndarray` or `None` | `None` | Soft upper state bound |
-| `rho_x` | `float` | `1e4` | Soft state penalty weight |
-| `z_min` | `(nz,) ndarray` or `None` | `None` | Soft lower output bound |
-| `z_max` | `(nz,) ndarray` or `None` | `None` | Soft upper output bound |
-| `rho_z` | `float` | `1e4` | Soft output penalty weight |
-| `constraints` | `list[dict]` or `None` | `None` | Additional scipy-format constraints |
-| `n_steps` | `int` | `10` | Euler sub-steps per interval for prediction |
-| `solver` | `str` | `"SLSQP"` | NLP solver name for `scipy.optimize.minimize` |
-| `solver_options` | `dict` or `None` | `None` | Options forwarded to the solver |
-| `dt` | `float` or `None` | `model.dt` or `1.0` | Sampling interval |
-
-**Public properties**:
-
-| Property | Type | Description |
-|----------|------|-------------|
-| `N` | `int` | Prediction horizon |
-| `nu` | `int` | Input dimension |
-
-**Methods**:
-
-```python
-from mbc.control import EconomicOptimalControlProblem
-
-def energy_cost(x, u, d):
-    return float(u @ u)   # quadratic energy proxy
-
-def terminal(x):
-    return float(x @ x) * 0.1   # terminal state penalty
-
-# Construct the OCP with Lagrange + Mayer formulation
-ocp = EconomicOptimalControlProblem(
-    model, N=20, dt=1.0,
-    lagrange=energy_cost,          # Lagrange (stage cost)
-    mayer=terminal,                # Mayer (terminal cost)
-    u_min=u_lo, u_max=u_hi,       # hard input box
-    du_min=du_lo, du_max=du_hi,   # hard ROM bounds
-    x_min=x_lo, x_max=x_hi,       # soft state constraints
-    z_min=z_lo, z_max=z_hi,       # soft output constraints
-    n_steps=10,
-)
-
-# Full sequence solve
-u_opt, cost = ocp.solve(x0=x_hat, d_trajectory=d_fcast, u_prev=u_seq_prev, p=p, t0=t)
-# u_opt : (N, nu) ndarray — full optimal input sequence
-# cost  : float — optimal economic objective value
-
-# First action only (receding horizon)
-u0 = ocp.step(x_hat, d_fcast, u_seq_prev, p=p, t0=t)
-
-# To close the loop, pair with an estimator via CDNMPCController (§2.5)
+u_opt, cost, info = ocp.solve(x0=x_hat, d_trajectory=D, u_prev=u_seq_prev, p=p, t0=t)
+u0                  = ocp.step (x_hat,                  D, u_prev=u_seq_prev, p=p, t0=t)
 ```
 
 ---
@@ -1912,79 +1883,91 @@ Note the split: the *estimator* uses the continuous-time matrices `A`, `B`,
 `(Ad, Bd, Ed)` via the internal `_CDModelAdapter` (computed from `A`, `B`, `E`,
 `dt` at construction time).  Both operate on the same `model` object.
 
-#### `CDNMPCController` — `mbc.control` *(Ph.D. Ch. 9)*
+#### `CDNMPCController` — `mbc.control` *(ControlToolbox §EMPC — *ENMPC Algorithm*)*
 
-Generic closed-loop CD-NMPC controller.  Composes **any** continuous-discrete
-state estimator with **any** OCP that exposes
-`solve(x0, d_trajectory, u_prev, p, t0)` into a receding-horizon feedback
-controller.
+Closed-loop continuous-discrete NMPC controller implementing the
+ControlToolbox §EMPC algorithm verbatim.  Composes **any** continuous-
+discrete state estimator with **any** OCP that exposes
+`solve(x0, d_trajectory, u_prev, x_prev, y_prev, p, t0) → (u_opt, cost, info)`
+into a receding-horizon feedback controller.
 
-The controller is fully agnostic to the estimator and OCP types.  Any combination
-of:
+Any combination of:
 
 - **Estimators**: `ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`,
   `ContinuousDiscreteEnKF`, `ContinuousDiscreteParticleFilter`,
   `ContinuousDiscreteDAEEKF`, `DelayedObservationFilter` (wrapping any of the above)
-- **OCPs**: `CDTrackingOptimalControlProblem`, `EconomicOptimalControlProblem`
+- **OCPs**: `EconomicOptimalControlProblem`, `CDTrackingOptimalControlProblem`
 
 can be composed without any changes to the controller code.
+
+##### ENMPC algorithm at time t_k
+
+Following ControlToolbox §EMPC — *ENMPC Algorithm*:
+
+1. **Measure**   `y^{m,s}_k = h^m(z^s_k, θ^s) + v^s_k(θ^s)`  (passed to `step`)
+2. **Estimate**  `z^c_k = κ(z^c_{k−1}, u_{k−1}, d_{k−1}, y^{m,s}_k, θ^c)`
+                 (delegated to `estimator.step`)
+3. **Optimise** `u_k = λ(z^c_k, θ^c)`  (delegated to `ocp.solve`)
+4. **Apply**     return `u_k` to the caller, who advances the plant.
+
+The controller maintains warm-start buffers for the input sequence `U`,
+the differential-state trajectory `X`, and the algebraic-state trajectory
+`Y` (SDAE only); these are passed back to the OCP at the next iteration to
+reduce solver work.
 
 **Closed-loop structure**:
 
 ```
-           ┌──────────────────────────────────────────────────────────┐
-           │                    CDNMPCController                       │
-  y[k] ───┤──► CD Estimator ──x̂[k]──► Nonlinear OCP ──u_opt──►u[k]──┼──► Plant
-           │  (EKF/UKF/EnKF/    │       (CDTrackingOCP                │
-           │   PF/DAE-EKF)      │        or EconomicOCP)              │
-           │         ▲          │         SLSQP NLP solver            │
-           │    warm-start ←────┘                                     │
-           └──────────────────────────────────────────────────────────┘
+           ┌────────────────────────────────────────────────────────────────┐
+           │                    CDNMPCController                            │
+ y^m[k] ──┤── CD Estimator ── x̂[k] ── Nonlinear OCP ── u_opt[0] ── u[k] ──┼── Plant
+           │  (EKF/UKF/EnKF/    │       (Economic OCP                       │
+           │   PF/DAE-EKF)      │        — implicit-Euler                   │
+           │         ▲          │          direct simultaneous)             │
+           │    warm-start ←────┘                                           │
+           │       (U, X, Y)                                                │
+           └────────────────────────────────────────────────────────────────┘
 ```
-
-**Receding-horizon policy** — at each measurement time k:
-
-1. **Estimate**: `x̂[k] ← estimator.step(ym[k], u[k−1], d[k], p, t_k)` → `(x̂, P)`
-2. **Optimise**: `u_opt ← ocp.step(x̂[k], d_trajectory, u_seq_prev, p, t_k)` → `(nu,)`
-3. **Apply**: `u[k] = u_opt` (first element of the optimal sequence)
-4. **Store**: warm-start buffer shifted for next call
 
 **Required interfaces**:
 
 | Component | Required methods / properties |
 |-----------|------------------------------|
-| `estimator` | `step(ym, u, d, p, t) → (x_hat, P)` |
-| `ocp` | `solve(x0, d_trajectory, u_prev, p, t0) → (u_opt, cost)`, `N`, `nu` |
+| `estimator` | `step(ym, u, d, p, t)` → `(x_hat, P)` *(or `(x_hat, y_hat, P)` for SDAEs)* |
+| `ocp` | `solve(x0, d_trajectory, u_prev, x_prev, y_prev, p, t0) → (u_opt, cost, info)`, `N`, `nu` |
 
 **Parameters**:
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `estimator` | CD estimator | Any CD estimator with `step(ym, u, d, p, t)` |
-| `ocp` | OCP | Any OCP with `solve`, `N`, `nu` |
+| `ocp` | OCP | Any OCP with the signature above |
 
 **Usage**:
 
 ```python
 from mbc.estimation import ContinuousDiscreteEKF
-from mbc.control import CDTrackingOptimalControlProblem, CDNMPCController
+from mbc.control import (
+    CDTrackingOptimalControlProblem,
+    EconomicOptimalControlProblem,
+    CDNMPCController,
+)
 
 ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
 
-# Tracking NMPC
+# Tracking NMPC (convenience wrapper)
 ocp = CDTrackingOptimalControlProblem(
     model, N=20, Q=Q_z, R=R_u,
-    z_ref=z_setpoint,
-    u_min=u_lo, u_max=u_hi,
-    dt=1.0,
+    z_ref=z_setpoint, u_min=u_lo, u_max=u_hi, dt=1.0,
 )
 ctrl = CDNMPCController(estimator=ekf, ocp=ocp)
 u = ctrl.step(ym, d_trajectory, p=None, t=t_k)
 
 # Economic NMPC (same controller, different OCP)
-from mbc.control import EconomicOptimalControlProblem
+def lagrange(t, x, y, u, theta):
+    return profit_per_unit_input * float(u[0]) * 1.0
 
-eocp = EconomicOptimalControlProblem(model, N=20, lagrange=profit_fn, dt=1.0)
+eocp = EconomicOptimalControlProblem(model, N=20, lagrange=lagrange, dt=1.0)
 ctrl_e = CDNMPCController(estimator=ekf, ocp=eocp)
 u = ctrl_e.step(ym, d_trajectory, p=None, t=t_k)
 

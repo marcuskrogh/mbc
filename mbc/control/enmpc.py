@@ -1,113 +1,274 @@
 """
-Economic Nonlinear Optimal Control Problem and CD-NMPC Controller (Ph.D. Ch. 9).
+Economic Optimal Control Problem (EOCP) and CD-NMPC Controller
+(ControlToolbox §Economic Model Predictive Control).
 
-Unlike tracking MPC (which minimises a quadratic distance to a setpoint),
-the economic optimal control problem minimises an economic objective comprising
-a Lagrange (stage) term l_e(x, u, d) and an optional Mayer (terminal) term
-V_f(x_N).
+The EOCP solves a finite-horizon nonlinear NLP that may include any convex
+combination of the following objective terms (ControlToolbox §EMPC —
+*Objectives*):
 
-``EconomicOptimalControlProblem``
-    Solves the finite-horizon NLP at each step:
+* Setpoint tracking          phi_z       — ‖z(t) − z̄(t)‖²_{Q_z}
+* Input ROM penalty          phi_{Δu}    — ‖Δu_k‖²_{Q_du} T_s
+* Input economy              phi_{u,eco} — p_{u,eco}^T u_k T_s
+* General Lagrange / Mayer    phi_{P,eco} (and others) — user callable
+* Soft-constraint exact penalty  phi_pq
 
-        min_{u_0, …, u_{N-1}}   Σ_{k=0}^{N-1} l_e(x_k, u_k, d_k) + V_f(x_N)
+Hard constraints (ControlToolbox §EMPC — *Constraints*):
 
-        subject to:
-            x_{k+1} = f̄(x_k, u_k, d_k)    (discretised model dynamics)
-            u_min ≤ u[k] ≤ u_max            (hard input box)
-            Δu_min ≤ u[k] − u[k−1] ≤ Δu_max (hard input ROM box)
+* Input box                  u_min  ≤ u_k       ≤ u_max
+* Input rate-of-movement     du_min ≤ u_k − u_{k−1} ≤ du_max
 
-    Soft state and output constraint violations are added as quadratic penalty
-    terms in the objective:
+Soft (slacked) constraints with combined L1 + L2 exact penalty:
 
-        ρ_x (‖max(0, x[k] − x_max)‖² + ‖max(0, x_min − x[k])‖²)
-        ρ_z (‖max(0, z[k] − z_max)‖² + ‖max(0, z_min − z[k])‖²)
+    x_min − p ≤ x_n ≤ x_max + q,    p, q ≥ 0
+    z_min − p ≤ z_n ≤ z_max + q,    p, q ≥ 0
 
-    Additional terms (ROM penalty, linear input penalty) can be included via
-    the ``S`` and ``c_u`` parameters.  The NLP is solved by
-    ``scipy.optimize.minimize`` with the SLSQP method (default).
+penalised by  Σ_n (rho_·_2 ‖p_n‖² + rho_·_1^T p_n + rho_·_2 ‖q_n‖² + rho_·_1^T q_n) Δt.
 
-``CDNMPCController``
-    Generic closed-loop CD-NMPC controller.  Composes any state estimator with
-    any OCP that exposes ``solve(x0, d_trajectory, u_prev, p, t0)``:
+The L1 (linear) component is an *exact* penalty: with sufficiently large
+``rho_·_1``, the soft-constrained optimum coincides with the hard-constrained
+solution whenever the latter exists.
 
-      1. **Estimate**   x̂[k] ← estimator.step(y[k], u[k−1], d[k], p, t_k)
-      2. **Optimise**   U*   ← ocp.solve(x̂[k], d_trajectory, u_seq_prev, p)
-      3. **Apply**      u[k] = U*[0]
+Discretisation (ControlToolbox §EMPC — *Direct Simultaneous Approach*)
+-----------------------------------------------------------------------
+Continuous-time OCP
 
-Reference:  Ph.D. thesis, Ch. 9.
+    min ∫ l(t, x(t), y(t), u(t), θ) dt + l_hat(x(t_f), y(t_f), θ)
+
+is converted to a finite-dimensional NLP by
+
+* **Implicit Euler** for the differential dynamics
+* **Right-rectangular rule** for the Lagrange integral
+
+Each control interval ``[t_k, t_{k+1}]`` is split into ``n_steps`` equidistant
+sub-steps of size ``Δt = T_s / n_steps``.  Decision variables are
+
+    {{x_{k,n}, y_{k,n}}_{n=0..n_steps},  u_k}_{k=0..N-1}
+
+with continuity ``x_{k+1, 0} = x_{k, n_steps}`` (and likewise for ``y``).
+The sub-step dynamics residual is
+
+    D(z_{n+1}, z_n, u_k, d_k, θ) = [
+        x_{n+1} − x_n − f(x_{n+1}, y_{n+1}, u_k, d_k, θ) Δt;
+        g(x_{n+1}, y_{n+1}, θ)
+    ] = 0
+
+— the same form used by :class:`mbc.simulation.SDAESimulator`, allowing
+Jacobian reuse between simulation and optimisation.  For SDE plant models
+(``ContinuousDiscreteModel``) the algebraic block ``g`` is absent.
+
+Continuous outputs ``z_{k,n} = g^m(x_{k,n}, y_{k,n}, θ)`` are evaluated as a
+post-processing step from the optimal trajectory and used for the tracking
+term and the soft-z constraints.
+
+ENMPC algorithm at time t_k (ControlToolbox §EMPC — *Algorithm*)
+------------------------------------------------------------------
+    1. Measure   y^{m,s}_k = h^m(z^s_k, θ^s) + v^s_k(θ^s)
+    2. Estimate  z^c_k = κ(z^c_{k-1}, u_{k-1}, d_{k-1}, y^{m,s}_k, θ^c)
+    3. Optimise  u_k = λ(z^c_k, θ^c)
+    4. Apply     z^s_{k+1} = F(z^s_k, u_k, d_k, ω^s_k, θ^s)
+    5. Repeat at t_{k+1}.
+
+The OCP uses **deterministic** dynamics — diffusion ``sigma`` does not appear
+in the prediction model.  Uncertainty enters only through the state estimate
+at each sampling time.
+
+This module exposes:
+
+* :class:`EconomicOptimalControlProblem` — the EOCP/NLP solver.
+* :class:`CDNMPCController` — closed-loop receding-horizon controller
+  composing any continuous-discrete state estimator with this OCP.
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 
-from ..models import ContinuousDiscreteModel
+from ..models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
+
+
+# ── Internal helpers ─────────────────────────────────────────────────────────
+
+
+class _DecisionLayout:
+    """
+    Layout of the flat NLP decision vector z.
+
+    Order:
+        [u_0, u_1, ..., u_{N-1},                            (control inputs)
+         x_0, x_1, ..., x_M,                                (differential state at sub-steps)
+         y_0, y_1, ..., y_M,                                (algebraic state, only if SDAE)
+         px_lo_0, ..., px_lo_M, px_hi_0, ..., px_hi_M,      (state slacks, only if soft x)
+         pz_lo_0, ..., pz_lo_M, pz_hi_0, ..., pz_hi_M]      (output slacks, only if soft z)
+
+    where M = N * n_steps is the total number of sub-step intervals; states
+    are stored at M + 1 grid points.
+    """
+
+    def __init__(
+        self,
+        N: int,
+        n_steps: int,
+        nx: int,
+        nu: int,
+        ny: int,
+        nz: int,
+        soft_x: bool,
+        soft_z: bool,
+    ) -> None:
+        self.N = N
+        self.n_steps = n_steps
+        self.M = N * n_steps
+        self.nx = nx
+        self.nu = nu
+        self.ny = ny
+        self.nz = nz
+        self.soft_x = soft_x
+        self.soft_z = soft_z
+
+        # Layout offsets
+        offset = 0
+        self.u_off = offset
+        self.u_size = N * nu
+        offset += self.u_size
+
+        self.x_off = offset
+        self.x_size = (self.M + 1) * nx
+        offset += self.x_size
+
+        self.y_off = offset
+        self.y_size = (self.M + 1) * ny
+        offset += self.y_size
+
+        # Soft-x slacks: lower + upper, each (M+1, nx)
+        self.px_lo_off = offset
+        self.px_lo_size = (self.M + 1) * nx if soft_x else 0
+        offset += self.px_lo_size
+        self.px_hi_off = offset
+        self.px_hi_size = (self.M + 1) * nx if soft_x else 0
+        offset += self.px_hi_size
+
+        # Soft-z slacks: lower + upper, each (M+1, nz)
+        self.pz_lo_off = offset
+        self.pz_lo_size = (self.M + 1) * nz if soft_z else 0
+        offset += self.pz_lo_size
+        self.pz_hi_off = offset
+        self.pz_hi_size = (self.M + 1) * nz if soft_z else 0
+        offset += self.pz_hi_size
+
+        self.total = offset
+
+    def get_U(self, z: np.ndarray) -> np.ndarray:
+        """Return U with shape (N, nu) — ZOH inputs per control interval."""
+        return z[self.u_off:self.u_off + self.u_size].reshape(self.N, self.nu)
+
+    def get_X(self, z: np.ndarray) -> np.ndarray:
+        """Return X with shape (M+1, nx) — differential state at every sub-step."""
+        return z[self.x_off:self.x_off + self.x_size].reshape(self.M + 1, self.nx)
+
+    def get_Y(self, z: np.ndarray) -> np.ndarray:
+        """Return Y with shape (M+1, ny) — algebraic state (empty (M+1, 0) for SDE)."""
+        return z[self.y_off:self.y_off + self.y_size].reshape(self.M + 1, self.ny)
+
+    def get_PX_lo(self, z: np.ndarray) -> np.ndarray:
+        return z[self.px_lo_off:self.px_lo_off + self.px_lo_size].reshape(self.M + 1, self.nx)
+
+    def get_PX_hi(self, z: np.ndarray) -> np.ndarray:
+        return z[self.px_hi_off:self.px_hi_off + self.px_hi_size].reshape(self.M + 1, self.nx)
+
+    def get_PZ_lo(self, z: np.ndarray) -> np.ndarray:
+        return z[self.pz_lo_off:self.pz_lo_off + self.pz_lo_size].reshape(self.M + 1, self.nz)
+
+    def get_PZ_hi(self, z: np.ndarray) -> np.ndarray:
+        return z[self.pz_hi_off:self.pz_hi_off + self.pz_hi_size].reshape(self.M + 1, self.nz)
+
+
+# ── Economic Optimal Control Problem ─────────────────────────────────────────
 
 
 class EconomicOptimalControlProblem:
     """
-    Economic nonlinear optimal control problem (Ph.D. Ch. 9).
+    Economic Optimal Control Problem for continuous-discrete nonlinear
+    SDE / SDAE systems (ControlToolbox §EMPC).
 
-    Solves the finite-horizon economic NLP from a given initial state.
-    The predicted trajectory is computed by explicit Euler integration
-    of the mean dynamics (no stochastic noise) over each sampling interval.
+    Direct simultaneous formulation: implicit-Euler dynamics, right-
+    rectangular Lagrange.  Decision variables are the inputs
+    ``{u_k}_{k=0..N-1}`` together with the differential and algebraic states
+    ``{x_n, y_n}_{n=0..M}`` at every sub-step (M = N · n_steps).
+
+    Supports a convex combination of objective terms:
+
+    * Setpoint tracking      ``Q_z``, ``z_ref``
+    * Input ROM penalty      ``Q_du``
+    * Input economy          ``p_u_eco``
+    * General Lagrange       ``lagrange(t, x, y, u, theta)``
+    * General Mayer          ``mayer(x, y, theta)``
+
+    Hard constraints
+
+    * Input box              ``u_min`` / ``u_max``
+    * Input ROM box          ``du_min`` / ``du_max``
+
+    Soft (slacked, exact-penalty) constraints
+
+    * State                  ``x_min`` / ``x_max``  (+ ``rho_x_1``, ``rho_x_2``)
+    * Output                 ``z_min`` / ``z_max``  (+ ``rho_z_1``, ``rho_z_2``)
+
+    Plant model
+    -----------
+    Either a :class:`~mbc.models.ContinuousDiscreteModel` (SDE — no algebraic
+    state) or a :class:`~mbc.models.ContinuousDiscreteDAEModel` (SDAE — with
+    algebraic constraint ``g(x, y, …) = 0``).  The OCP detects the model type
+    and dispatches signatures of ``f``, ``g``, ``g^m``, etc. accordingly.
 
     Parameters
     ----------
-    model : ContinuousDiscreteModel
-        Nonlinear continuous-discrete model used for prediction.
+    model : ContinuousDiscreteModel or ContinuousDiscreteDAEModel
+        Plant model providing ``f``, ``g`` (SDAE only), ``gm``, ``hm``, and
+        their Jacobians (only used by the NLP solver if it needs gradients).
     N : int
-        Prediction horizon (number of sampling intervals).
-    lagrange : Callable[[np.ndarray, np.ndarray, np.ndarray], float] or None
-        Economic stage cost ``l_e(x, u, d)`` — a scalar-valued function of
-        state, input, and disturbance (Lagrange term).
-    mayer : Callable[[np.ndarray], float] or None, optional
-        Terminal cost ``V_f(x_N)`` (Mayer term).  ``None`` means no terminal
-        cost.
-    u_min : (nu,) ndarray or None, optional
-        Hard lower bound on inputs.  ``None`` = unconstrained.
-    u_max : (nu,) ndarray or None, optional
-        Hard upper bound on inputs.  ``None`` = unconstrained.
-    du_min : (nu,) ndarray or None, optional
-        Hard lower bound on input rate-of-movement Δu[k] = u[k] − u[k−1].
-        ``None`` = unconstrained.
-    du_max : (nu,) ndarray or None, optional
-        Hard upper bound on input ROM.  ``None`` = unconstrained.
-    S : (nu, nu) ndarray or None, optional
-        Input rate-of-movement cost matrix for the quadratic ROM penalty
-        ‖Δu[k]‖²_S.  ``None`` disables the ROM penalty.
-    c_u : (nu,) ndarray or None, optional
-        Linear input penalty vector  c_uᵀ u[k].  ``None`` disables the term.
-    x_min : (nx,) ndarray or None, optional
-        Soft lower bound on state (penalised by ``rho_x``).  ``None`` disables.
-    x_max : (nx,) ndarray or None, optional
-        Soft upper bound on state.  ``None`` disables.
-    rho_x : float, optional
-        Quadratic penalty weight on soft state constraint violation.
-        Default: 1e4.
-    z_min : (nz,) ndarray or None, optional
-        Soft lower bound on controlled output ``z = g(x, u, d, p, t)``
-        (penalised by ``rho_z``).  ``None`` disables.
-    z_max : (nz,) ndarray or None, optional
-        Soft upper bound on controlled output.  ``None`` disables.
-    rho_z : float, optional
-        Quadratic penalty weight on soft output constraint violation.
-        Default: 1e4.
-    constraints : list of dict or None, optional
-        Additional user-defined constraints in ``scipy.optimize.minimize``
-        format (``{"type": "ineq"/"eq", "fun": ...}``).  These are combined
-        with the built-in input box and ROM constraints.
+        Prediction horizon (number of control intervals).
+    lagrange : callable (t, x, y, u, theta) → float, optional
+        General Lagrange (stage) cost.  ``y`` is an empty array when the
+        plant is an SDE.
+    mayer : callable (x, y, theta) → float, optional
+        General Mayer (terminal) cost.
+    Q_z : (nz, nz) ndarray, optional
+        Tracking weight; activates ``phi_z = Σ_n ‖z_n − z̄_n‖²_{Q_z} Δt``.
+    z_ref : (nz,) or (M+1, nz) ndarray, optional
+        Constant or time-varying tracking reference.  Required when ``Q_z``
+        is set.
+    Q_du : (nu, nu) ndarray, optional
+        Quadratic ROM penalty on Δu_k = u_k − u_{k−1} (with u_{-1} = u_prev).
+    p_u_eco : (nu,) ndarray, optional
+        Linear input cost ``p_u_eco^T u_k T_s``.
+    u_min, u_max : (nu,) ndarray, optional
+        Hard input box.  ``None`` = unconstrained.
+    du_min, du_max : (nu,) ndarray, optional
+        Hard input rate-of-movement box on Δu_k = u_k − u_{k−1}.
+    x_min, x_max : (nx,) ndarray, optional
+        Soft state box (slacked).  Penalty weights ``rho_x_1`` (L1, exact)
+        and ``rho_x_2`` (L2).
+    z_min, z_max : (nz,) ndarray, optional
+        Soft output box (slacked).  Penalty weights ``rho_z_1``, ``rho_z_2``.
+    rho_x_1 : float, optional
+        L1 penalty weight on state slacks (default 0).
+    rho_x_2 : float, optional
+        L2 penalty weight on state slacks (default 1e4).
+    rho_z_1 : float, optional
+        L1 penalty weight on output slacks (default 0).
+    rho_z_2 : float, optional
+        L2 penalty weight on output slacks (default 1e4).
     n_steps : int, optional
-        Explicit-Euler integration sub-steps per sampling interval.
-        Default: 10.
+        Implicit-Euler sub-steps per control interval.  Default: 10.
     solver : str, optional
-        NLP solver passed to ``scipy.optimize.minimize``.  Default: ``"SLSQP"``.
+        ``scipy.optimize.minimize`` method.  Default: ``"SLSQP"``.
     solver_options : dict or None, optional
-        Options forwarded to the solver.  ``None`` uses solver defaults.
+        Forwarded to the NLP solver.
     dt : float or None, optional
-        Sampling interval.  If ``None``, taken from ``model.dt`` if available,
+        Sampling interval ``T_s``.  ``None`` → ``model.dt`` if available,
         else ``1.0``.
     """
 
@@ -115,321 +276,575 @@ class EconomicOptimalControlProblem:
         self,
         model: ContinuousDiscreteModel,
         N: int,
-        lagrange: Callable[[np.ndarray, np.ndarray, np.ndarray], float] | None = None,
-        mayer: Callable[[np.ndarray], float] | None = None,
         *,
+        lagrange: Callable[..., float] | None = None,
+        mayer: Callable[..., float] | None = None,
+        Q_z: np.ndarray | None = None,
+        z_ref: np.ndarray | None = None,
+        Q_du: np.ndarray | None = None,
+        p_u_eco: np.ndarray | None = None,
         u_min: np.ndarray | None = None,
         u_max: np.ndarray | None = None,
         du_min: np.ndarray | None = None,
         du_max: np.ndarray | None = None,
-        S: np.ndarray | None = None,
-        c_u: np.ndarray | None = None,
         x_min: np.ndarray | None = None,
         x_max: np.ndarray | None = None,
-        rho_x: float = 1e4,
+        rho_x_1: float = 0.0,
+        rho_x_2: float = 1e4,
         z_min: np.ndarray | None = None,
         z_max: np.ndarray | None = None,
-        rho_z: float = 1e4,
-        constraints: list | None = None,
+        rho_z_1: float = 0.0,
+        rho_z_2: float = 1e4,
         n_steps: int = 10,
         solver: str = "SLSQP",
         solver_options: dict | None = None,
         dt: float | None = None,
     ) -> None:
-        self._lagrange = lagrange
-        self._mayer = mayer
         self._model = model
-        self._N = N
-        self._u_min = np.asarray(u_min, dtype=float) if u_min is not None else None
-        self._u_max = np.asarray(u_max, dtype=float) if u_max is not None else None
-        self._du_min = np.asarray(du_min, dtype=float) if du_min is not None else None
-        self._du_max = np.asarray(du_max, dtype=float) if du_max is not None else None
-        self._S = np.asarray(S, dtype=float) if S is not None else None
-        self._c_u = np.asarray(c_u, dtype=float) if c_u is not None else None
-        self._x_min = np.asarray(x_min, dtype=float) if x_min is not None else None
-        self._x_max = np.asarray(x_max, dtype=float) if x_max is not None else None
-        self._rho_x = float(rho_x)
-        self._z_min = np.asarray(z_min, dtype=float) if z_min is not None else None
-        self._z_max = np.asarray(z_max, dtype=float) if z_max is not None else None
-        self._rho_z = float(rho_z)
-        self._user_constraints = constraints if constraints is not None else []
-        self._n_steps = n_steps
-        self._solver = solver
-        self._solver_options = solver_options
+        self._N = int(N)
+        self._n_steps = int(n_steps)
+        self._is_dae = isinstance(model, ContinuousDiscreteDAEModel)
+        self._nx = int(model.nx)
+        self._nu = int(model.nu)
+        self._nd = int(model.nd)
+        self._nz = int(model.nz)
+        self._ny = int(model.ny) if self._is_dae else 0
+
+        # Sampling interval
         self._dt: float = (
             float(dt) if dt is not None else float(getattr(model, "dt", 1.0))
         )
+        self._h = self._dt / self._n_steps  # sub-step Δt
+
+        # Objective term storage
+        self._lagrange = lagrange
+        self._mayer = mayer
+        self._Q_z = (
+            np.asarray(Q_z, dtype=float) if Q_z is not None else None
+        )
+        if self._Q_z is not None and z_ref is None:
+            raise ValueError("Q_z requires z_ref to be supplied as well.")
+        self._z_ref = self._broadcast_zref(z_ref) if z_ref is not None else None
+        self._Q_du = (
+            np.asarray(Q_du, dtype=float) if Q_du is not None else None
+        )
+        self._p_u_eco = (
+            np.asarray(p_u_eco, dtype=float) if p_u_eco is not None else None
+        )
+
+        # Hard constraints
+        self._u_min = self._asfloat(u_min)
+        self._u_max = self._asfloat(u_max)
+        self._du_min = self._asfloat(du_min)
+        self._du_max = self._asfloat(du_max)
+
+        # Soft constraints
+        self._x_min = self._asfloat(x_min)
+        self._x_max = self._asfloat(x_max)
+        self._z_min = self._asfloat(z_min)
+        self._z_max = self._asfloat(z_max)
+        self._rho_x_1 = float(rho_x_1)
+        self._rho_x_2 = float(rho_x_2)
+        self._rho_z_1 = float(rho_z_1)
+        self._rho_z_2 = float(rho_z_2)
+        self._has_soft_x = self._x_min is not None or self._x_max is not None
+        self._has_soft_z = self._z_min is not None or self._z_max is not None
+
+        # NLP setup
+        self._solver = solver
+        self._solver_options = solver_options
+
+        # Decision-variable layout
+        self._layout = _DecisionLayout(
+            N=self._N,
+            n_steps=self._n_steps,
+            nx=self._nx,
+            nu=self._nu,
+            ny=self._ny,
+            nz=self._nz,
+            soft_x=self._has_soft_x,
+            soft_z=self._has_soft_z,
+        )
+
+    # ── Public properties ────────────────────────────────────────────────────
 
     @property
     def N(self) -> int:
-        """Prediction horizon (number of sampling intervals)."""
+        """Prediction horizon (number of control intervals)."""
         return self._N
 
     @property
     def nu(self) -> int:
         """Input dimension."""
-        return self._model.nu
+        return self._nu
 
-    def _predict_mean(
+    # ── Helpers ──────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _asfloat(arr) -> np.ndarray | None:
+        return np.asarray(arr, dtype=float) if arr is not None else None
+
+    def _broadcast_zref(self, z_ref) -> np.ndarray:
+        """Broadcast z_ref to shape (M+1, nz)."""
+        z_ref = np.asarray(z_ref, dtype=float)
+        M = self._N * self._n_steps
+        if z_ref.ndim == 1:
+            return np.tile(z_ref, (M + 1, 1))
+        if z_ref.shape == (M + 1, self._nz):
+            return z_ref
+        raise ValueError(
+            f"z_ref must have shape ({self._nz},) or "
+            f"({M + 1}, {self._nz}); got {z_ref.shape}."
+        )
+
+    # Plant dispatch — supports both SDE and SDAE signatures.
+
+    def _f(self, x, y, u, d, p, t):
+        return (
+            self._model.f(x, y, u, d, p, t)
+            if self._is_dae
+            else self._model.f(x, u, d, p, t)
+        )
+
+    def _g(self, x, y, u, d, p, t):
+        if self._is_dae:
+            return self._model.g(x, y, u, d, p, t)
+        return np.empty(0)
+
+    def _gm(self, x, y, u, d, p, t):
+        return (
+            self._model.gm(x, y, u, d, p, t)
+            if self._is_dae
+            else self._model.gm(x, u, d, p, t)
+        )
+
+    # ── NLP construction ─────────────────────────────────────────────────────
+
+    def _build_initial_guess(
         self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
-        t: float,
+        x0: np.ndarray,
+        u_prev: np.ndarray | None,
+        x_prev: np.ndarray | None,
+        y_prev: np.ndarray | None,
     ) -> np.ndarray:
         """
-        Integrate mean dynamics over one sampling interval (no noise).
+        Construct the initial guess for the NLP decision variable.
 
-        Uses ``n_steps`` explicit Euler sub-steps of size
-        ``h = dt / n_steps``.
+        The previous solution (if supplied) is shifted by one control
+        interval (last value repeated) — standard receding-horizon warm
+        start.  Otherwise we use a zero-input guess and a constant-state
+        fill from x0.
         """
-        h = self._dt / self._n_steps
-        x_cur = x.copy()
-        t_cur = t
-        for _ in range(self._n_steps):
-            x_cur = x_cur + self._model.f(x_cur, u, d, p, t_cur) * h
-            t_cur += h
-        return x_cur
+        L = self._layout
+        z0 = np.zeros(L.total)
+
+        # ── Inputs ──
+        if u_prev is not None and u_prev.shape == (self._N, self._nu):
+            U_init = np.empty_like(u_prev)
+            U_init[:-1] = u_prev[1:]
+            U_init[-1] = u_prev[-1]
+        else:
+            U_init = np.zeros((self._N, self._nu))
+        z0[L.u_off:L.u_off + L.u_size] = U_init.ravel()
+
+        # ── States ──
+        if x_prev is not None and x_prev.shape == (L.M + 1, self._nx):
+            # Shift by n_steps sub-steps; tail repeats final state.
+            X_init = np.empty_like(x_prev)
+            X_init[:L.M + 1 - self._n_steps] = x_prev[self._n_steps:]
+            X_init[L.M + 1 - self._n_steps:] = x_prev[-1]
+        else:
+            X_init = np.tile(x0, (L.M + 1, 1))
+        z0[L.x_off:L.x_off + L.x_size] = X_init.ravel()
+
+        # ── Algebraic state (SDAE only) ──
+        if self._is_dae:
+            if y_prev is not None and y_prev.shape == (L.M + 1, self._ny):
+                Y_init = np.empty_like(y_prev)
+                Y_init[:L.M + 1 - self._n_steps] = y_prev[self._n_steps:]
+                Y_init[L.M + 1 - self._n_steps:] = y_prev[-1]
+            else:
+                Y_init = np.zeros((L.M + 1, self._ny))
+            z0[L.y_off:L.y_off + L.y_size] = Y_init.ravel()
+
+        # Slacks default to 0 — already zeros.
+        return z0
+
+    def _objective(
+        self,
+        z: np.ndarray,
+        x_hat: np.ndarray,
+        d_traj: np.ndarray,
+        u_prev_0: np.ndarray,
+        p_theta: np.ndarray,
+        t0: float,
+    ) -> float:
+        """Compute the EOCP objective value."""
+        L = self._layout
+        U = L.get_U(z)
+        X = L.get_X(z)
+        Y = L.get_Y(z)
+        h = self._h
+        Ts = self._dt
+
+        total = 0.0
+
+        # ── Lagrange (right-rectangular over all sub-steps) ──
+        for n in range(L.M):
+            k = n // self._n_steps
+            u_k = U[k]
+            d_k = d_traj[k]
+            x_np1 = X[n + 1]
+            y_np1 = Y[n + 1] if self._is_dae else np.empty(0)
+            t_np1 = t0 + (n + 1) * h
+
+            # User-supplied Lagrange
+            if self._lagrange is not None:
+                total += float(self._lagrange(t_np1, x_np1, y_np1, u_k, p_theta)) * h
+
+            # Tracking
+            if self._Q_z is not None:
+                z_np1 = self._gm(x_np1, y_np1, u_k, d_k, p_theta, t_np1)
+                e = z_np1 - self._z_ref[n + 1]
+                total += float(e @ self._Q_z @ e) * h
+
+        # ── Per-control-interval terms (ROM, input economy) ──
+        for k in range(self._N):
+            u_k = U[k]
+            u_km1 = U[k - 1] if k > 0 else u_prev_0
+
+            if self._Q_du is not None:
+                du = u_k - u_km1
+                total += float(du @ self._Q_du @ du) * Ts
+
+            if self._p_u_eco is not None:
+                total += float(self._p_u_eco @ u_k) * Ts
+
+        # ── Mayer (terminal cost) ──
+        if self._mayer is not None:
+            x_M = X[L.M]
+            y_M = Y[L.M] if self._is_dae else np.empty(0)
+            total += float(self._mayer(x_M, y_M, p_theta))
+
+        # ── Soft-constraint exact penalty (Σ over all sub-steps) ──
+        if self._has_soft_x:
+            PX_lo = L.get_PX_lo(z)
+            PX_hi = L.get_PX_hi(z)
+            for n in range(L.M + 1):
+                if self._x_min is not None:
+                    p_n = PX_lo[n]
+                    total += (self._rho_x_1 * p_n.sum() + self._rho_x_2 * (p_n @ p_n)) * h
+                if self._x_max is not None:
+                    q_n = PX_hi[n]
+                    total += (self._rho_x_1 * q_n.sum() + self._rho_x_2 * (q_n @ q_n)) * h
+
+        if self._has_soft_z:
+            PZ_lo = L.get_PZ_lo(z)
+            PZ_hi = L.get_PZ_hi(z)
+            for n in range(L.M + 1):
+                if self._z_min is not None:
+                    p_n = PZ_lo[n]
+                    total += (self._rho_z_1 * p_n.sum() + self._rho_z_2 * (p_n @ p_n)) * h
+                if self._z_max is not None:
+                    q_n = PZ_hi[n]
+                    total += (self._rho_z_1 * q_n.sum() + self._rho_z_2 * (q_n @ q_n)) * h
+
+        return total
+
+    def _equality_constraints(
+        self,
+        z: np.ndarray,
+        x_hat: np.ndarray,
+        d_traj: np.ndarray,
+        p_theta: np.ndarray,
+        t0: float,
+    ) -> np.ndarray:
+        """
+        Equality constraints (must equal zero):
+
+        * x_0 − x_hat = 0
+        * For each n = 0..M-1:  x_{n+1} − x_n − f(x_{n+1}, y_{n+1}, u_k, d_k) Δt = 0
+        * For each n = 0..M-1:  g(x_{n+1}, y_{n+1}, p) = 0    (SDAE only)
+        * g(x_0, y_0, p) = 0                                  (SDAE only — algebraic consistency at IC)
+        """
+        L = self._layout
+        U = L.get_U(z)
+        X = L.get_X(z)
+        Y = L.get_Y(z)
+        h = self._h
+
+        residuals: list[np.ndarray] = [X[0] - x_hat]
+
+        # Sub-step dynamics residual (implicit Euler)
+        for n in range(L.M):
+            k = n // self._n_steps
+            u_k = U[k]
+            d_k = d_traj[k]
+            x_n = X[n]
+            x_np1 = X[n + 1]
+            y_np1 = Y[n + 1] if self._is_dae else np.empty(0)
+            t_np1 = t0 + (n + 1) * h
+            f_val = self._f(x_np1, y_np1, u_k, d_k, p_theta, t_np1)
+            residuals.append(x_np1 - x_n - f_val * h)
+
+            if self._is_dae:
+                residuals.append(self._g(x_np1, y_np1, u_k, d_k, p_theta, t_np1))
+
+        # Algebraic consistency at the initial sub-step (SDAE only)
+        if self._is_dae:
+            residuals.append(self._g(X[0], Y[0], U[0], d_traj[0], p_theta, t0))
+
+        return np.concatenate(residuals)
+
+    def _inequality_constraints(
+        self,
+        z: np.ndarray,
+        u_prev_0: np.ndarray,
+        d_traj: np.ndarray,
+        p_theta: np.ndarray,
+        t0: float,
+    ) -> np.ndarray:
+        """
+        Inequality constraints in scipy form  (returned values must be ≥ 0).
+
+        * Hard input ROM box       du_min ≤ u_k − u_{k−1} ≤ du_max
+        * Soft state lower         x_n + p_lo,n − x_min ≥ 0
+        * Soft state upper         x_max + q_hi,n − x_n ≥ 0
+        * Soft output lower        z_n + p_lo,n − z_min ≥ 0
+        * Soft output upper        z_max + q_hi,n − z_n ≥ 0
+
+        Plain input box ``u_min ≤ u_k ≤ u_max`` is enforced via scipy
+        ``Bounds`` and is *not* repeated here.  Slack non-negativity is
+        likewise expressed as bounds.
+        """
+        L = self._layout
+        U = L.get_U(z)
+        X = L.get_X(z)
+        Y = L.get_Y(z)
+        h = self._h
+
+        out: list[float] = []
+
+        # ── ROM box ──
+        if self._du_min is not None or self._du_max is not None:
+            for k in range(self._N):
+                u_k = U[k]
+                u_km1 = U[k - 1] if k > 0 else u_prev_0
+                du = u_k - u_km1
+                if self._du_min is not None:
+                    out.extend(du - self._du_min)        # du − du_min ≥ 0
+                if self._du_max is not None:
+                    out.extend(self._du_max - du)        # du_max − du ≥ 0
+
+        # ── Soft state slacks ──
+        if self._has_soft_x:
+            PX_lo = L.get_PX_lo(z)
+            PX_hi = L.get_PX_hi(z)
+            for n in range(L.M + 1):
+                if self._x_min is not None:
+                    out.extend(X[n] + PX_lo[n] - self._x_min)
+                if self._x_max is not None:
+                    out.extend(self._x_max + PX_hi[n] - X[n])
+
+        # ── Soft output slacks (require evaluating gm at every sub-step) ──
+        if self._has_soft_z:
+            PZ_lo = L.get_PZ_lo(z)
+            PZ_hi = L.get_PZ_hi(z)
+            for n in range(L.M + 1):
+                k = min(n // self._n_steps, self._N - 1)
+                u_k = U[k]
+                d_k = d_traj[k]
+                t_n = t0 + n * h
+                y_n = Y[n] if self._is_dae else np.empty(0)
+                z_n = self._gm(X[n], y_n, u_k, d_k, p_theta, t_n)
+                if self._z_min is not None:
+                    out.extend(z_n + PZ_lo[n] - self._z_min)
+                if self._z_max is not None:
+                    out.extend(self._z_max + PZ_hi[n] - z_n)
+
+        return np.asarray(out, dtype=float)
+
+    # ── Public solve / step ──────────────────────────────────────────────────
 
     def solve(
         self,
         x0: np.ndarray,
         d_trajectory: np.ndarray,
         u_prev: np.ndarray | None = None,
+        x_prev: np.ndarray | None = None,
+        y_prev: np.ndarray | None = None,
         p: np.ndarray | None = None,
         t0: float = 0.0,
-    ) -> tuple[np.ndarray, float]:
+    ) -> tuple[np.ndarray, float, dict]:
         """
-        Solve the economic OCP from initial state x0.
+        Solve the EOCP from initial state ``x0``.
 
         Parameters
         ----------
         x0 : (nx,) ndarray
-            Current state estimate (initial condition for the NLP).
+            Filtered initial state ``x̂_{0|0}`` — ``x_0 = x0`` is enforced
+            as an equality constraint.
         d_trajectory : (N, nd) ndarray
-            Predicted disturbance trajectory over the horizon.
-        u_prev : (N, nu) ndarray or None, optional
-            Previous optimal input sequence used as a warm start.
-            Shifted by one step (last element repeated).  ``None``
-            initialises from zeros.
-        p : (nparams,) ndarray or None, optional
-            Parameter vector.  ``None`` uses ``model.params``.
+            ZOH disturbance per control interval.
+        u_prev : (N, nu) ndarray, optional
+            Previous optimal input sequence; shifted by one interval to
+            warm-start the NLP.
+        x_prev : (M+1, nx) ndarray, optional
+            Previous optimal differential-state trajectory; shifted by
+            ``n_steps`` sub-steps to warm-start the NLP.
+        y_prev : (M+1, ny) ndarray, optional
+            Previous optimal algebraic-state trajectory (SDAE only).
+        p : (nparams,) ndarray, optional
+            Parameter vector ``θ``.  ``None`` → ``model.params``.
         t0 : float, optional
-            Start time for the prediction horizon.  Default: 0.
+            Start time for the prediction horizon.
 
         Returns
         -------
         u_opt : (N, nu) ndarray
             Optimal input sequence.
         cost : float
-            Optimal economic cost.
+            Optimal NLP objective value.
+        info : dict
+            ``{"X": (M+1, nx) ndarray, "Y": (M+1, ny) ndarray, "result": OptimizeResult}``
+            for warm-starting the next call and inspection.
         """
         from scipy.optimize import minimize, Bounds
 
-        N = self._N
-        nu = self._model.nu
-        p_ = self._model.params if p is None else p
-
-        # ── Previous input for ROM (Δu[0] = u[0] - u_prev[-1]) ──────────────
-        u_prev_0 = u_prev[-1] if u_prev is not None else np.zeros(nu)
-
-        # ── Warm start ────────────────────────────────────────────────────────
-        if u_prev is not None:
-            u0 = np.empty_like(u_prev)
-            u0[:-1] = u_prev[1:]
-            u0[-1] = u_prev[-1]
-        else:
-            u0 = np.zeros((N, nu))
-        u0_flat = u0.ravel()
-
-        # ── Objective function ─────────────────────────────────────────────────
-        def objective(u_flat: np.ndarray) -> float:
-            U = u_flat.reshape(N, nu)
-            x = x0.copy()
-            t = t0
-            total = 0.0
-            for k in range(N):
-                u_k = U[k]
-                u_km1 = U[k - 1] if k > 0 else u_prev_0
-
-                # Lagrange (economic stage cost)
-                if self._lagrange is not None:
-                    total += float(self._lagrange(x, u_k, d_trajectory[k]))
-
-                # ROM penalty
-                if self._S is not None:
-                    du_k = u_k - u_km1
-                    total += 0.5 * float(du_k @ self._S @ du_k)
-
-                # Linear input penalty
-                if self._c_u is not None:
-                    total += float(self._c_u @ u_k)
-
-                # Propagate state
-                x = self._predict_mean(x, u_k, d_trajectory[k], p_, t)
-                t += self._dt
-
-                # Soft state constraints
-                if self._x_min is not None:
-                    viol = np.maximum(0.0, self._x_min - x)
-                    total += self._rho_x * float(viol @ viol)
-                if self._x_max is not None:
-                    viol = np.maximum(0.0, x - self._x_max)
-                    total += self._rho_x * float(viol @ viol)
-
-                # Soft output constraints
-                if self._z_min is not None or self._z_max is not None:
-                    z_k = self._model.gm(x, u_k, d_trajectory[k], p_, t)
-                    if self._z_min is not None:
-                        viol = np.maximum(0.0, self._z_min - z_k)
-                        total += self._rho_z * float(viol @ viol)
-                    if self._z_max is not None:
-                        viol = np.maximum(0.0, z_k - self._z_max)
-                        total += self._rho_z * float(viol @ viol)
-
-            # Mayer (terminal cost)
-            if self._mayer is not None:
-                total += float(self._mayer(x))
-
-            return total
-
-        # ── Build scipy Bounds for hard input box ─────────────────────────────
-        if self._u_min is not None or self._u_max is not None:
-            lb = (
-                np.tile(self._u_min, N)
-                if self._u_min is not None
-                else np.full(N * nu, -np.inf)
+        L = self._layout
+        x_hat = np.asarray(x0, dtype=float)
+        d_traj = np.asarray(d_trajectory, dtype=float)
+        if d_traj.shape != (self._N, self._nd):
+            raise ValueError(
+                f"d_trajectory must have shape ({self._N}, {self._nd}); got {d_traj.shape}."
             )
-            ub = (
-                np.tile(self._u_max, N)
-                if self._u_max is not None
-                else np.full(N * nu, np.inf)
+        p_theta = (
+            np.asarray(p, dtype=float)
+            if p is not None
+            else np.asarray(self._model.params, dtype=float)
+        )
+        u_prev_0 = (
+            u_prev[-1] if u_prev is not None else np.zeros(self._nu)
+        )
+
+        # ── Warm-start initial guess ──
+        z0 = self._build_initial_guess(x_hat, u_prev, x_prev, y_prev)
+
+        # ── Bounds (input box, slack non-negativity) ──
+        lb = np.full(L.total, -np.inf)
+        ub = np.full(L.total, np.inf)
+        if self._u_min is not None:
+            lb[L.u_off:L.u_off + L.u_size] = np.tile(self._u_min, self._N)
+        if self._u_max is not None:
+            ub[L.u_off:L.u_off + L.u_size] = np.tile(self._u_max, self._N)
+        # Slack variables ≥ 0
+        if self._has_soft_x:
+            lb[L.px_lo_off:L.px_lo_off + L.px_lo_size] = 0.0
+            lb[L.px_hi_off:L.px_hi_off + L.px_hi_size] = 0.0
+        if self._has_soft_z:
+            lb[L.pz_lo_off:L.pz_lo_off + L.pz_lo_size] = 0.0
+            lb[L.pz_hi_off:L.pz_hi_off + L.pz_hi_size] = 0.0
+        bounds = Bounds(lb, ub)
+
+        # ── Constraint definitions ──
+        constraints: list[dict[str, Any]] = [
+            {
+                "type": "eq",
+                "fun": lambda z: self._equality_constraints(z, x_hat, d_traj, p_theta, t0),
+            }
+        ]
+        # Skip the inequality constraint dict if we have nothing to add — scipy
+        # complains about empty constraint vectors.
+        if (
+            self._du_min is not None
+            or self._du_max is not None
+            or self._has_soft_x
+            or self._has_soft_z
+        ):
+            constraints.append(
+                {
+                    "type": "ineq",
+                    "fun": lambda z: self._inequality_constraints(z, u_prev_0, d_traj, p_theta, t0),
+                }
             )
-            bounds = Bounds(lb, ub)
-        else:
-            bounds = None
 
-        # ── Build scipy constraints for hard ROM bounds ───────────────────────
-        all_constraints: list = list(self._user_constraints)
-        if self._du_min is not None or self._du_max is not None:
-            du_lo = self._du_min
-            du_hi = self._du_max
-
-            def _make_rom_con(k_: int, lo: bool) -> Callable:
-                def _con(u_flat: np.ndarray) -> np.ndarray:
-                    u_k = u_flat[k_ * nu:(k_ + 1) * nu]
-                    u_km1 = u_flat[(k_ - 1) * nu:k_ * nu] if k_ > 0 else u_prev_0
-                    du = u_k - u_km1
-                    return du - du_lo if lo else du_hi - du
-                return _con
-
-            for k in range(N):
-                if du_lo is not None:
-                    all_constraints.append(
-                        {"type": "ineq", "fun": _make_rom_con(k, True)}
-                    )
-                if du_hi is not None:
-                    all_constraints.append(
-                        {"type": "ineq", "fun": _make_rom_con(k, False)}
-                    )
-
-        # ── Solve NLP ─────────────────────────────────────────────────────────
+        # ── Solve ──
         result = minimize(
-            objective,
-            u0_flat,
+            lambda z: self._objective(z, x_hat, d_traj, u_prev_0, p_theta, t0),
+            z0,
             method=self._solver,
             bounds=bounds,
-            constraints=all_constraints if all_constraints else (),
+            constraints=constraints,
             options=self._solver_options,
         )
 
-        u_opt = result.x.reshape(N, nu)
-        cost = float(result.fun)
-        return u_opt, cost
+        z_opt = result.x
+        U = L.get_U(z_opt).copy()
+        X = L.get_X(z_opt).copy()
+        Y = L.get_Y(z_opt).copy() if self._is_dae else np.zeros((L.M + 1, 0))
+        info = {"X": X, "Y": Y, "result": result}
+        return U, float(result.fun), info
 
     def step(
         self,
         x0: np.ndarray,
         d_trajectory: np.ndarray,
         u_prev: np.ndarray | None = None,
+        x_prev: np.ndarray | None = None,
+        y_prev: np.ndarray | None = None,
         p: np.ndarray | None = None,
         t0: float = 0.0,
     ) -> np.ndarray:
         """
-        Solve and return only the first optimal control action.
-
-        This is the standard receding-horizon call for the OCP.
-
-        Parameters
-        ----------
-        x0 : (nx,) ndarray
-            Current state estimate.
-        d_trajectory : (N, nd) ndarray
-            Predicted disturbance trajectory.
-        u_prev : (N, nu) ndarray or None, optional
-            Previous optimal sequence for warm-starting.
-        p : (nparams,) ndarray or None, optional
-            Parameter vector.  ``None`` uses ``model.params``.
-        t0 : float, optional
-            Start time.  Default: 0.
+        Solve and return only the first optimal control action (receding horizon).
 
         Returns
         -------
         u0 : (nu,) ndarray
-            First element of the optimal input sequence.
         """
-        u_opt, _ = self.solve(x0, d_trajectory, u_prev, p=p, t0=t0)
+        u_opt, _, _ = self.solve(
+            x0, d_trajectory,
+            u_prev=u_prev, x_prev=x_prev, y_prev=y_prev,
+            p=p, t0=t0,
+        )
         return u_opt[0]
 
 
-# ── Generic CD-NMPC Controller ────────────────────────────────────────────────
+# ── Generic CD-NMPC Controller ───────────────────────────────────────────────
 
 
 class CDNMPCController:
     """
-    Generic Continuous-Discrete Nonlinear MPC controller (Ph.D. Ch. 9).
+    Closed-loop continuous-discrete NMPC controller (ControlToolbox §EMPC —
+    *ENMPC Algorithm*).
 
-    Composes **any** continuous-discrete state estimator with **any** OCP
-    that exposes ``solve(x0, d_trajectory, u_prev, p, t0) → (u_opt, cost)``
-    into a closed-loop receding-horizon controller.
+    Composes any continuous-discrete state estimator with any OCP that
+    exposes ``solve(x0, d_trajectory, …) → (u_opt, cost, info)`` (or the
+    legacy two-tuple ``(u_opt, cost)``) into a receding-horizon controller.
 
-    At each measurement time t_k the following steps are executed:
+    At each measurement time t_k:
 
-      1. **Estimate**  x̂[k] ← ``estimator.step(y[k], u[k−1], d[k], p, t_k)``
-      2. **Optimise**  U*   ← ``ocp.solve(x̂[k], d_trajectory, u_seq_prev, p, t_k)``
-      3. **Apply**     u[k] = U*[0]   (receding horizon)
-
-    The estimator is expected to expose a ``step(ym, u, d, p, t)`` method that
-    performs a combined predict-and-update and returns ``(x_hat, P)``.  This
-    matches the interface of :class:`~mbc.estimation.ContinuousDiscreteEKF` and
-    the other CD estimators in the ``mbc.estimation`` sub-package.
-
-    The OCP must expose:
-
-    - ``solve(x0, d_trajectory, u_prev, p, t0) → (u_opt, cost)``
-    - ``N`` property (prediction horizon)
-    - ``nu`` property (input dimension)
-
-    This is satisfied by both :class:`CDTrackingOptimalControlProblem` and
-    :class:`EconomicOptimalControlProblem`.
+      1. **Measure**   y^{m,s}_k  (passed in via :meth:`step`)
+      2. **Estimate**  z^c_k = κ(z^c_{k−1}, u_{k−1}, d_{k−1}, y^{m,s}_k, θ^c)
+                       (delegated to ``estimator.step``)
+      3. **Optimise**  u_k = λ(z^c_k, θ^c)  (delegated to ``ocp.solve``)
+      4. **Apply**     return ``u_k`` to the caller, who advances the plant.
 
     Parameters
     ----------
-    estimator : object with ``step(ym, u, d, p, t) → (x_hat, P)``
-        State estimator.  Typically a
-        :class:`~mbc.estimation.ContinuousDiscreteEKF` or any other CD
-        estimator in the ``mbc.estimation`` sub-package.
+    estimator : object with ``step(ym, u, d, p, t) → (x_hat, P)`` (or ``(x_hat, y_hat, P)`` for SDAEs)
+        Continuous-discrete state estimator.
     ocp : object with ``solve``, ``N``, ``nu``
-        Optimal control problem (NLP solver).  Typically an
-        :class:`EconomicOptimalControlProblem` or a
-        :class:`CDTrackingOptimalControlProblem`.
+        Optimal control problem (NLP solver) — typically an
+        :class:`EconomicOptimalControlProblem`.
     """
 
     def __init__(self, estimator, ocp) -> None:
         self._estimator = estimator
         self._ocp = ocp
         self._u_seq_prev: np.ndarray | None = None
+        self._x_traj_prev: np.ndarray | None = None
+        self._y_traj_prev: np.ndarray | None = None
         self._u_prev: np.ndarray = np.zeros(ocp.nu)
 
     def step(
@@ -440,41 +855,49 @@ class CDNMPCController:
         t: float = 0.0,
     ) -> np.ndarray:
         """
-        Execute one CD-NMPC step.
+        Execute one closed-loop ENMPC step.
 
         Parameters
         ----------
         y : (nym,) ndarray
-            Current measurement ym[k].
+            Current measurement ``y^{m,s}_k``.
         d_trajectory : (N, nd) ndarray
-            Predicted disturbance trajectory over the horizon.
-            ``d_trajectory[0]`` is the current disturbance d[k].
+            Disturbance forecast over the horizon; ``d_trajectory[0] = d_k``.
         p : (nparams,) ndarray or None, optional
-            Parameter vector.  ``None`` uses an empty array (no parameters).
+            Parameter vector ``θ^c``.  ``None`` → empty vector.
         t : float, optional
-            Current measurement time t_k.  Default: 0.
+            Current time ``t_k``.
 
         Returns
         -------
-        u : (nu,) ndarray
-            Optimal input u[k] to apply.
+        u_k : (nu,) ndarray
+            Optimal input ``u_k`` to apply over ``[t_k, t_{k+1}]``.
         """
-        p_ = np.array([], dtype=float) if p is None else p
+        p_ = np.array([], dtype=float) if p is None else np.asarray(p, dtype=float)
         d0 = d_trajectory[0]
 
-        # Step 1: estimate
-        x_hat, _ = self._estimator.step(y, self._u_prev, d0, p_, t)
+        # 2. Estimate
+        est_out = self._estimator.step(y, self._u_prev, d0, p_, t)
+        # Estimator may return (x_hat, P) or (x_hat, y_hat, P).
+        x_hat = est_out[0]
 
-        # Step 2: optimise
-        u0 = self._ocp.step(x_hat, d_trajectory, self._u_seq_prev, p=p_, t0=t)
+        # 3. Optimise
+        u_opt, _, info = self._ocp.solve(
+            x_hat,
+            d_trajectory,
+            u_prev=self._u_seq_prev,
+            x_prev=self._x_traj_prev,
+            y_prev=self._y_traj_prev,
+            p=p_,
+            t0=t,
+        )
+        u_k = u_opt[0]
 
-        # Update warm-start storage
-        nu = self._ocp.nu
-        N = self._ocp.N
-        if self._u_seq_prev is None:
-            self._u_seq_prev = np.zeros((N, nu))
-        self._u_seq_prev[:-1] = self._u_seq_prev[1:]
-        self._u_seq_prev[-1] = u0
+        # Cache for next warm-start
+        self._u_seq_prev = u_opt
+        self._x_traj_prev = info.get("X")
+        self._y_traj_prev = info.get("Y")
+        self._u_prev = u_k
 
-        self._u_prev = u0
-        return u0
+        # 4. Apply (return to caller)
+        return u_k
