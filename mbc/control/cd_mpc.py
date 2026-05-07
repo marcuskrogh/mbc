@@ -1,31 +1,25 @@
 """
 Model Predictive Controller for linear continuous-discrete systems.
 
-``CDMPCController`` composes a ``CDKalmanFilter`` and a
-``CDOptimalControlProblem`` and implements the receding-horizon policy
-for a ``LinearContinuousDiscreteModel``.
+:class:`CDMPCController` composes a :class:`~mbc.estimation.CDKalmanFilter`
+and a :class:`~mbc.control.CDOptimalControlProblem` and implements the
+receding-horizon policy described in ControlToolbox §EMPC —
+*ENMPC Algorithm*, specialised to the linear continuous-discrete case.
 
-Control loop (M.Sc. thesis, Ch. 5)
-------------------------------------
 At each measurement time t_k:
 
-  1. **Estimate**   x̂[k] ← estimator.update(y[k], d[k])
-  2. **Optimise**   U*   ← ocp.solve(x̂[k], D, x_ref)
-  3. **Apply**      u[k]  = U*[0:m]           (receding horizon)
-  4. **Record**     estimator.record_action(u[k])
+    1. **Measure**   ym[k]                                  (passed to ``step``)
+    2. **Estimate**  x̂[k|k] = κ(x̂[k-1|k-1], u[k-1], d[k-1], ym[k])
+                                                            (estimator.step,
+                                                             continuous ODE
+                                                             integration)
+    3. **Optimise**  U* = λ(x̂[k|k], …)                       (ocp.solve, ZOH-QP)
+    4. **Apply**     u[k] = U*[0:nu]                          (returned to caller)
 
-The ZOH discretisation of the continuous dynamics is performed inside
-``CDKalmanFilter.update`` (via ``model.discretize``) and inside
-``CDOptimalControlProblem.solve`` (same call).  Both use the sampling
-interval ``model.dt`` implicitly.
-
-Notation
---------
-    n   – state dimension          x ∈ ℝⁿ
-    m   – input dimension          u ∈ ℝᵐ
-    p   – disturbance dimension    d ∈ ℝᵖ
-    l   – output dimension         y ∈ ℝˡ
-    N   – prediction horizon
+The estimator integrates the continuous-time matrices ``A``, ``B``, ``E``
+directly via ODE integration; the OCP uses ZOH-discretised matrices
+``(Ad, Bd, Ed)`` computed once at construction time inside
+:class:`CDOptimalControlProblem`.
 """
 
 from __future__ import annotations
@@ -45,10 +39,13 @@ if TYPE_CHECKING:
 
 class CDMPCController:
     """
-    Model predictive controller for a linear continuous-discrete system.
+    MPC controller for a linear continuous-discrete plant.
 
-    Composes a ``CDKalmanFilter`` and a ``CDOptimalControlProblem`` into a
-    single receding-horizon controller.
+    Composes a :class:`~mbc.estimation.CDKalmanFilter` and a
+    :class:`~mbc.control.CDOptimalControlProblem` into a single
+    receding-horizon controller.  The previously-applied ``(u, d)`` are
+    tracked internally so that the estimator's predict step has the
+    correct ZOH inputs over the just-completed interval.
 
     Parameters
     ----------
@@ -56,9 +53,9 @@ class CDMPCController:
         Plant model providing ``nu``, ``nd``, ``x_ref``, ``discretize``,
         and ``discretize_noise``.
     estimator : CDKalmanFilter
-        State estimator.
+        State estimator (continuous ODE integration internally).
     ocp       : CDOptimalControlProblem
-        Optimal control problem (QP solver).
+        Optimal control problem (lifted-batch QP on ZOH-discretised matrices).
     """
 
     def __init__(
@@ -70,47 +67,52 @@ class CDMPCController:
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
-        self._u_prev: matrix = _zeros(model.nu, 1)
+        self._u_prev_np: np.ndarray = np.zeros(model.nu)
+        self._d_prev_np: np.ndarray = np.zeros(model.nd)
 
     def step(
         self,
-        y: matrix,
+        ym: matrix,
         D: matrix,
     ) -> Tuple[matrix, matrix, matrix]:
         """
-        Execute one MPC step.
-
-        Runs the estimate → optimise → apply cycle:
-
-          1. ``estimator.update(y, d[0])`` → x̂[k]
-          2. ``ocp.solve(x̂[k], D, x_ref)`` → (U*, X*)
-          3. Return u[k] = U*[0:m]
-          4. ``estimator.record_action(u[k])``
+        Execute one closed-loop CD-MPC step.
 
         Parameters
         ----------
-        y : (l, 1) cvxopt column — current measurement y[k].
-        D : (N·p, 1) cvxopt column — stacked disturbance forecast
-            [d[0]; d[1]; …; d[N−1]] over the prediction horizon.
+        ym : (nym, 1) cvxopt column — measurement ``ym[k]``.
+        D  : (N · nd, 1) cvxopt column — stacked disturbance forecast
+             ``[d[k]; d[k+1]; …; d[k + N − 1]]``.
 
         Returns
         -------
-        u     : (m, 1) cvxopt column — optimal input u[k].
-        U_seq : (N·m, 1) cvxopt column — full optimal input sequence.
-        X_seq : (N·n, 1) cvxopt column — predicted state trajectory x[1], …, x[N].
+        u     : (nu, 1) cvxopt column — optimal input ``u_k``.
+        U_seq : (N · nu, 1) full optimal input sequence.
+        X_seq : (N · nx, 1) predicted state trajectory.
         """
-        n_u = self._model.nu
-        n_d = self._model.nd
-        d0 = D[:n_d]
+        nu = self._model.nu
+        nd = self._model.nd
 
-        x_hat = self._estimator.update(y, d0)
+        # Step 2: estimate using the previously-applied (u, d)
+        ym_np = np.array(list(ym), dtype=float)
+        x_hat_np, _ = self._estimator.step(
+            ym_np, self._u_prev_np, self._d_prev_np,
+        )
+
+        # Step 3: optimise
+        x_hat_cvx = _np_to_cvx(x_hat_np.reshape(-1, 1))
         x_ref_cvx = _np_to_cvx(
             np.asarray(self._model.x_ref, dtype=float).reshape(-1, 1)
         )
         U_seq, X_seq = self._ocp.solve(
-            x_hat, D, x_ref_cvx, u_prev=self._u_prev
+            x_hat_cvx, D, x_ref_cvx, u_prev=matrix(self._u_prev_np.tolist(), (nu, 1)),
         )
-        u = U_seq[:n_u]
-        self._u_prev = matrix(u)
-        self._estimator.record_action(u)
+
+        # Step 4: cache (u_now, d_now) for next step
+        u = U_seq[:nu]
+        u_now_np = np.array(list(u), dtype=float)
+        d_now_np = np.array(list(D[:nd]), dtype=float)
+        self._u_prev_np = u_now_np
+        self._d_prev_np = d_now_np
+
         return u, U_seq, X_seq

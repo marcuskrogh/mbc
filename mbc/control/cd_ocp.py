@@ -114,6 +114,11 @@ class _CDModelAdapter:
         return self._m.Cm
 
     @property
+    def Cz(self) -> np.ndarray:
+        """Output matrix Cz (numpy ndarray) — used by ``OptimalControlProblem``."""
+        return self._m.Cz
+
+    @property
     def Ad(self) -> np.ndarray:
         """ZOH-discretised state-transition matrix Ad (numpy ndarray)."""
         self._ensure_discretized()

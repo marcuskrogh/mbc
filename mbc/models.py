@@ -62,23 +62,29 @@ if TYPE_CHECKING:
 
 class LinearDiscreteModel(ABC):
     """
-    Abstract interface for a linear discrete-time system:
+    Abstract interface for a linear discrete-time stochastic system
+    (ControlToolbox notation, discrete-time specialisation):
 
         x[k+1] = Ad x[k] + Bd u[k] + Ed d[k] + Gd w[k],   w[k] ~ N(0, Qd)
-        z[k]   = Cz x[k] + Dz u[k] + Fz d[k]
+        z[k]   = Cz x[k] + Dz u[k] + Fz d[k]                      (output ``g^m``)
         ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
+                                                                  (measurement ``h^m``)
 
-    The system matrices Ad, Bd, Ed, Gd, Cm, Cz, Dm, Dz, Fm, Fz are constant
-    (LTI).  This interface is analogous to
-    :class:`LinearContinuousDiscreteModel` but for discrete-time systems.
+    The system matrices ``Ad, Bd, Ed, Gd, Cm, Cz, Dm, Dz, Fm, Fz`` are
+    constant (LTI).  This interface is the discrete-time analogue of
+    :class:`LinearContinuousDiscreteModel` and uses the same naming
+    conventions (``Cz``/``Cm``/``Qd``/``Rm``/``Gd``) that the
+    continuous-discrete state-estimation documents
+    (ControlToolbox §SDE / §SDAE) prescribe for the linearised filter.
 
     Dimensions
     ----------
         nx   – state dimension              x ∈ ℝⁿˣ
         nu   – input dimension              u ∈ ℝⁿᵘ
         nd   – disturbance dimension        d ∈ ℝⁿᵈ
-        nym  – measurement output dimension ym ∈ ℝⁿʸᵐ  (derived: Cm.shape[0])
-        nz   – output dimension  z ∈ ℝⁿᶻ   (derived: Cz.shape[0])
+        nw   – process-noise dimension      w ∈ ℝⁿʷ   (derived: Gd.shape[1])
+        nym  – measurement output dimension ym ∈ ℝⁿʸᵐ (derived: Cm.shape[0])
+        nz   – output dimension             z ∈ ℝⁿᶻ   (derived: Cz.shape[0])
 
     Parameter-identification interface
     -----------------------------------
@@ -177,17 +183,18 @@ class LinearDiscreteModel(ABC):
     @property
     def Cz(self) -> np.ndarray:
         """
-        Controlled output matrix Cz ∈ ℝⁿᶻˣⁿˣ.
+        Output matrix Cz ∈ ℝⁿᶻˣⁿˣ — discrete analogue of the continuous
+        output function ``g^m`` (ControlToolbox §EMPC).
 
         Default: Cm (same output set as measurements).
-        Subclasses may override for a different controlled-output selection.
+        Subclasses may override for a different output selection.
         """
         return self.Cm
 
     @property
     def Dz(self) -> np.ndarray:
         """
-        Controlled output feedthrough Dz ∈ ℝⁿᶻˣⁿᵘ.
+        Output feedthrough Dz ∈ ℝⁿᶻˣⁿᵘ.
 
         Default: zeros (no direct feedthrough from inputs to outputs).
         """
@@ -196,7 +203,7 @@ class LinearDiscreteModel(ABC):
     @property
     def Fz(self) -> np.ndarray:
         """
-        Controlled output disturbance feedthrough Fz ∈ ℝⁿᶻˣⁿᵈ.
+        Output disturbance feedthrough Fz ∈ ℝⁿᶻˣⁿᵈ.
 
         Default: zeros (no direct feedthrough from disturbances to outputs).
         """
@@ -222,8 +229,13 @@ class LinearDiscreteModel(ABC):
 
     @property
     def nz(self) -> int:
-        """Controlled output dimension nz = Cz.shape[0]."""
+        """Output dimension nz = Cz.shape[0]."""
         return self.Cz.shape[0]
+
+    @property
+    def nw(self) -> int:
+        """Process-noise dimension nw = Gd.shape[1]."""
+        return self.Gd.shape[1]
 
     # ── Parameter-identification interface (non-abstract, overridable) ────
 

@@ -1,49 +1,42 @@
 """
-Discrete-time Kalman Filter (state estimator).
+Discrete-time Kalman Filter.
 
 Implements the standard discrete-time Kalman filter for a linear
-discrete-time system of the form:
+discrete-time stochastic system
 
-    x[k+1] = A x[k] + B u[k] + E d[k]       (state transition)
-    y[k]   = C x[k]                          (observation)
+    x[k+1] = Ad x[k] + Bd u[k] + Ed d[k] + Gd w[k],   w[k] ~ N(0, Qd)
+    ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
 
-Algorithm
----------
-The filter alternates between two steps each time a new measurement
-y[k] arrives:
+The filter notation matches the continuous-discrete state-estimation
+documents (ControlToolbox §SDE / §SDAE state estimation): innovation
+``e_k``, innovation covariance ``R_e``, Kalman gain ``K``, measurement
+output matrix ``Cm``, process-noise covariance ``Qd``, measurement-noise
+covariance ``Rm``.
 
-  **Prediction** (time update):
-    x̂⁻  = A x̂[k−1] + B u[k−1] + E d[k−1]
-    P⁻   = A P[k−1] Aᵀ + Q                     (standard form, G = I)
-    P⁻   = A P[k−1] Aᵀ + G Q Gᵀ               (noise-separated form, M.Sc. Ch. 5.4)
+Time update over ``[t_{k-1}, t_k]``
+-----------------------------------
+    x̂_{k|k-1}  = Ad x̂_{k-1|k-1} + Bd u[k−1] + Ed d[k−1]
+    P_{k|k-1}  = Ad P_{k-1|k-1} Adᵀ + Gd Qd Gdᵀ
 
-  **Filtering** (measurement update, Joseph stabilised form):
-    S    = C P⁻ Cᵀ + R                       (innovation covariance)
-    K    = P⁻ Cᵀ S⁻¹                         (Kalman gain)
-    x̂    = x̂⁻ + K (y − C x̂⁻)               (corrected state)
-    P    = (I − K C) P⁻ (I − K C)ᵀ + K R Kᵀ (Joseph form)
+Inputs and disturbances are zero-order hold over each interval.
 
-    If a boolean mask is supplied, outputs with mask[i]=False are treated
-    as missing and the measurement update is skipped for those channels
-    (M.Sc. Ch. 5.5).  When all outputs are masked, the full update is
-    skipped (prediction-only step).
+Measurement update at t_k (Joseph form)
+---------------------------------------
+    ŷ^m_{k|k-1} = Cm x̂_{k|k-1}
+    e_k         = ym_k − ŷ^m_{k|k-1}                    (innovation)
+    R_e         = Cm P_{k|k-1} Cmᵀ + Rm                  (innovation covariance)
+    K_k         = P_{k|k-1} Cmᵀ R_e⁻¹                    (Kalman gain)
 
-The Joseph form  P = (I−KC) P⁻ (I−KC)ᵀ + K R Kᵀ  guarantees that
-the posterior covariance remains symmetric positive-semidefinite even
-in the presence of finite-precision arithmetic, unlike the conventional
-form  P = (I−KC) P⁻.
+    x̂_{k|k}    = x̂_{k|k-1} + K_k e_k
+    P_{k|k}    = (I − K_k Cm) P_{k|k-1} (I − K_k Cm)ᵀ + K_k Rm K_kᵀ        (Joseph)
 
-Notation
---------
-    n   – state dimension                     x ∈ ℝⁿ
-    m   – input dimension                     u ∈ ℝᵐ
-    p   – disturbance dimension               d ∈ ℝᵖ
-    l   – output dimension                    y ∈ ℝˡ
-    Q   – process noise covariance            Q ∈ ℝⁿˣⁿ
-    G   – noise input matrix                  G ∈ ℝⁿˣⁿ  (default I)
-    R   – measurement noise covariance        R ∈ ℝˡˣˡ
-    P   – state estimation error covariance   P ∈ ℝⁿˣⁿ
-    K   – Kalman gain                         K ∈ ℝⁿˣˡ
+The Joseph stabilising form preserves symmetry and positive
+semi-definiteness of ``P_{k|k}`` in finite-precision arithmetic.
+
+Missing observations (M.Sc. thesis Ch. 5.5) are handled by the optional
+``mask`` argument: outputs with ``mask[i] = False`` are excluded from the
+measurement update.  When all entries are ``False`` the update step is
+skipped (prediction-only).
 """
 
 from __future__ import annotations
@@ -58,264 +51,217 @@ if TYPE_CHECKING:
     from ..models import LinearDiscreteModel
 
 
-# ── Kalman Filter ────────────────────────────────────────────────────────
-
-
 class KalmanFilter:
     """
-    Discrete-time Kalman filter with Joseph stabilised covariance update.
+    Discrete-time Kalman filter with Joseph-stabilised covariance update.
+
+    The filter reads ``Qd``, ``Rm`` and ``Gd`` directly from the supplied
+    ``LinearDiscreteModel``; the constructor only takes the initial state
+    estimate and covariance.  This matches the continuous-discrete EKF
+    interface (:class:`~mbc.estimation.ContinuousDiscreteEKF`) and removes
+    redundant tuning parameters.
 
     Parameters
     ----------
     model : LinearDiscreteModel
-        Linear discrete-time plant providing dimensions, output matrix C,
-        initial state x, and the ``discretize(d)`` method.
-    Q : numpy or cvxopt matrix (n, n), optional
-        Process noise covariance.  Default: 0.01 · Iₙ.
-    R : numpy or cvxopt matrix (l, l), optional
-        Measurement noise covariance.  Default: 0.1 · Iˡ.
-    P0 : numpy or cvxopt matrix (n, n), optional
-        Initial state covariance.  Default: Iₙ.
-    noise_matrix : numpy or cvxopt matrix (n, n), optional
-        Noise input matrix G so that the prediction covariance step becomes
-        ``P⁻ = A P Aᵀ + G Q Gᵀ`` (M.Sc. Ch. 5.4).  When ``None`` (default),
-        the standard form ``P⁻ = A P Aᵀ + Q`` is used (equivalent to G = I).
+        Plant model providing ``Ad``, ``Bd``, ``Ed``, ``Gd``, ``Cm``,
+        ``Qd``, ``Rm`` and ``predict_offset``.
+    x0 : (nx,) ndarray, optional
+        Initial state estimate ``x̂_{0|0}``.  Defaults to ``np.array(model.x)``.
+    P0 : (nx, nx) ndarray, optional
+        Initial state error covariance ``P_{0|0}``.  Defaults to ``I_{nx}``.
     """
 
     def __init__(
         self,
         model: "LinearDiscreteModel",
-        Q=None,
-        R=None,
-        P0=None,
-        noise_matrix=None,
+        x0: np.ndarray | None = None,
+        P0: np.ndarray | None = None,
     ) -> None:
         self._model = model
-        n = model.nx
-        l = model.Cm.shape[0]  # model.Cm is numpy
+        nx = model.nx
 
-        # Noise covariances (numpy)
-        self._Q_np: np.ndarray = _any_to_np2d(Q) if Q is not None else 0.01 * np.eye(n)
-        self._R_np: np.ndarray = _any_to_np2d(R) if R is not None else 0.1 * np.eye(l)
+        # State estimate and covariance
+        self._x_np: np.ndarray = (
+            np.asarray(x0, dtype=float).copy() if x0 is not None
+            else np.array(list(model.x), dtype=float)
+        )
+        self._P_np: np.ndarray = (
+            _any_to_np2d(P0).copy() if P0 is not None
+            else np.eye(nx)
+        )
 
-        # Noise input matrix G (M.Sc. Ch. 5.4); None means standard form
-        self._G_np: np.ndarray | None = _any_to_np2d(noise_matrix) if noise_matrix is not None else None
-
-        # State error covariance (numpy)
-        self._P_np: np.ndarray = _any_to_np2d(P0) if P0 is not None else np.eye(n)
-
-        # State estimate x̂ (numpy; initialised from the model)
-        self._x_np: np.ndarray = np.array(list(model.x), dtype=float)
-
-        # Memory for previous input and disturbance (numpy)
-        self._u_prev_np: np.ndarray = np.zeros(model.nu)
-        self._d_prev_np: np.ndarray = np.zeros(model.nd)
-
-        self._first: bool = True
-
-        # Last Kalman innovation ν = y − C x̂⁻  (set after each filtering step)
+        # Last innovation (set after each measurement update)
         self._last_innovation_np: Optional[np.ndarray] = None
 
-    # ── Public properties ────────────────────────────────────────────────
+    # ── Public properties ────────────────────────────────────────────────────
 
     @property
     def x_hat(self) -> np.ndarray:
-        """Current state estimate x̂[k] ∈ ℝⁿ (1-D array, copy)."""
+        """Current state estimate x̂ ∈ ℝⁿˣ (copy)."""
         return self._x_np.copy()
 
     @property
     def P(self) -> np.ndarray:
-        """Current covariance P[k] ∈ ℝⁿˣⁿ (2-D array, copy)."""
+        """Current state error covariance P ∈ ℝⁿˣˣⁿˣ (copy)."""
         return self._P_np.copy()
 
     @property
     def last_innovation(self) -> Optional[List[float]]:
         """
-        Most recent Kalman innovation ν = y − C x̂⁻ as a plain Python list.
-
-        Returns ``None`` until the first filtering step has been completed
-        (i.e. until the second call to :meth:`update`).
+        Most recent innovation ``e_k = ym_k − Cm x̂_{k|k-1}`` as a plain
+        Python list, or ``None`` until the first measurement update has
+        been performed.
         """
         if self._last_innovation_np is None:
             return None
         return [float(v) for v in self._last_innovation_np]
 
-    # ── Prediction step ──────────────────────────────────────────────────
+    # ── Filter steps ─────────────────────────────────────────────────────────
 
     def predict(
         self,
-        A_np: np.ndarray,
-        B_np: np.ndarray,
-        E_np: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Time update (prediction).
+        Time update: propagate the state estimate and covariance one
+        sampling interval forward using the input ``u`` and disturbance
+        ``d`` applied (ZOH) over ``[t_{k-1}, t_k]``.
 
-        Propagates the state estimate and covariance one step forward
-        using the previous applied input u[k−1] and disturbance d[k−1]:
-
-            x̂⁻  = A x̂ + B u + E d
-            P⁻   = A P Aᵀ + Q
+            x̂_{k|k-1} = Ad x̂ + Bd u + Ed d + offset(d)
+            P_{k|k-1} = Ad P Adᵀ + Gd Qd Gdᵀ
 
         Parameters
         ----------
-        A_np : (n, n) ndarray  — state transition matrix.
-        B_np : (n, m) ndarray  — input matrix.
-        E_np : (n, p) ndarray  — disturbance matrix.
+        u : (nu,) ndarray  — input applied over the just-completed interval.
+        d : (nd,) ndarray  — disturbance applied over the same interval.
 
         Returns
         -------
-        x_pred : (n,) predicted state estimate.
-        P_pred : (n, n) predicted covariance.
+        x_pred : (nx,) predicted state estimate x̂_{k|k-1}.
+        P_pred : (nx, nx) predicted covariance P_{k|k-1}.
         """
-        x_pred_np = (
-            A_np @ self._x_np
-            + B_np @ self._u_prev_np
-            + E_np @ self._d_prev_np
+        model = self._model
+        Ad = model.Ad
+        Bd = model.Bd
+        Ed = model.Ed
+        Gd = model.Gd
+        Qd = model.Qd
+
+        u_np = _any_to_np1d(u)
+        d_np = _any_to_np1d(d)
+
+        x_pred = (
+            Ad @ self._x_np
+            + Bd @ u_np
+            + Ed @ d_np
+            + model.predict_offset(d_np)
         )
-        if self._G_np is None:
-            P_pred_np = A_np @ self._P_np @ A_np.T + self._Q_np
-        else:
-            P_pred_np = A_np @ self._P_np @ A_np.T + self._G_np @ self._Q_np @ self._G_np.T
+        P_pred = Ad @ self._P_np @ Ad.T + Gd @ Qd @ Gd.T
 
-        return x_pred_np, P_pred_np
-
-    # ── Filtering step (Joseph form) ─────────────────────────────────────
-
-    def filter(
-        self,
-        y_np: np.ndarray,
-        x_pred_np: np.ndarray,
-        P_pred_np: np.ndarray,
-        C_np: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        """
-        Measurement update (filtering) using the Joseph stabilised form.
-
-        Given the predicted state and covariance from the prediction step,
-        fuses the measurement y[k] to produce the corrected estimate:
-
-            S   = C P⁻ Cᵀ + R               (innovation covariance)
-            K   = P⁻ Cᵀ S⁻¹                 (Kalman gain)
-            x̂   = x̂⁻ + K (y − C x̂⁻)        (corrected state)
-
-            I_KC = I − K C
-            P    = I_KC P⁻ I_KCᵀ + K R Kᵀ   (Joseph form)
-
-        Parameters
-        ----------
-        y_np      : (l,) ndarray  — measurement vector.
-        x_pred_np : (n,) ndarray  — predicted state estimate.
-        P_pred_np : (n, n) ndarray — predicted covariance.
-        C_np      : (l, n) ndarray — output matrix.
-
-        Returns
-        -------
-        x_hat_np : (n,) corrected state estimate.
-        P_np     : (n, n) corrected covariance (symmetric, PSD).
-        """
-        n = P_pred_np.shape[0]
-        R_np = self._R_np
-
-        # Innovation covariance  S = C P⁻ Cᵀ + R
-        S_np = C_np @ P_pred_np @ C_np.T + R_np
-
-        # Kalman gain  K = P⁻ Cᵀ S⁻¹  via  S Kᵀ = C P⁻
-        K_np = np.linalg.solve(S_np, C_np @ P_pred_np).T  # (n, l)
-
-        # Innovation  ν = y − C x̂⁻
-        nu_np = y_np - C_np @ x_pred_np
-
-        # Corrected state  x̂ = x̂⁻ + K ν
-        x_hat_np = x_pred_np + K_np @ nu_np
-
-        # Joseph form  P = (I−KC) P⁻ (I−KC)ᵀ + K R Kᵀ
-        I_KC = np.eye(n) - K_np @ C_np
-        P_np = I_KC @ P_pred_np @ I_KC.T + K_np @ R_np @ K_np.T
-        P_np = (P_np + P_np.T) * 0.5
-
-        self._last_innovation_np = nu_np
-        return x_hat_np, P_np
-
-    # ── Combined update ──────────────────────────────────────────────────
+        self._x_np = x_pred
+        self._P_np = P_pred
+        return x_pred.copy(), P_pred.copy()
 
     def update(
         self,
-        y,
-        d,
-        mask: list[bool] | None = None,
-    ) -> np.ndarray:
+        ym: np.ndarray,
+        mask: list[bool] | np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Assimilate measurement y[k] and return corrected estimate x̂[k].
+        Measurement update at time ``t_k`` using the Joseph stabilising
+        form (ControlToolbox §SDE-CD-EKF — *Measurement Update*).
 
-        On the first call the state is bootstrapped directly from the
-        measurement (left pseudo-inverse of C).  Subsequent calls run
-        the full predict → filter cycle.
+            e_k    = ym_k − Cm x̂_{k|k-1}
+            R_e    = Cm P_{k|k-1} Cmᵀ + Rm
+            K_k    = P_{k|k-1} Cmᵀ R_e⁻¹
+            x̂_{k|k} = x̂_{k|k-1} + K_k e_k
+            P_{k|k} = (I − K_k Cm) P_{k|k-1} (I − K_k Cm)ᵀ + K_k Rm K_kᵀ
 
         Parameters
         ----------
-        y : (l,) numpy or cvxopt — measurement vector.
-        d : (p,) numpy or cvxopt — current disturbance vector.
-        mask : list of bool, length l, optional
-            When provided, only outputs where ``mask[i] is True`` are used
-            in the measurement update.  If all entries are ``False`` the
-            measurement update is skipped entirely (prediction-only step,
-            M.Sc. Ch. 5.5).  ``None`` (default) uses all outputs.
+        ym : (nym,) ndarray
+            Measurement vector at time ``t_k``.
+        mask : (nym,) bool ndarray or list, optional
+            When provided, only outputs where ``mask[i]`` is ``True`` are
+            used in the update.  If every entry is ``False`` the update is
+            skipped (prediction-only step).  ``None`` (default) uses all
+            outputs.
 
         Returns
         -------
-        x_hat : (n,) corrected state estimate (copy).
+        x_hat : (nx,) corrected state estimate x̂_{k|k}.
+        P     : (nx, nx) corrected covariance P_{k|k}.
         """
-        C_np = self._model.Cm  # model.Cm is numpy
-        y_np = _any_to_np1d(y)
-        l = C_np.shape[0]
-        n = self._model.nx
+        model = self._model
+        nx = model.nx
+        Cm = model.Cm
+        Rm = model.Rm
+        ym_np = _any_to_np1d(ym)
 
         if mask is not None:
-            active = [i for i, m in enumerate(mask) if m]
-        else:
-            active = list(range(l))
+            active = np.where(np.asarray(mask, dtype=bool))[0]
+            if len(active) == 0:
+                # All channels masked — keep prior, no measurement assimilation.
+                return self._x_np.copy(), self._P_np.copy()
+            Cm = Cm[active, :]
+            Rm = Rm[np.ix_(active, active)]
+            ym_np = ym_np[active]
 
-        if self._first:
-            # Bootstrap:  x̂ = C⁺ y  (Moore-Penrose pseudoinverse, minimum-norm)
-            # lstsq handles both overdetermined (nym ≥ nx) and underdetermined
-            # (nym < nx) cases without requiring C to have full column rank.
-            self._x_np, _, _, _ = np.linalg.lstsq(C_np, y_np, rcond=None)
-            self._first = False
-        else:
-            # Use constant discrete-time matrices (no LPV scheduling)
-            A_np = self._model.Ad
-            B_np = self._model.Bd
-            E_np = self._model.Ed
+        x_pred = self._x_np
+        P_pred = self._P_np
 
-            x_pred_np, P_pred_np = self.predict(A_np, B_np, E_np)
+        # Innovation and its covariance
+        e = ym_np - Cm @ x_pred
+        R_e = Cm @ P_pred @ Cm.T + Rm
 
-            if not active:
-                # All outputs masked — skip measurement update (M.Sc. Ch. 5.5)
-                self._x_np = x_pred_np
-                self._P_np = P_pred_np
-            elif len(active) == l:
-                # All outputs available — full update
-                x_hat_np, P_np = self.filter(y_np, x_pred_np, P_pred_np, C_np)
-                self._x_np = x_hat_np
-                self._P_np = P_np
-            else:
-                # Partial update: restrict C, R, y to active rows
-                C_sub = C_np[np.ix_(active, list(range(n)))]
-                R_sub = self._R_np[np.ix_(active, active)]
-                y_sub = y_np[active]
-                R_orig = self._R_np
-                self._R_np = R_sub
-                x_hat_np, P_np = self.filter(y_sub, x_pred_np, P_pred_np, C_sub)
-                self._R_np = R_orig
-                self._x_np = x_hat_np
-                self._P_np = P_np
+        # Kalman gain  K = P Cmᵀ R_e⁻¹  via  R_e Kᵀ = Cm P
+        Kt = np.linalg.solve(R_e, Cm @ P_pred)
+        K = Kt.T
 
-        self._d_prev_np = _any_to_np1d(d)
-        return self._x_np.copy()
+        x_new = x_pred + K @ e
 
-    # ── Action recording ─────────────────────────────────────────────────
+        # Joseph form
+        IKC = np.eye(nx) - K @ Cm
+        P_new = IKC @ P_pred @ IKC.T + K @ Rm @ K.T
+        P_new = 0.5 * (P_new + P_new.T)
 
-    def record_action(self, u) -> None:
-        """Record the applied control action u[k] for the next prediction."""
-        self._u_prev_np = _any_to_np1d(u)
+        self._last_innovation_np = e.copy()
+        self._x_np = x_new
+        self._P_np = P_new
+        return x_new.copy(), P_new.copy()
+
+    def step(
+        self,
+        ym: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None = None,
+        t: float | None = None,
+        mask: list[bool] | np.ndarray | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Combined time + measurement update.
+
+        Propagates the estimate from ``t_{k-1}`` to ``t_k`` using the
+        previously-applied ``u`` and ``d`` (ZOH over the just-completed
+        interval), then fuses the measurement ``ym``.
+
+        Parameters
+        ----------
+        ym : (nym,) ndarray  — measurement at time ``t_k``.
+        u  : (nu,) ndarray   — input applied over the previous interval.
+        d  : (nd,) ndarray   — disturbance applied over the previous interval.
+        p  : ignored          — accepted for interface compatibility with
+                                continuous-discrete estimators (LTI: no parameters).
+        t  : ignored          — accepted for interface compatibility (LTI: time-invariant).
+        mask : (nym,) bool ndarray, optional — see :meth:`update`.
+
+        Returns
+        -------
+        x_hat : (nx,) corrected state estimate x̂_{k|k}.
+        P     : (nx, nx) corrected covariance P_{k|k}.
+        """
+        self.predict(u, d)
+        return self.update(ym, mask=mask)
