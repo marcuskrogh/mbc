@@ -344,6 +344,114 @@ def run_gradient_efficiency_example(
     }
 
 
+def run_hessian_efficiency_example(
+    *,
+    n_vars: int = 16,
+    repeats: int = 2,
+) -> dict:
+    """
+    Compare trust-constr solve efficiency with analytical vs numerical Hessians.
+
+    Uses a diagonal quadratic objective:
+        f(x) = 0.5 * x^T Q x + c^T x
+        grad f(x) = Q x + c
+        hess f(x) = diag(Q)
+    """
+    rng = np.random.default_rng(2)
+    q_diag = 1.0 + rng.random(n_vars)
+    c = rng.normal(size=n_vars)
+    x0 = rng.normal(size=n_vars)
+
+    def objective(x: np.ndarray) -> float:
+        return float(0.5 * np.sum(q_diag * x * x) + np.dot(c, x))
+
+    def objective_jac(x: np.ndarray) -> np.ndarray:
+        return q_diag * x + c
+
+    def objective_hess(_: np.ndarray) -> np.ndarray:
+        return np.diag(q_diag)
+
+    def finite_difference_hessian(x: np.ndarray, eps: float = 1e-5) -> np.ndarray:
+        x = np.asarray(x, dtype=float)
+        h = np.zeros((n_vars, n_vars), dtype=float)
+        f0 = objective(x)
+        for i in range(n_vars):
+            dx = np.zeros_like(x)
+            dx[i] = eps
+            h[i, i] = (objective(x + dx) - 2.0 * f0 + objective(x - dx)) / (eps * eps)
+        for i in range(n_vars):
+            dxi = np.zeros_like(x)
+            dxi[i] = eps
+            for j in range(i + 1, n_vars):
+                dxj = np.zeros_like(x)
+                dxj[j] = eps
+                val = (
+                    objective(x + dxi + dxj)
+                    - objective(x + dxi - dxj)
+                    - objective(x - dxi + dxj)
+                    + objective(x - dxi - dxj)
+                ) / (4.0 * eps * eps)
+                h[i, j] = val
+                h[j, i] = val
+        return h
+
+    base_problem = dict(
+        objective=objective,
+        objective_jac=objective_jac,
+        x0=x0,
+        lb=np.full(n_vars, -10.0),
+        ub=np.full(n_vars, 10.0),
+        constraints=tuple(),
+    )
+
+    def _solve(with_analytical_hess: bool) -> dict:
+        backend = ScipyNLPBackend(
+            method="trust-constr",
+            options={"maxiter": 200, "gtol": 1e-9, "xtol": 1e-9},
+        )
+        elapsed = []
+        nfev = []
+        njev = []
+        nhev = []
+        nit = []
+        for _ in range(repeats):
+            problem = NLPProblem(
+                **base_problem,
+                objective_hess=objective_hess if with_analytical_hess else finite_difference_hessian,
+            )
+            tic = time.perf_counter()
+            result = backend.solve(problem)
+            elapsed.append(time.perf_counter() - tic)
+            nfev.append(float(result.nfev or np.nan))
+            njev.append(float(result.njev or np.nan))
+            nhev.append(float(result.nhev or np.nan))
+            nit.append(float(result.nit or np.nan))
+        return {
+            "median_time_s": float(np.median(elapsed)),
+            "median_nfev": float(np.nanmedian(np.asarray(nfev, dtype=float))),
+            "median_njev": float(np.nanmedian(np.asarray(njev, dtype=float))),
+            "median_nhev": float(np.nanmedian(np.asarray(nhev, dtype=float))),
+            "median_nit": float(np.nanmedian(np.asarray(nit, dtype=float))),
+        }
+
+    analytical = _solve(with_analytical_hess=True)
+    numerical = _solve(with_analytical_hess=False)
+    return {
+        "problem": {"n_vars": n_vars, "repeats": repeats, "solver": "trust-constr"},
+        "analytical_hessian": analytical,
+        "numerical_hessian": numerical,
+        "numerical_hessian_method": "finite_difference_callback",
+        "ratios": {
+            "time_speedup": _safe_ratio(
+                numerical["median_time_s"], analytical["median_time_s"]
+            ),
+            "nhev_reduction_ratio": _safe_ratio(
+                numerical["median_nhev"], analytical["median_nhev"]
+            ),
+        },
+    }
+
+
 if __name__ == "__main__":
     report = {
         "ocp_solver_benchmark": run_benchmark(
@@ -355,6 +463,10 @@ if __name__ == "__main__":
         "gradient_efficiency_example": run_gradient_efficiency_example(
             n_vars=60,
             repeats=3,
+        ),
+        "hessian_efficiency_example": run_hessian_efficiency_example(
+            n_vars=16,
+            repeats=2,
         ),
     }
     print(json.dumps(report, indent=2))

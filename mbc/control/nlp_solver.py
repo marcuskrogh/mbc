@@ -7,6 +7,15 @@ from typing import Any, Callable, Literal, Protocol
 
 import numpy as np
 
+_SCIPY_METHODS_WITH_HESS = {
+    "newton-cg",
+    "dogleg",
+    "trust-ncg",
+    "trust-krylov",
+    "trust-exact",
+    "trust-constr",
+}
+
 
 @dataclass(frozen=True)
 class NLPScalingPolicy:
@@ -36,6 +45,7 @@ class NLPProblem:
     ub: np.ndarray
     constraints: tuple[NLPConstraint, ...]
     objective_jac: Callable[[np.ndarray], np.ndarray] | None = None
+    objective_hess: Callable[[np.ndarray], np.ndarray] | None = None
 
 
 @dataclass(frozen=True)
@@ -50,6 +60,7 @@ class NLPResult:
     nit: int | None = None
     nfev: int | None = None
     njev: int | None = None
+    nhev: int | None = None
     raw: Any = None
 
 
@@ -119,6 +130,20 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
                 f"Objective Jacobian must have size {problem.x0.size}; got {grad_x.size}."
             )
         return obj_scale * grad_x * inv_var_scale
+
+    def objective_hess_scaled(y: np.ndarray) -> np.ndarray:
+        if problem.objective_hess is None:
+            raise RuntimeError(
+                "Internal error: objective_hess_scaled invoked while "
+                "problem.objective_hess is None."
+            )
+        hess_x = np.asarray(problem.objective_hess(to_unscaled(y)), dtype=float)
+        if hess_x.shape != (problem.x0.size, problem.x0.size):
+            raise ValueError(
+                "Objective Hessian has invalid shape "
+                f"{hess_x.shape}; expected ({problem.x0.size}, {problem.x0.size})."
+            )
+        return obj_scale * (inv_var_scale[:, np.newaxis] * hess_x) * inv_var_scale[np.newaxis, :]
 
     con_scale_raw = scaling.constraint_scale
 
@@ -193,6 +218,7 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
     scaled_problem = NLPProblem(
         objective=objective_scaled,
         objective_jac=objective_jac_scaled if problem.objective_jac is not None else None,
+        objective_hess=objective_hess_scaled if problem.objective_hess is not None else None,
         x0=x0_scaled,
         lb=lb_scaled,
         ub=ub_scaled,
@@ -224,6 +250,10 @@ class ScipyNLPBackend:
             constraints.append(
                 {"type": con.kind, "fun": con.fun, **({"jac": con.jac} if con.jac is not None else {})}
             )
+        include_hess = (
+            scaled_problem.objective_hess is not None
+            and self._method.lower() in _SCIPY_METHODS_WITH_HESS
+        )
 
         result = minimize(
             scaled_problem.objective,
@@ -232,6 +262,11 @@ class ScipyNLPBackend:
             **(
                 {"jac": scaled_problem.objective_jac}
                 if scaled_problem.objective_jac is not None
+                else {}
+            ),
+            **(
+                {"hess": scaled_problem.objective_hess}
+                if include_hess
                 else {}
             ),
             bounds=Bounds(scaled_problem.lb, scaled_problem.ub),
@@ -248,6 +283,7 @@ class ScipyNLPBackend:
             nit=getattr(result, "nit", None),
             nfev=getattr(result, "nfev", None),
             njev=getattr(result, "njev", None),
+            nhev=getattr(result, "nhev", None),
             raw=result,
         )
 
@@ -292,6 +328,11 @@ class IpoptNLPBackend:
                 if scaled_problem.objective_jac is not None
                 else {}
             ),
+            **(
+                {"hess": scaled_problem.objective_hess}
+                if scaled_problem.objective_hess is not None
+                else {}
+            ),
             bounds=Bounds(scaled_problem.lb, scaled_problem.ub),
             constraints=constraints,
             options=options,
@@ -306,6 +347,7 @@ class IpoptNLPBackend:
             nit=getattr(result, "nit", None),
             nfev=getattr(result, "nfev", None),
             njev=getattr(result, "njev", None),
+            nhev=getattr(result, "nhev", None),
             raw=result,
         )
 

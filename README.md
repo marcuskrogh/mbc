@@ -1584,7 +1584,8 @@ NLP is solved through a swappable backend interface:
 - optional: IPOPT backend (`solver="ipopt"`, requires `cyipopt`)
 
 You can swap backends without changing OCP construction.
-For comparative runtime/iteration baseline and horizon-scaling checks, run
+For comparative runtime/iteration baseline, horizon-scaling checks, and
+analytical-vs-numerical gradient/Hessian efficiency examples, run
 `python scripts/nlp_solver_benchmark.py`.
 
 #### `CDOptimalControlProblem` — `mbc.control`
