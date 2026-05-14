@@ -343,7 +343,6 @@ def run_gradient_efficiency_example(
 
 
 if __name__ == "__main__":
-    np.random.seed(0)
     report = {
         "ocp_solver_benchmark": run_benchmark(
             solvers=["SLSQP", "ipopt"],

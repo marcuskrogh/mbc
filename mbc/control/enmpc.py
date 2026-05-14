@@ -81,8 +81,6 @@ This module exposes:
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 import numpy as np
 
 from ..models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel

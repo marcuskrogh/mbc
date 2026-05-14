@@ -169,10 +169,10 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
 
         con_jac = None
         if con.jac is not None:
-            def con_jac_fn(y: np.ndarray, _f=con.fun, _jac=con.jac) -> np.ndarray:
-                c_val = np.asarray(_f(to_unscaled(y)), dtype=float).reshape(-1)
-                jac_x = _jac(to_unscaled(y))
-                return scale_constraint_jac(jac_x, c_val.size)
+            def con_jac_fn(y: np.ndarray, _jac=con.jac) -> np.ndarray:
+                jac_x = np.asarray(_jac(to_unscaled(y)), dtype=float)
+                c_dim = 1 if jac_x.ndim == 1 else jac_x.shape[0]
+                return scale_constraint_jac(jac_x, c_dim)
 
             con_jac = con_jac_fn
 
