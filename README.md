@@ -1578,7 +1578,14 @@ at every sub-step, and right-rectangular discretisation of the Lagrange
 integral.  Decision variables are the inputs `{u_k}_{k=0..N−1}` together
 with the differential and algebraic states `{x_n, y_n}_{n=0..M}` at every
 sub-step (M = N · n_steps) — multiple shooting, not single shooting.  The
-NLP is solved by `scipy.optimize.minimize` with SLSQP by default.
+NLP is solved through a swappable backend interface:
+
+- default: SciPy backend (`scipy.optimize.minimize`, method `"SLSQP"`)
+- optional: IPOPT backend (`solver="ipopt"`, requires `cyipopt`)
+
+You can swap backends without changing OCP construction.
+For comparative runtime/iteration baseline and horizon-scaling checks, run
+`python /home/runner/work/mbc/mbc/scripts/nlp_solver_benchmark.py`.
 
 #### `CDOptimalControlProblem` — `mbc.control`
 
@@ -1718,8 +1725,9 @@ exact-penalty form `φ_pq` above.
 | `rho_z_1` | `float` | `0.0` | L1 weight on output slacks (exact penalty) |
 | `rho_z_2` | `float` | `1e4` | L2 weight on output slacks |
 | `n_steps` | `int` | `10` | Implicit-Euler sub-steps per control interval |
-| `solver` | `str` | `"SLSQP"` | `scipy.optimize.minimize` method |
+| `solver` | `str` or backend object | `"SLSQP"` | `"scipy"` / `"ipopt"` backend key, or SciPy method name (`"SLSQP"`, `"trust-constr"`, …) |
 | `solver_options` | `dict` or `None` | `None` | Forwarded to the solver |
+| `solver_scaling` | `dict` or `NLPScalingPolicy` or `None` | `None` | Backend-agnostic scaling (`objective_scale`, `variable_scale`, `constraint_scale`) |
 | `dt` | `float` or `None` | `model.dt` or `1.0` | Sampling interval `T_s` |
 
 ##### Public properties
@@ -2595,10 +2603,10 @@ X_std  = result.X.std(axis=0)     # (T+1, nx) — trajectory std
 pip install -e .
 ```
 
-**Core dependencies**: `numpy`, `cvxopt`.
+**Core dependencies**: `numpy`, `cvxopt`, `scipy`.
 
-**Optional dependencies**: `scipy` (required for `EconomicOptimalControlProblem`, `ParameterEstimator`
-with `use_gradient=True`, and future NMPC stubs).
+**Optional dependencies**:
+- `cyipopt` (`pip install -e ".[ipopt]"`) for IPOPT NLP backend support in nonlinear MPC/OCP.
 
 ## Running Tests
 

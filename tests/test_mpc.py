@@ -38,6 +38,8 @@ from mbc.control import (
     CDTrackingOptimalControlProblem,
     EconomicOptimalControlProblem,
     CDNMPCController,
+    NLPScalingPolicy,
+    ScipyNLPBackend,
 )
 
 
@@ -738,6 +740,102 @@ class TestEconomicOptimalControlProblem:
         # First input should be positive (pushing x toward z_min)
         assert u_opt[0, 0] > 0.0 - 1e-3
 
+    def test_solver_backend_swap_with_reserved_scipy_key(self):
+        """Selecting solver='scipy' should run via backend wrapper."""
+        model = ScalarNonlinear()
+        N = 5
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+
+        ocp = EconomicOptimalControlProblem(
+            model,
+            N=N,
+            Q_z=np.array([[1.0]]),
+            z_ref=np.array([2.0]),
+            u_min=np.array([-3.0]),
+            u_max=np.array([3.0]),
+            solver="scipy",
+            solver_options={"method": "SLSQP", "maxiter": 80},
+            dt=1.0,
+        )
+        u_opt, cost, info = ocp.solve(x0, d_traj)
+        assert u_opt.shape == (N, model.nu)
+        assert np.isfinite(cost)
+        assert info["result"].success
+
+    def test_solver_backend_swap_with_custom_backend_object(self):
+        """A pluggable backend object should be accepted by EOCP."""
+        model = ScalarNonlinear()
+        N = 4
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+        backend = ScipyNLPBackend(method="SLSQP", options={"maxiter": 80})
+        ocp = EconomicOptimalControlProblem(
+            model,
+            N=N,
+            Q_z=np.array([[1.0]]),
+            z_ref=np.array([1.0]),
+            u_min=np.array([-2.0]),
+            u_max=np.array([2.0]),
+            solver=backend,
+            dt=1.0,
+        )
+        u_opt, cost, info = ocp.solve(x0, d_traj)
+        assert u_opt.shape == (N, model.nu)
+        assert np.isfinite(cost)
+        assert info["result"].success
+
+    def test_solver_scaling_policy_is_supported(self):
+        """Scaling controls should be accepted and produce a valid NLP solve."""
+        model = ScalarNonlinear()
+        N = 5
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+        scaling = NLPScalingPolicy(
+            objective_scale=0.5,
+            variable_scale=10.0,
+            constraint_scale=2.0,
+        )
+        ocp = EconomicOptimalControlProblem(
+            model,
+            N=N,
+            Q_z=np.array([[1.0]]),
+            z_ref=np.array([2.0]),
+            u_min=np.array([-3.0]),
+            u_max=np.array([3.0]),
+            solver="SLSQP",
+            solver_options={"maxiter": 80},
+            solver_scaling=scaling,
+            dt=1.0,
+        )
+        u_opt, cost, info = ocp.solve(x0, d_traj)
+        assert u_opt.shape == (N, model.nu)
+        assert np.isfinite(cost)
+        assert info["result"].success
+
+    def test_ipopt_backend_if_available(self):
+        """IPOPT backend should solve the SDE EOCP when cyipopt is installed."""
+        pytest.importorskip("cyipopt")
+        model = ScalarNonlinear()
+        N = 4
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+        ocp = EconomicOptimalControlProblem(
+            model,
+            N=N,
+            Q_z=np.array([[1.0]]),
+            z_ref=np.array([1.5]),
+            u_min=np.array([-2.0]),
+            u_max=np.array([2.0]),
+            solver="ipopt",
+            solver_options={"max_iter": 100},
+            dt=1.0,
+        )
+        u_opt, cost, info = ocp.solve(x0, d_traj)
+        assert u_opt.shape == (N, model.nu)
+        assert np.isfinite(cost)
+        assert info["result"].success
+
 
 # ── Tests: EconomicOptimalControlProblem on SDAE plant ──────────────────────
 
@@ -842,6 +940,26 @@ class TestEconomicOCPOnSDAE:
         assert abs(y_final - 1.5) < abs(y_initial - 1.5), (
             f"Tracking failed: y_final={y_final:.4f}, y_initial={y_initial:.4f}"
         )
+
+    def test_ipopt_backend_if_available(self):
+        """IPOPT backend should solve SDAE EOCP when cyipopt is installed."""
+        pytest.importorskip("cyipopt")
+        ocp, model = self._make_ocp(N=4, n_steps=2)
+        # Rebuild with explicit IPOPT backend selector.
+        ocp = EconomicOptimalControlProblem(
+            model, N=4,
+            Q_z=np.array([[1.0]]), z_ref=np.array([1.5]),
+            u_min=np.array([0.0]), u_max=np.array([1.0]),
+            n_steps=2, dt=1.0,
+            solver="ipopt",
+            solver_options={"max_iter": 120},
+        )
+        x0 = np.array([4.0])
+        d_traj = np.zeros((4, 0))
+        u_opt, cost, info = ocp.solve(x0, d_traj)
+        assert u_opt.shape == (4, model.nu)
+        assert np.isfinite(cost)
+        assert info["result"].success
 
 
 # ── Tests: CDNMPCController ───────────────────────────────────────────────────

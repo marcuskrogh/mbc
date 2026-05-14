@@ -62,6 +62,7 @@ import numpy as np
 from cvxopt import matrix
 
 from .ocp import OptimalControlProblem
+from .nlp_solver import NLPScalingPolicy, NLPSolverBackend
 from .._utils import _np_to_cvx
 
 if TYPE_CHECKING:
@@ -268,10 +269,14 @@ class CDTrackingOptimalControlProblem:
         Quadratic penalty weight on output-slack variables.  Default: 1e4.
     n_steps : int, optional
         Implicit-Euler sub-steps per control interval.  Default: 10.
-    solver : str, optional
-        ``scipy.optimize.minimize`` method.  Default: ``"SLSQP"``.
+    solver : str or NLPSolverBackend, optional
+        NLP backend selector. Reserved strings are ``"ipopt"`` and ``"scipy"``.
+        Any other string is treated as a scipy method name (default ``"SLSQP"``).
     solver_options : dict or None, optional
         Forwarded to the NLP solver.
+    solver_scaling : NLPScalingPolicy or dict or None, optional
+        Backend-agnostic scaling controls:
+        ``objective_scale``, ``variable_scale``, ``constraint_scale``.
     dt : float or None, optional
         Sampling interval ``T_s``.  ``None`` → ``model.dt`` (if any) else 1.0.
     """
@@ -297,8 +302,9 @@ class CDTrackingOptimalControlProblem:
         z_max: np.ndarray | None = None,
         rho_z: float = 1e4,
         n_steps: int = 10,
-        solver: str = "SLSQP",
+        solver: str | NLPSolverBackend = "SLSQP",
         solver_options: dict | None = None,
+        solver_scaling: NLPScalingPolicy | dict | None = None,
         dt: float | None = None,
     ) -> None:
         from .enmpc import EconomicOptimalControlProblem
@@ -358,6 +364,7 @@ class CDTrackingOptimalControlProblem:
             n_steps=n_steps,
             solver=solver,
             solver_options=solver_options,
+            solver_scaling=solver_scaling,
             dt=dt,
         )
 
