@@ -1585,7 +1585,7 @@ NLP is solved through a swappable backend interface:
 
 You can swap backends without changing OCP construction.
 For comparative runtime/iteration baseline and horizon-scaling checks, run
-`python /home/runner/work/mbc/mbc/scripts/nlp_solver_benchmark.py`.
+`python scripts/nlp_solver_benchmark.py`.
 
 #### `CDOptimalControlProblem` — `mbc.control`
 

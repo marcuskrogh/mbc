@@ -2,7 +2,7 @@
 Benchmark nonlinear EOCP solver backends on representative SDE/SDAE models.
 
 Usage:
-    python /home/runner/work/mbc/mbc/scripts/nlp_solver_benchmark.py
+    python scripts/nlp_solver_benchmark.py
 """
 
 from __future__ import annotations
