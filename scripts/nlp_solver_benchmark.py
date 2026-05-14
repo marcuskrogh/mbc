@@ -20,7 +20,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from mbc.control import EconomicOptimalControlProblem
 from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
 
-MIN_DENOM = 1e-12  # Avoid divide-by-zero in ratio-based benchmark comparisons.
+MIN_DENOMINATOR = 1e-12  # Avoid divide-by-zero in ratio-based benchmark comparisons.
+
+
+def _safe_ratio(numerator: float, denominator: float) -> float:
+    return float(numerator / max(denominator, MIN_DENOMINATOR))
 
 
 @dataclass
@@ -235,11 +239,9 @@ def run_benchmark(
                     and "median_nit" in base[N]
                     and "median_nit" in cand[N]
                 ):
-                    ratios_speed.append(
-                        base[N]["median_time_s"] / max(cand[N]["median_time_s"], MIN_DENOM)
-                    )
+                    ratios_speed.append(_safe_ratio(base[N]["median_time_s"], cand[N]["median_time_s"]))
                     iteration_improvement_ratios.append(
-                        base[N]["median_nit"] / max(cand[N]["median_nit"], MIN_DENOM)
+                        _safe_ratio(base[N]["median_nit"], cand[N]["median_nit"])
                     )
                     success_drops.append(base[N]["success_rate"] - cand[N]["success_rate"])
             if ratios_speed:

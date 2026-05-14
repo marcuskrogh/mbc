@@ -204,7 +204,7 @@ class IpoptNLPBackend:
     def solve(self, problem: NLPProblem) -> NLPResult:
         try:
             from cyipopt import minimize_ipopt
-        except Exception as exc:  # pragma: no cover - optional dependency
+        except ImportError as exc:  # pragma: no cover - optional dependency
             raise RuntimeError(
                 "IPOPT backend requested but cyipopt is not available. "
                 "Install optional dependency 'mbc[ipopt]'."
