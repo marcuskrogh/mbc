@@ -8,6 +8,14 @@ from .enmpc import (
     EconomicOptimalControlProblem,
     CDNMPCController,
 )
+from .nlp_solver import (
+    NLPConstraint,
+    NLPProblem,
+    NLPScalingPolicy,
+    NLPSolverBackend,
+    ScipyNLPBackend,
+    IpoptNLPBackend,
+)
 
 __all__ = [
     "OptimalControlProblem",
@@ -17,4 +25,10 @@ __all__ = [
     "CDMPCController",
     "EconomicOptimalControlProblem",
     "CDNMPCController",
+    "NLPConstraint",
+    "NLPProblem",
+    "NLPScalingPolicy",
+    "NLPSolverBackend",
+    "ScipyNLPBackend",
+    "IpoptNLPBackend",
 ]

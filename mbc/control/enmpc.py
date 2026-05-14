@@ -81,12 +81,16 @@ This module exposes:
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import Any
-
 import numpy as np
 
 from ..models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
+from .nlp_solver import (
+    NLPConstraint,
+    NLPProblem,
+    NLPScalingPolicy,
+    NLPSolverBackend,
+    make_nlp_backend,
+)
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
@@ -263,10 +267,15 @@ class EconomicOptimalControlProblem:
         L2 penalty weight on output slacks (default 1e4).
     n_steps : int, optional
         Implicit-Euler sub-steps per control interval.  Default: 10.
-    solver : str, optional
-        ``scipy.optimize.minimize`` method.  Default: ``"SLSQP"``.
+    solver : str or NLPSolverBackend, optional
+        NLP backend selector. Reserved strings are ``"ipopt"`` and ``"scipy"``.
+        Any other string is treated as a ``scipy.optimize.minimize`` method
+        (for backwards compatibility, default ``"SLSQP"``).
     solver_options : dict or None, optional
         Forwarded to the NLP solver.
+    solver_scaling : NLPScalingPolicy or dict or None, optional
+        Backend-agnostic scaling controls:
+        ``objective_scale``, ``variable_scale``, ``constraint_scale``.
     dt : float or None, optional
         Sampling interval ``T_s``.  ``None`` → ``model.dt`` if available,
         else ``1.0``.
@@ -296,8 +305,9 @@ class EconomicOptimalControlProblem:
         rho_z_1: float = 0.0,
         rho_z_2: float = 1e4,
         n_steps: int = 10,
-        solver: str = "SLSQP",
+        solver: str | NLPSolverBackend = "SLSQP",
         solver_options: dict | None = None,
+        solver_scaling: NLPScalingPolicy | dict | None = None,
         dt: float | None = None,
     ) -> None:
         self._model = model
@@ -351,8 +361,11 @@ class EconomicOptimalControlProblem:
         self._has_soft_z = self._z_min is not None or self._z_max is not None
 
         # NLP setup
-        self._solver = solver
-        self._solver_options = solver_options
+        self._solver_backend = make_nlp_backend(
+            solver,
+            solver_options=solver_options,
+            scaling=solver_scaling,
+        )
 
         # Decision-variable layout
         self._layout = _DecisionLayout(
@@ -709,8 +722,6 @@ class EconomicOptimalControlProblem:
             ``{"X": (M+1, nx) ndarray, "Y": (M+1, ny) ndarray, "result": OptimizeResult}``
             for warm-starting the next call and inspection.
         """
-        from scipy.optimize import minimize, Bounds
-
         L = self._layout
         x_hat = np.asarray(x0, dtype=float)
         d_traj = np.asarray(d_trajectory, dtype=float)
@@ -744,14 +755,11 @@ class EconomicOptimalControlProblem:
         if self._has_soft_z:
             lb[L.pz_lo_off:L.pz_lo_off + L.pz_lo_size] = 0.0
             lb[L.pz_hi_off:L.pz_hi_off + L.pz_hi_size] = 0.0
-        bounds = Bounds(lb, ub)
-
-        # ── Constraint definitions ──
-        constraints: list[dict[str, Any]] = [
-            {
-                "type": "eq",
-                "fun": lambda z: self._equality_constraints(z, x_hat, d_traj, p_theta, t0),
-            }
+        constraints: list[NLPConstraint] = [
+            NLPConstraint(
+                kind="eq",
+                fun=lambda z: self._equality_constraints(z, x_hat, d_traj, p_theta, t0),
+            )
         ]
         # Skip the inequality constraint dict if we have nothing to add — scipy
         # complains about empty constraint vectors.
@@ -762,20 +770,21 @@ class EconomicOptimalControlProblem:
             or self._has_soft_z
         ):
             constraints.append(
-                {
-                    "type": "ineq",
-                    "fun": lambda z: self._inequality_constraints(z, u_prev_0, d_traj, p_theta, t0),
-                }
+                NLPConstraint(
+                    kind="ineq",
+                    fun=lambda z: self._inequality_constraints(z, u_prev_0, d_traj, p_theta, t0),
+                )
             )
 
         # ── Solve ──
-        result = minimize(
-            lambda z: self._objective(z, x_hat, d_traj, u_prev_0, p_theta, t0),
-            z0,
-            method=self._solver,
-            bounds=bounds,
-            constraints=constraints,
-            options=self._solver_options,
+        result = self._solver_backend.solve(
+            NLPProblem(
+                objective=lambda z: self._objective(z, x_hat, d_traj, u_prev_0, p_theta, t0),
+                x0=z0,
+                lb=lb,
+                ub=ub,
+                constraints=tuple(constraints),
+            )
         )
 
         z_opt = result.x
