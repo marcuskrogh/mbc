@@ -50,7 +50,7 @@ def test_scipy_backend_uses_analytical_derivatives():
     assert result.success
     assert np.allclose(result.x, np.array([1.5, -1.5]), atol=1e-6)
     assert np.isclose(result.fun, 0.5, atol=1e-6)
-    assert result.njev is None or result.njev > 0
+    assert result.njev is not None and result.njev > 0
 
 
 def test_scipy_backend_analytical_derivatives_with_scaling():

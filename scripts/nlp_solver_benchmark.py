@@ -21,11 +21,11 @@ from mbc.control import EconomicOptimalControlProblem
 from mbc.control import NLPProblem, ScipyNLPBackend
 from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
 
-MIN_SAFE_DIVISOR = 1e-12  # Safety floor to avoid division-by-zero in ratio calculations.
+SAFE_DIVISOR_FLOOR = 1e-12  # Fallback floor to avoid division-by-zero in ratio calculations.
 
 
 def _safe_ratio(numerator: float, denominator: float) -> float:
-    return float(numerator / max(denominator, MIN_SAFE_DIVISOR))
+    return float(numerator / max(denominator, SAFE_DIVISOR_FLOOR))
 
 
 @dataclass
@@ -115,14 +115,14 @@ class IsomerisationReactor(ContinuousDiscreteDAEModel):
         return np.array([y[0]])
 
 
-def _safe_solver_name(solver: str) -> str:
+def _normalize_solver_name(solver: str) -> str:
     return solver.lower().strip()
 
 
 def _solve_once(solver: str, model, N: int, n_steps: int, dt: float) -> RunStats:
     d_traj = np.zeros((N, model.nd))
     x0 = np.array([0.0]) if not isinstance(model, IsomerisationReactor) else np.array([4.0])
-    options = {"maxiter": 150} if _safe_solver_name(solver) != "ipopt" else {"max_iter": 150}
+    options = {"maxiter": 150} if _normalize_solver_name(solver) != "ipopt" else {"max_iter": 150}
     ocp = EconomicOptimalControlProblem(
         model,
         N=N,
