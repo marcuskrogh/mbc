@@ -84,8 +84,10 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
     Callable[[np.ndarray], np.ndarray],
 ]:
     if scaling is None:
-        ident = lambda v: v
-        return problem, ident, ident
+        def identity(v: np.ndarray) -> np.ndarray:
+            return np.asarray(v, dtype=float)
+
+        return problem, identity, identity
 
     obj_scale = float(scaling.objective_scale)
     if obj_scale <= 0.0:

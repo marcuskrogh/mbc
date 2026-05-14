@@ -25,7 +25,7 @@ from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
 class RunStats:
     success: bool
     elapsed_s: float
-    nit: float
+    num_iterations: int | None
     cost: float
 
 
@@ -132,13 +132,21 @@ def _solve_once(solver: str, model, N: int, n_steps: int, dt: float) -> RunStats
     _, cost, info = ocp.solve(x0, d_traj)
     elapsed = time.perf_counter() - tic
     result = info["result"]
-    nit = float(result.nit) if getattr(result, "nit", None) is not None else np.nan
-    return RunStats(success=bool(result.success), elapsed_s=float(elapsed), nit=nit, cost=float(cost))
+    num_iterations = int(result.nit) if getattr(result, "nit", None) is not None else None
+    return RunStats(
+        success=bool(result.success),
+        elapsed_s=float(elapsed),
+        num_iterations=num_iterations,
+        cost=float(cost),
+    )
 
 
 def _aggregate(stats: list[RunStats]) -> dict:
     elapsed = np.array([s.elapsed_s for s in stats], dtype=float)
-    nit = np.array([s.nit for s in stats], dtype=float)
+    nit = np.array(
+        [float(s.num_iterations) if s.num_iterations is not None else np.nan for s in stats],
+        dtype=float,
+    )
     success = np.array([1.0 if s.success else 0.0 for s in stats], dtype=float)
     return {
         "runs": len(stats),
@@ -189,11 +197,11 @@ def run_benchmark(
 
     # Acceptance criteria definition:
     # candidate should be at least 20% faster median solve-time, 10% fewer median
-    # iterations, and no worse than baseline success-rate by more than 2 pp.
+    # iterations, and no worse than baseline success-rate by more than 2 percentage points.
     criteria = {
         "baseline_solver": "SLSQP",
         "min_speedup_ratio": 1.20,   # baseline_time / candidate_time
-        "max_iteration_ratio": 0.90, # candidate_nit / baseline_nit
+        "min_iteration_improvement_ratio": 1.10,  # baseline_nit / candidate_nit
         "max_success_drop_pp": 0.02,
     }
     out["acceptance_criteria"] = criteria
@@ -215,7 +223,7 @@ def run_benchmark(
             cand = out[case_name].get(solver, {}).get("by_horizon", {})
             verdict = {"eligible": False}
             ratios_speed = []
-            ratios_nit = []
+            iteration_improvement_ratios = []
             success_drops = []
             for N in horizons:
                 if (
@@ -226,17 +234,19 @@ def run_benchmark(
                     and "median_nit" in cand[N]
                 ):
                     ratios_speed.append(base[N]["median_time_s"] / max(cand[N]["median_time_s"], 1e-12))
-                    ratios_nit.append(cand[N]["median_nit"] / max(base[N]["median_nit"], 1e-12))
+                    iteration_improvement_ratios.append(
+                        base[N]["median_nit"] / max(cand[N]["median_nit"], 1e-12)
+                    )
                     success_drops.append(base[N]["success_rate"] - cand[N]["success_rate"])
             if ratios_speed:
                 verdict = {
                     "eligible": bool(
                         np.median(ratios_speed) >= criteria["min_speedup_ratio"]
-                        and np.median(ratios_nit) <= criteria["max_iteration_ratio"]
+                        and np.median(iteration_improvement_ratios) >= criteria["min_iteration_improvement_ratio"]
                         and np.max(success_drops) <= criteria["max_success_drop_pp"]
                     ),
                     "median_speedup_ratio": float(np.median(ratios_speed)),
-                    "median_iteration_ratio": float(np.median(ratios_nit)),
+                    "median_iteration_improvement_ratio": float(np.median(iteration_improvement_ratios)),
                     "max_success_drop_pp": float(np.max(success_drops)),
                 }
             out[case_name][solver]["acceptance_check_vs_SLSQP"] = verdict
