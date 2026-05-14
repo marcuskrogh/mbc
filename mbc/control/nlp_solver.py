@@ -109,7 +109,10 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
 
     def objective_jac_scaled(y: np.ndarray) -> np.ndarray:
         if problem.objective_jac is None:
-            raise RuntimeError("objective_jac_scaled called without objective_jac.")
+            raise RuntimeError(
+                "Internal error: objective_jac_scaled invoked while "
+                "problem.objective_jac is None."
+            )
         grad_x = np.asarray(problem.objective_jac(to_unscaled(y)), dtype=float).reshape(-1)
         if grad_x.size != problem.x0.size:
             raise ValueError(

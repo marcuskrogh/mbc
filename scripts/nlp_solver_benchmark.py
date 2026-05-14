@@ -21,11 +21,11 @@ from mbc.control import EconomicOptimalControlProblem
 from mbc.control import NLPProblem, ScipyNLPBackend
 from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
 
-MIN_DENOMINATOR = 1e-12  # Avoid divide-by-zero in ratio-based benchmark comparisons.
+MIN_SAFE_DIVISOR = 1e-12  # Safety floor to avoid division-by-zero in ratio calculations.
 
 
 def _safe_ratio(numerator: float, denominator: float) -> float:
-    return float(numerator / max(denominator, MIN_DENOMINATOR))
+    return float(numerator / max(denominator, MIN_SAFE_DIVISOR))
 
 
 @dataclass
@@ -202,9 +202,11 @@ def run_benchmark(
                     per_horizon[N] = _aggregate(stats)
             out[case_name][solver] = {"by_horizon": per_horizon}
 
-    # Acceptance criteria: candidate should be at least 20% faster median solve-time,
-    # 10% fewer median iterations, and no worse than baseline success-rate by more
-    # than 2 percentage points.
+    # Provisional acceptance criteria for automated comparisons. These thresholds
+    # are intentionally conservative defaults and can be tightened/relaxed after
+    # collecting solver-specific benchmark history in CI or local studies.
+    # Candidate should be at least 20% faster median solve-time, 10% fewer median
+    # iterations, and no worse than baseline success-rate by more than 2 points.
     criteria = {
         "baseline_solver": "SLSQP",
         "min_speedup_ratio": 1.20,  # baseline_time / candidate_time
