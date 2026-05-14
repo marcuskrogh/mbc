@@ -59,7 +59,7 @@ class NLPSolverBackend(Protocol):
         """Solve an NLP and return a normalized result."""
 
 
-def _coerce_scale_vector(
+def _normalize_scale_vector(
     scale: float | np.ndarray | None,
     size: int,
     *,
@@ -94,7 +94,7 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
     if obj_scale <= 0.0:
         raise ValueError("objective_scale must be strictly positive.")
 
-    var_scale = _coerce_scale_vector(scaling.variable_scale, problem.x0.size, default=1.0)
+    var_scale = _normalize_scale_vector(scaling.variable_scale, problem.x0.size, default=1.0)
     inv_var_scale = 1.0 / var_scale
 
     def to_unscaled(y: np.ndarray) -> np.ndarray:

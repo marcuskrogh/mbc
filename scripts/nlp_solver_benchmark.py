@@ -20,6 +20,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 from mbc.control import EconomicOptimalControlProblem
 from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
 
+MIN_DENOM = 1e-12  # Avoid divide-by-zero in ratio-based benchmark comparisons.
+
 
 @dataclass
 class RunStats:
@@ -195,9 +197,9 @@ def run_benchmark(
                     per_horizon[N] = _aggregate(stats)
             out[case_name][solver] = {"by_horizon": per_horizon}
 
-    # Acceptance criteria definition:
-    # candidate should be at least 20% faster median solve-time, 10% fewer median
-    # iterations, and no worse than baseline success-rate by more than 2 percentage points.
+    # Acceptance criteria: candidate should be at least 20% faster median solve-time,
+    # 10% fewer median iterations, and no worse than baseline success-rate by more
+    # than 2 percentage points.
     criteria = {
         "baseline_solver": "SLSQP",
         "min_speedup_ratio": 1.20,  # baseline_time / candidate_time
@@ -233,9 +235,11 @@ def run_benchmark(
                     and "median_nit" in base[N]
                     and "median_nit" in cand[N]
                 ):
-                    ratios_speed.append(base[N]["median_time_s"] / max(cand[N]["median_time_s"], 1e-12))
+                    ratios_speed.append(
+                        base[N]["median_time_s"] / max(cand[N]["median_time_s"], MIN_DENOM)
+                    )
                     iteration_improvement_ratios.append(
-                        base[N]["median_nit"] / max(cand[N]["median_nit"], 1e-12)
+                        base[N]["median_nit"] / max(cand[N]["median_nit"], MIN_DENOM)
                     )
                     success_drops.append(base[N]["success_rate"] - cand[N]["success_rate"])
             if ratios_speed:
