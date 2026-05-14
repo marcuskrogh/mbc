@@ -229,7 +229,11 @@ class ScipyNLPBackend:
             scaled_problem.objective,
             scaled_problem.x0,
             method=self._method,
-            jac=scaled_problem.objective_jac,
+            **(
+                {"jac": scaled_problem.objective_jac}
+                if scaled_problem.objective_jac is not None
+                else {}
+            ),
             bounds=Bounds(scaled_problem.lb, scaled_problem.ub),
             constraints=constraints,
             options=self._options,
@@ -283,7 +287,11 @@ class IpoptNLPBackend:
         result = minimize_ipopt(
             scaled_problem.objective,
             scaled_problem.x0,
-            jac=scaled_problem.objective_jac,
+            **(
+                {"jac": scaled_problem.objective_jac}
+                if scaled_problem.objective_jac is not None
+                else {}
+            ),
             bounds=Bounds(scaled_problem.lb, scaled_problem.ub),
             constraints=constraints,
             options=options,
