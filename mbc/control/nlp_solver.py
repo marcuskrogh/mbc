@@ -78,16 +78,17 @@ def _coerce_scale_vector(
     return vec
 
 
+def _identity_vector(v: np.ndarray) -> np.ndarray:
+    return np.asarray(v, dtype=float)
+
+
 def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tuple[
     NLPProblem,
     Callable[[np.ndarray], np.ndarray],
     Callable[[np.ndarray], np.ndarray],
 ]:
     if scaling is None:
-        def identity(v: np.ndarray) -> np.ndarray:
-            return np.asarray(v, dtype=float)
-
-        return problem, identity, identity
+        return problem, _identity_vector, _identity_vector
 
     obj_scale = float(scaling.objective_scale)
     if obj_scale <= 0.0:

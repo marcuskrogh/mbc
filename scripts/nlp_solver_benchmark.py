@@ -200,7 +200,7 @@ def run_benchmark(
     # iterations, and no worse than baseline success-rate by more than 2 percentage points.
     criteria = {
         "baseline_solver": "SLSQP",
-        "min_speedup_ratio": 1.20,   # baseline_time / candidate_time
+        "min_speedup_ratio": 1.20,  # baseline_time / candidate_time
         "min_iteration_improvement_ratio": 1.10,  # baseline_nit / candidate_nit
         "max_success_drop_pp": 0.02,
     }
