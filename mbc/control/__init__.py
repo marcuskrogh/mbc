@@ -9,6 +9,8 @@ from .enmpc import (
     CDNMPCController,
 )
 from .nlp_solver import (
+    NLPConstraint,
+    NLPProblem,
     NLPScalingPolicy,
     NLPSolverBackend,
     ScipyNLPBackend,
@@ -23,6 +25,8 @@ __all__ = [
     "CDMPCController",
     "EconomicOptimalControlProblem",
     "CDNMPCController",
+    "NLPConstraint",
+    "NLPProblem",
     "NLPScalingPolicy",
     "NLPSolverBackend",
     "ScipyNLPBackend",

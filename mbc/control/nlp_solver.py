@@ -35,6 +35,7 @@ class NLPProblem:
     lb: np.ndarray
     ub: np.ndarray
     constraints: tuple[NLPConstraint, ...]
+    objective_jac: Callable[[np.ndarray], np.ndarray] | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,16 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
     def objective_scaled(y: np.ndarray) -> float:
         return float(problem.objective(to_unscaled(y)) * obj_scale)
 
+    def objective_jac_scaled(y: np.ndarray) -> np.ndarray:
+        if problem.objective_jac is None:
+            raise RuntimeError("objective_jac_scaled called without objective_jac.")
+        grad_x = np.asarray(problem.objective_jac(to_unscaled(y)), dtype=float).reshape(-1)
+        if grad_x.size != problem.x0.size:
+            raise ValueError(
+                f"Objective Jacobian must have size {problem.x0.size}; got {grad_x.size}."
+            )
+        return obj_scale * grad_x * inv_var_scale
+
     con_scale_raw = scaling.constraint_scale
 
     def scale_constraint(c_val: np.ndarray) -> np.ndarray:
@@ -122,13 +133,54 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
             raise ValueError("constraint_scale entries must be strictly positive.")
         return arr * s_vec
 
+    def scale_constraint_jac(c_jac: np.ndarray, c_dim: int) -> np.ndarray:
+        jac = np.asarray(c_jac, dtype=float)
+        if jac.ndim == 1:
+            jac = jac.reshape(1, -1)
+        if jac.ndim != 2:
+            raise ValueError("Constraint Jacobian must be a 1D or 2D array.")
+        if jac.shape[0] != c_dim or jac.shape[1] != problem.x0.size:
+            raise ValueError(
+                "Constraint Jacobian has invalid shape "
+                f"{jac.shape}; expected ({c_dim}, {problem.x0.size})."
+            )
+        jac = jac * inv_var_scale[np.newaxis, :]
+        if con_scale_raw is None:
+            return jac
+        if np.isscalar(con_scale_raw):
+            s = float(con_scale_raw)
+            if s <= 0.0:
+                raise ValueError("constraint_scale must be strictly positive.")
+            return jac * s
+        s_vec = np.asarray(con_scale_raw, dtype=float).reshape(-1)
+        if np.any(s_vec <= 0.0):
+            raise ValueError("constraint_scale entries must be strictly positive.")
+        if s_vec.size != c_dim:
+            raise ValueError(
+                "constraint_scale vector size must match constraint output size "
+                f"({c_dim}); got {s_vec.size}."
+            )
+        return jac * s_vec[:, np.newaxis]
+
     constraints_scaled = []
     for con in problem.constraints:
+        def con_fun(y: np.ndarray, _f=con.fun) -> np.ndarray:
+            return scale_constraint(_f(to_unscaled(y)))
+
+        con_jac = None
+        if con.jac is not None:
+            def con_jac_fn(y: np.ndarray, _f=con.fun, _jac=con.jac) -> np.ndarray:
+                c_val = np.asarray(_f(to_unscaled(y)), dtype=float).reshape(-1)
+                jac_x = _jac(to_unscaled(y))
+                return scale_constraint_jac(jac_x, c_val.size)
+
+            con_jac = con_jac_fn
+
         constraints_scaled.append(
             NLPConstraint(
                 kind=con.kind,
-                fun=lambda y, _f=con.fun: scale_constraint(_f(to_unscaled(y))),
-                jac=None,
+                fun=con_fun,
+                jac=con_jac,
             )
         )
 
@@ -137,6 +189,7 @@ def _apply_scaling(problem: NLPProblem, scaling: NLPScalingPolicy | None) -> tup
     x0_scaled = to_scaled(problem.x0)
     scaled_problem = NLPProblem(
         objective=objective_scaled,
+        objective_jac=objective_jac_scaled if problem.objective_jac is not None else None,
         x0=x0_scaled,
         lb=lb_scaled,
         ub=ub_scaled,
@@ -165,12 +218,15 @@ class ScipyNLPBackend:
         scaled_problem, to_unscaled, _ = _apply_scaling(problem, self._scaling)
         constraints = []
         for con in scaled_problem.constraints:
-            constraints.append({"type": con.kind, "fun": con.fun})
+            constraints.append(
+                {"type": con.kind, "fun": con.fun, **({"jac": con.jac} if con.jac is not None else {})}
+            )
 
         result = minimize(
             scaled_problem.objective,
             scaled_problem.x0,
             method=self._method,
+            jac=scaled_problem.objective_jac,
             bounds=Bounds(scaled_problem.lb, scaled_problem.ub),
             constraints=constraints,
             options=self._options,
@@ -215,13 +271,16 @@ class IpoptNLPBackend:
         scaled_problem, to_unscaled, _ = _apply_scaling(problem, self._scaling)
         constraints = []
         for con in scaled_problem.constraints:
-            constraints.append({"type": con.kind, "fun": con.fun})
+            constraints.append(
+                {"type": con.kind, "fun": con.fun, **({"jac": con.jac} if con.jac is not None else {})}
+            )
 
         options = {"print_level": 0}
         options.update(self._options)
         result = minimize_ipopt(
             scaled_problem.objective,
             scaled_problem.x0,
+            jac=scaled_problem.objective_jac,
             bounds=Bounds(scaled_problem.lb, scaled_problem.ub),
             constraints=constraints,
             options=options,

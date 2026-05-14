@@ -18,6 +18,7 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mbc.control import EconomicOptimalControlProblem
+from mbc.control import NLPProblem, ScipyNLPBackend
 from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
 
 MIN_DENOMINATOR = 1e-12  # Avoid divide-by-zero in ratio-based benchmark comparisons.
@@ -269,12 +270,90 @@ def run_benchmark(
     return out
 
 
+def run_gradient_efficiency_example(
+    *,
+    n_vars: int = 60,
+    repeats: int = 3,
+) -> dict:
+    """
+    Compare SciPy/SLSQP solve efficiency with analytical vs numerical gradients.
+
+    Uses a diagonal quadratic objective:
+        f(x) = 0.5 * x^T Q x + c^T x
+        grad f(x) = Q x + c
+    """
+    rng = np.random.default_rng(1)
+    q_diag = 1.0 + rng.random(n_vars)
+    c = rng.normal(size=n_vars)
+    x0 = rng.normal(size=n_vars)
+
+    def objective(x: np.ndarray) -> float:
+        return float(0.5 * np.sum(q_diag * x * x) + np.dot(c, x))
+
+    def objective_jac(x: np.ndarray) -> np.ndarray:
+        return q_diag * x + c
+
+    base_problem = dict(
+        objective=objective,
+        x0=x0,
+        lb=np.full(n_vars, -10.0),
+        ub=np.full(n_vars, 10.0),
+        constraints=tuple(),
+    )
+
+    def _solve(with_jac: bool) -> dict:
+        backend = ScipyNLPBackend(method="SLSQP", options={"maxiter": 300, "ftol": 1e-9})
+        elapsed = []
+        nfev = []
+        njev = []
+        nit = []
+        for _ in range(repeats):
+            problem = NLPProblem(
+                **base_problem,
+                objective_jac=objective_jac if with_jac else None,
+            )
+            tic = time.perf_counter()
+            result = backend.solve(problem)
+            elapsed.append(time.perf_counter() - tic)
+            nfev.append(float(result.nfev or np.nan))
+            njev.append(float(result.njev or np.nan))
+            nit.append(float(result.nit or np.nan))
+        return {
+            "median_time_s": float(np.median(elapsed)),
+            "median_nfev": float(np.nanmedian(np.asarray(nfev, dtype=float))),
+            "median_njev": float(np.nanmedian(np.asarray(njev, dtype=float))),
+            "median_nit": float(np.nanmedian(np.asarray(nit, dtype=float))),
+        }
+
+    analytical = _solve(with_jac=True)
+    numerical = _solve(with_jac=False)
+    return {
+        "problem": {"n_vars": n_vars, "repeats": repeats, "solver": "SLSQP"},
+        "analytical_gradient": analytical,
+        "numerical_gradient": numerical,
+        "ratios": {
+            "time_speedup": _safe_ratio(
+                numerical["median_time_s"], analytical["median_time_s"]
+            ),
+            "nfev_reduction_ratio": _safe_ratio(
+                numerical["median_nfev"], analytical["median_nfev"]
+            ),
+        },
+    }
+
+
 if __name__ == "__main__":
     np.random.seed(0)
-    report = run_benchmark(
-        solvers=["SLSQP", "ipopt"],
-        horizons=[5, 10, 20],
-        repeats=3,
-        n_steps=2,
-    )
+    report = {
+        "ocp_solver_benchmark": run_benchmark(
+            solvers=["SLSQP", "ipopt"],
+            horizons=[5, 10, 20],
+            repeats=3,
+            n_steps=2,
+        ),
+        "gradient_efficiency_example": run_gradient_efficiency_example(
+            n_vars=60,
+            repeats=3,
+        ),
+    }
     print(json.dumps(report, indent=2))
