@@ -32,6 +32,15 @@ Both ODEs are integrated by explicit Euler with ``n_steps`` equidistant
 sub-steps of size ``h = dt / n_steps``.  The covariance is symmetrised at
 every sub-step to guard against numerical drift.
 
+No implicit propagation scheme is available for the CD-EKF.  The filter
+always uses explicit Euler for the mean ODE and the Lyapunov-type covariance
+ODE.  This mirrors the design of the SDAE counterpart
+(:class:`ContinuousDiscreteDAEEKF`) which fixes implicit-Euler propagation
+without offering an explicit alternative.  For simulation of stiff SDE
+systems an implicit integrator can be selected via
+:class:`~mbc.simulation.SDESimulator`; that choice is independent of the
+filter propagation scheme.
+
 Measurement update at t_k (Joseph form)
 ---------------------------------------
     e_k   = y^m_k − ŷ^m_{k|k-1},         ŷ^m_{k|k-1} = hm(x̂_{k|k-1}, p)
@@ -57,6 +66,10 @@ class ContinuousDiscreteEKF:
     Continuous-Discrete Extended Kalman Filter for SDE systems
     (ControlToolbox §SDE State Estimation — *CD-EKF*).
 
+    The filter always uses explicit Euler for the time update (mean ODE
+    and Lyapunov covariance ODE).  No implicit propagation scheme is
+    available; see the module docstring for the design rationale.
+
     Parameters
     ----------
     model : ContinuousDiscreteModel
@@ -70,7 +83,7 @@ class ContinuousDiscreteEKF:
         Measurement sampling interval (seconds).
     n_steps : int, optional
         Number of explicit-Euler integration sub-steps per measurement
-        interval.  Default: 10.
+        interval.  Must be at least 1.  Default: 10.
     """
 
     def __init__(
@@ -81,6 +94,12 @@ class ContinuousDiscreteEKF:
         dt: float,
         n_steps: int = 10,
     ) -> None:
+        if n_steps < 1:
+            raise ValueError(
+                f"n_steps must be a positive integer, got {n_steps!r}.  "
+                "ContinuousDiscreteEKF always uses explicit Euler propagation "
+                "and does not support implicit integration schemes."
+            )
         self._model = model
         self._x_np: np.ndarray = np.array(x0, dtype=float)
         self._P_np: np.ndarray = np.array(P0, dtype=float)

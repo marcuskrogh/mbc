@@ -728,3 +728,23 @@ class TestNStepsEffect:
         err1  = np.linalg.norm(_predict_x(1)  - x_rk4)
         err50 = np.linalg.norm(_predict_x(50) - x_rk4)
         assert err50 < err1
+
+
+class TestEKFImplicitPropagationRejected:
+    """ContinuousDiscreteEKF must not allow implicit propagation."""
+
+    def test_n_steps_zero_raises(self):
+        """n_steps=0 must raise ValueError — no implicit fallback."""
+        model = VanDeVusseCSTR()
+        x0 = np.array([2.0, 0.5])
+        P0 = np.eye(2) * 0.01
+        with pytest.raises(ValueError, match="n_steps"):
+            ContinuousDiscreteEKF(model, x0, P0, dt=0.01, n_steps=0)
+
+    def test_n_steps_negative_raises(self):
+        """Negative n_steps must raise ValueError."""
+        model = VanDeVusseCSTR()
+        x0 = np.array([2.0, 0.5])
+        P0 = np.eye(2) * 0.01
+        with pytest.raises(ValueError, match="n_steps"):
+            ContinuousDiscreteEKF(model, x0, P0, dt=0.01, n_steps=-1)
