@@ -1178,6 +1178,11 @@ P_{k|k} = (I − K_k C_k) P_{k|k-1} (I − K_k C_k)ᵀ + K_k R K_kᵀ          (
 The Joseph stabilising form preserves symmetry and positive definiteness of
 the posterior covariance in finite-precision arithmetic.
 
+The filter **always uses explicit Euler** for both the mean ODE and the
+Lyapunov-type covariance ODE.  No implicit propagation scheme is available.
+To simulate stiff SDE dynamics use [`SDESimulator`](#sdesimulator----mbcsimulation)
+with `scheme="IE"`; that choice is independent of the filter.
+
 **Parameters**:
 
 | Parameter | Type | Default | Description |
@@ -1186,7 +1191,7 @@ the posterior covariance in finite-precision arithmetic.
 | `x0` | `(nx,) ndarray` | — | Initial state estimate |
 | `P0` | `(nx,nx) ndarray` | — | Initial state covariance |
 | `dt` | `float` | — | Sampling interval |
-| `n_steps` | `int` | `10` | Euler sub-steps per interval |
+| `n_steps` | `int` | `10` | Explicit-Euler sub-steps per interval (≥ 1) |
 
 **Usage**:
 
