@@ -1137,8 +1137,11 @@ linear Kalman filter update equations to a local linearisation of the nonlinear
 state and measurement dynamics; the state distribution is characterised by its
 first two moments — mean and covariance — at all times.
 
-**Time update over [t_k, t_{k+1}]** — explicit-Euler integration of the mean
-trajectory and the Lyapunov-type ODE for the covariance:
+**Time update over [t_k, t_{k+1}]** — two propagation schemes available via
+the ``scheme`` parameter:
+
+*Explicit Euler* (`scheme="euler"`, default) — integrates the mean ODE and
+the Lyapunov-type covariance ODE with explicit Euler:
 
 ```
 dx̂_k/dt(t) = f(x̂_k, u, d, p, t)                                       (mean ODE)
@@ -1156,6 +1159,21 @@ For n = 0, 1, …, n_steps − 1:
     sigma_n = sigma(x̂_n, u, d, p, t_n)
     x̂_{n+1} = x̂_n + h · f(x̂_n, u, d, p, t_n)
     P_{n+1} = P_n + h · (A_n P_n + P_n A_nᵀ + sigma_n sigma_nᵀ)
+    P_{n+1} ← ½(P_{n+1} + P_{n+1}ᵀ)                  (symmetrise)
+```
+
+*Implicit Euler* (`scheme="implicit-euler"`) — L-stable; suitable for stiff
+drift dynamics.  Uses Newton iteration for the mean and the one-step
+sensitivity matrix for the covariance:
+
+```
+For n = 0, 1, …, n_steps − 1:
+    sigma_n = sigma(x̂_n, u, d, p, t_n)                       (diffusion at start)
+    Newton solve:  x̂_{n+1} − x̂_n − h · f(x̂_{n+1}, u, d, p, t_{n+1}) = 0
+    M       = I − h · ∂f/∂x(x̂_{n+1}, u, d, p, t_{n+1})
+    Φ       = M⁻¹                                             (sensitivity matrix)
+    τ       = P_n + h · sigma_n sigma_nᵀ
+    P_{n+1} = Φ τ Φᵀ
     P_{n+1} ← ½(P_{n+1} + P_{n+1}ᵀ)                  (symmetrise)
 ```
 
@@ -1178,6 +1196,11 @@ P_{k|k} = (I − K_k C_k) P_{k|k-1} (I − K_k C_k)ᵀ + K_k R K_kᵀ          (
 The Joseph stabilising form preserves symmetry and positive definiteness of
 the posterior covariance in finite-precision arithmetic.
 
+The filter **always uses explicit Euler** for both the mean ODE and the
+Lyapunov-type covariance ODE.  No implicit propagation scheme is available.
+To simulate stiff SDE dynamics use [`SDESimulator`](#sdesimulator----mbcsimulation)
+with `scheme="IE"`; that choice is independent of the filter.
+
 **Parameters**:
 
 | Parameter | Type | Default | Description |
@@ -1186,14 +1209,21 @@ the posterior covariance in finite-precision arithmetic.
 | `x0` | `(nx,) ndarray` | — | Initial state estimate |
 | `P0` | `(nx,nx) ndarray` | — | Initial state covariance |
 | `dt` | `float` | — | Sampling interval |
-| `n_steps` | `int` | `10` | Euler sub-steps per interval |
+| `n_steps` | `int` | `10` | Integration sub-steps per interval (≥ 1) |
+| `scheme` | `str` | `"euler"` | `"euler"` or `"implicit-euler"` |
+| `newton_tol` | `float` | `1e-10` | Newton tolerance (implicit-Euler only) |
+| `newton_max_iter` | `int` | `50` | Max Newton iterations (implicit-Euler only) |
 
 **Usage**:
 
 ```python
 from mbc.estimation import ContinuousDiscreteEKF
 
+# Explicit Euler (default)
 ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0, n_steps=10)
+
+# Implicit Euler — suitable for stiff drift dynamics
+ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0, n_steps=10, scheme="implicit-euler")
 
 x_hat, P = ekf.step(y, u, d, t, mask=None)   # predict + update
 x_hat, P = ekf.predict(u, d, t)              # prediction only

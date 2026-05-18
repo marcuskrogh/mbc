@@ -728,3 +728,146 @@ class TestNStepsEffect:
         err1  = np.linalg.norm(_predict_x(1)  - x_rk4)
         err50 = np.linalg.norm(_predict_x(50) - x_rk4)
         assert err50 < err1
+
+
+class TestEKFNStepsValidation:
+    """ContinuousDiscreteEKF must reject non-positive n_steps."""
+
+    def test_n_steps_zero_raises(self):
+        """n_steps=0 must raise ValueError."""
+        model = VanDeVusseCSTR()
+        x0 = np.array([2.0, 0.5])
+        P0 = np.eye(2) * 0.01
+        with pytest.raises(ValueError, match="n_steps"):
+            ContinuousDiscreteEKF(model, x0, P0, dt=0.01, n_steps=0)
+
+    def test_n_steps_negative_raises(self):
+        """Negative n_steps must raise ValueError."""
+        model = VanDeVusseCSTR()
+        x0 = np.array([2.0, 0.5])
+        P0 = np.eye(2) * 0.01
+        with pytest.raises(ValueError, match="n_steps"):
+            ContinuousDiscreteEKF(model, x0, P0, dt=0.01, n_steps=-1)
+
+
+class TestEKFImplicitEuler:
+    """Tests for the implicit-Euler propagation scheme."""
+
+    def test_invalid_scheme_raises(self):
+        """An unrecognised scheme string must raise ValueError."""
+        model = VanDeVusseCSTR()
+        x0 = np.array([2.0, 0.5])
+        P0 = np.eye(2) * 0.01
+        with pytest.raises(ValueError, match="scheme"):
+            ContinuousDiscreteEKF(model, x0, P0, dt=0.01, scheme="runge-kutta")
+
+    def test_covariance_symmetric_after_predict(self):
+        """P must be symmetric after an implicit-Euler predict step."""
+        model = VanDeVusseCSTR()
+        x0 = _VDV_SS + np.array([0.05, 0.05])
+        P0 = np.diag([0.1, 0.1])
+        ekf = ContinuousDiscreteEKF(
+            model, x0, P0, dt=0.01, n_steps=5, scheme="implicit-euler"
+        )
+        _, P = ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
+        np.testing.assert_allclose(P, P.T, atol=1e-12)
+
+    def test_covariance_psd_after_predict(self):
+        """P must be positive semi-definite after an implicit-Euler predict step."""
+        model = VanDeVusseCSTR()
+        x0 = _VDV_SS + np.array([0.05, 0.05])
+        P0 = np.diag([0.1, 0.1])
+        ekf = ContinuousDiscreteEKF(
+            model, x0, P0, dt=0.01, n_steps=5, scheme="implicit-euler"
+        )
+        _, P = ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
+        eigvals = np.linalg.eigvalsh(P)
+        assert np.all(eigvals >= -1e-12), f"P not PSD: min eigenvalue = {eigvals.min()}"
+
+    def test_predict_increases_uncertainty_from_zero(self):
+        """With zero initial P, the implicit-Euler predict must grow trace(P) > 0."""
+        model = VanDeVusseCSTR()
+        x0 = _VDV_SS
+        P0 = np.zeros((2, 2))
+        ekf = ContinuousDiscreteEKF(
+            model, x0, P0, dt=0.01, n_steps=5, scheme="implicit-euler"
+        )
+        ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
+        assert np.trace(ekf.P) > 0.0
+
+    def test_update_decreases_uncertainty(self):
+        """An informative update must reduce trace(P) after implicit predict."""
+        model = VanDeVusseCSTR()
+        x0 = _VDV_SS + np.array([0.05, 0.05])
+        P0 = np.diag([0.1, 0.1])
+        ekf = ContinuousDiscreteEKF(
+            model, x0, P0, dt=0.01, n_steps=5, scheme="implicit-euler"
+        )
+        ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
+        P_pred_tr = np.trace(ekf.P)
+        y = np.array([_VDV_SS[1]])
+        ekf.update(y, _VDV_D_RATE, _VDV_D, _VDV_P)
+        assert np.trace(ekf.P) < P_pred_tr + 1e-10
+
+    def test_implicit_and_explicit_agree_at_convergence(self):
+        """Both schemes must converge to the same mean as h → 0 (both O(h))."""
+        model = VanDeVusseCSTR()
+        x0 = np.array([2.0, 0.5])
+        P0 = np.diag([0.01, 0.01])
+        dt = 0.01
+
+        # Reference: RK4 with very fine steps
+        u, d, p = _VDV_D_RATE, _VDV_D, _VDV_P
+        x_rk4 = x0.copy()
+        for _ in range(10000):
+            x_rk4 = _rk4_step(lambda x: model.f(x, u, d, p, 0.0), x_rk4, dt / 10000)
+
+        ekf_e = ContinuousDiscreteEKF(
+            model, x0.copy(), P0.copy(), dt=dt, n_steps=200, scheme="euler"
+        )
+        ekf_ie = ContinuousDiscreteEKF(
+            model, x0.copy(), P0.copy(), dt=dt, n_steps=200, scheme="implicit-euler"
+        )
+        ekf_e.predict(u, d, p, 0.0)
+        ekf_ie.predict(u, d, p, 0.0)
+
+        # Both first-order methods with h=5e-5 should be within 1e-3 of RK4
+        np.testing.assert_allclose(ekf_e.x_hat, x_rk4, rtol=1e-2, atol=1e-3)
+        np.testing.assert_allclose(ekf_ie.x_hat, x_rk4, rtol=1e-2, atol=1e-3)
+
+    def test_tracking_rmse_implicit_euler(self):
+        """Implicit-Euler EKF must track the VdV CSTR trajectory within RMSE bounds."""
+        dt = 0.01
+        T = 200
+        model = VanDeVusseCSTR()
+        x0 = np.array([2.0, 0.5])
+        U = np.tile(_VDV_D_RATE, (T, 1))
+        D = np.zeros((T, 0))
+        P_traj = np.zeros((T, 0))
+        X_true = _simulate_noiseless(model, x0, U, D, P_traj, dt)
+
+        x0_est = x0 + np.array([0.1, 0.05])
+        P0 = np.diag([0.5, 0.5])
+        ekf = ContinuousDiscreteEKF(
+            model, x0_est, P0, dt=dt, n_steps=10, scheme="implicit-euler"
+        )
+
+        rng = np.random.default_rng(42)
+        R_std = np.sqrt(model.Rm[0, 0])
+        X_est = [ekf.x_hat.copy()]
+        for k in range(T):
+            y_true = model.hm(
+                X_true[k + 1], U[k],
+                D[k] if D.shape[1] > 0 else np.zeros(0),
+                _VDV_P, k * dt,
+            )
+            y = y_true + R_std * rng.standard_normal(1)
+            ekf.step(y, U[k], D[k] if D.shape[1] > 0 else np.zeros(0), _VDV_P, k * dt)
+            X_est.append(ekf.x_hat.copy())
+
+        X_est = np.array(X_est)
+        err = X_est[100:, :] - X_true[100:, :]
+        rmse_cA = np.sqrt(np.mean(err[:, 0] ** 2))
+        rmse_cB = np.sqrt(np.mean(err[:, 1] ** 2))
+        assert rmse_cA < 0.1, f"c_A RMSE = {rmse_cA:.4f} too large"
+        assert rmse_cB < 0.05, f"c_B RMSE = {rmse_cB:.4f} too large"

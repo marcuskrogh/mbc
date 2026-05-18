@@ -8,29 +8,65 @@ Model
     dx(t)  = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),  dw ~ N(0, I dt)
     ym(tk) = hm(x(tk), p) + v(tk),                              v ~ N(0, R)
 
-Time update over [t_k, t_{k+1}] (mean trajectory + Lyapunov ODE)
-----------------------------------------------------------------
+Time update over [t_k, t_{k+1}] (mean trajectory + covariance propagation)
+---------------------------------------------------------------------------
 The predicted mean evolves as the expectation of the SDE (the SDE is a
 martingale, so the diffusion contributes zero mean):
 
     dx̂_k/dt(t) = f(x̂_k(t), u(t), d(t), p, t),    x̂_k(t_k) = x̂_{k|k}.
 
-The predicted covariance evolves according to the Lyapunov-type ODE:
+The predictions at t_{k+1} are x̂_{k+1|k} = x̂_k(t_{k+1}) and
+P_{k+1|k} = P_k(t_{k+1}).
+
+Both the mean and covariance are integrated with ``n_steps`` equidistant
+sub-steps of size ``h = dt / n_steps``.  Two propagation schemes are
+available via the ``scheme`` constructor argument:
+
+Explicit Euler  (``scheme="euler"``, default)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The mean ODE and the Lyapunov-type covariance ODE are integrated with
+explicit Euler:
 
     dP_k/dt(t) = A_k(t) P_k(t) + P_k(t) A_kᵀ(t) + sigma_k(t) sigma_kᵀ(t),
-                                                  P_k(t_k) = P_{k|k},
-
-where the Jacobian and diffusion are evaluated along the mean trajectory:
 
     A_k(t)     = ∂f/∂x (x̂_k(t), u(t), d(t), p, t),
     sigma_k(t) = sigma (x̂_k(t), u(t), d(t), p, t).
 
-The predictions at t_{k+1} are x̂_{k+1|k} = x̂_k(t_{k+1}) and
-P_{k+1|k} = P_k(t_{k+1}).
+For sub-step n:
 
-Both ODEs are integrated by explicit Euler with ``n_steps`` equidistant
-sub-steps of size ``h = dt / n_steps``.  The covariance is symmetrised at
-every sub-step to guard against numerical drift.
+    A_n     = ∂f/∂x (x̂_n, u, d, p, t_n)
+    σ_n     = sigma (x̂_n, u, d, p, t_n)
+    x̂_{n+1} = x̂_n + h · f(x̂_n, u, d, p, t_n)
+    P_{n+1} = P_n + h · (A_n P_n + P_n A_nᵀ + σ_n σ_nᵀ)
+    P_{n+1} ← ½(P_{n+1} + P_{n+1}ᵀ)                     (symmetrise)
+
+The covariance is symmetrised at every sub-step to guard against numerical
+drift.
+
+Implicit Euler  (``scheme="implicit-euler"``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+The mean ODE is integrated with implicit Euler (first-order L-stable scheme,
+suitable for stiff drift dynamics).  The covariance is propagated via the
+one-step sensitivity matrix Φ.
+
+For sub-step n (with t_{n+1} = t_n + h):
+
+  1. Solve for x̂_{n+1} by Newton iteration:
+
+         R(x̂_{n+1}) = x̂_{n+1} − x̂_n − h · f(x̂_{n+1}, u, d, p, t_{n+1}) = 0,
+         ∂R/∂x̂     = I − h · ∂f/∂x(x̂_{n+1}, u, d, p, t_{n+1}).
+
+  2. Compute the one-step state-transition sensitivity (= inverse of the
+     converged Newton Jacobian):
+
+         Φ = (I − h · A_{n+1})⁻¹,   A_{n+1} = ∂f/∂x(x̂_{n+1}, u, d, p, t_{n+1}).
+
+  3. Propagate covariance (left-rectangular rule for the stochastic integral,
+     diffusion evaluated at the start of the sub-step):
+
+         τ_{n}   = P_n + h · σ_n σ_nᵀ,    σ_n = sigma(x̂_n, u, d, p, t_n)
+         P_{n+1} = Φ τ_n Φᵀ
+         P_{n+1} ← ½(P_{n+1} + P_{n+1}ᵀ)                (symmetrise)
 
 Measurement update at t_k (Joseph form)
 ---------------------------------------
@@ -50,12 +86,26 @@ from __future__ import annotations
 import numpy as np
 
 from ..models import ContinuousDiscreteModel
+from .._utils import _newton_solve
+
+_VALID_SCHEMES = ("euler", "implicit-euler")
 
 
 class ContinuousDiscreteEKF:
     """
     Continuous-Discrete Extended Kalman Filter for SDE systems
     (ControlToolbox §SDE State Estimation — *CD-EKF*).
+
+    Two propagation schemes are available via the ``scheme`` parameter:
+
+    * ``"euler"`` (default) — explicit Euler for both the mean ODE and the
+      Lyapunov-type covariance ODE.  Cheap per step; requires small ``h``
+      for accuracy and stability on stiff systems.
+
+    * ``"implicit-euler"`` — implicit Euler for the mean (via Newton
+      iteration) with covariance propagation through the one-step sensitivity
+      Φ = (I − h A_{n+1})⁻¹.  L-stable; suitable for stiff drift dynamics.
+      See the module docstring for the full algorithm.
 
     Parameters
     ----------
@@ -69,8 +119,16 @@ class ContinuousDiscreteEKF:
     dt : float
         Measurement sampling interval (seconds).
     n_steps : int, optional
-        Number of explicit-Euler integration sub-steps per measurement
-        interval.  Default: 10.
+        Number of integration sub-steps per measurement interval.
+        Must be at least 1.  Default: 10.
+    scheme : {"euler", "implicit-euler"}, optional
+        Propagation scheme for the time update.  Default: ``"euler"``.
+    newton_tol : float, optional
+        Newton convergence tolerance used by the implicit-Euler sub-step.
+        Ignored when ``scheme="euler"``.  Default: 1e-10.
+    newton_max_iter : int, optional
+        Maximum Newton iterations per implicit sub-step.
+        Ignored when ``scheme="euler"``.  Default: 50.
     """
 
     def __init__(
@@ -80,13 +138,27 @@ class ContinuousDiscreteEKF:
         P0: np.ndarray,
         dt: float,
         n_steps: int = 10,
+        scheme: str = "euler",
+        newton_tol: float = 1e-10,
+        newton_max_iter: int = 50,
     ) -> None:
+        if n_steps < 1:
+            raise ValueError(
+                f"n_steps must be a positive integer, got {n_steps!r}."
+            )
+        if scheme not in _VALID_SCHEMES:
+            raise ValueError(
+                f"scheme must be one of {_VALID_SCHEMES!r}, got {scheme!r}."
+            )
         self._model = model
         self._x_np: np.ndarray = np.array(x0, dtype=float)
         self._P_np: np.ndarray = np.array(P0, dtype=float)
         self._dt = dt
         self._n_steps = n_steps
         self._h = dt / n_steps
+        self._scheme = scheme
+        self._newton_tol = newton_tol
+        self._newton_max_iter = newton_max_iter
 
     # ── Public properties ─────────────────────────────────────────────────
 
@@ -110,8 +182,8 @@ class ContinuousDiscreteEKF:
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Time update: integrate the mean ODE and the Lyapunov ODE for the
-        covariance from ``t`` to ``t + dt``.
+        Time update: integrate the mean ODE and propagate the covariance
+        from ``t`` to ``t + dt`` using the configured ``scheme``.
 
         Parameters
         ----------
@@ -125,6 +197,18 @@ class ContinuousDiscreteEKF:
         x_pred : (nx,) predicted state estimate x̂_{k+1|k}.
         P_pred : (nx, nx) predicted covariance P_{k+1|k}.
         """
+        if self._scheme == "euler":
+            return self._predict_euler(u, d, p, t)
+        return self._predict_implicit_euler(u, d, p, t)
+
+    def _predict_euler(
+        self,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Explicit-Euler time update."""
         x = self._x_np.copy()
         P = self._P_np.copy()
         h = self._h
@@ -141,6 +225,69 @@ class ContinuousDiscreteEKF:
             P = P + h * P_dot
             P = (P + P.T) * 0.5  # symmetrise to prevent numerical drift
             t_j += h
+
+        self._x_np = x
+        self._P_np = P
+        return x.copy(), P.copy()
+
+    def _predict_implicit_euler(
+        self,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Implicit-Euler time update.
+
+        For each sub-step n → n+1:
+          1. Newton solve:  x_{n+1} − x_n − h f(x_{n+1}, u, d, p, t_{n+1}) = 0
+          2. Sensitivity:   Φ = (I − h A_{n+1})⁻¹
+          3. Covariance:    τ = P_n + h σ_n σ_nᵀ
+                            P_{n+1} = Φ τ Φᵀ
+        """
+        x = self._x_np.copy()
+        P = self._P_np.copy()
+        h = self._h
+        model = self._model
+        nx = x.shape[0]
+        I_nx = np.eye(nx)
+
+        t_n = t
+        for _ in range(self._n_steps):
+            t_next = t_n + h
+            x_n = x.copy()
+
+            # Noise (left rectangular rule): evaluated at start of sub-step
+            sigma_n = model.sigma(x_n, u, d, p, t_n)
+
+            # Newton solve for implicit mean
+            x_rhs = x_n  # captured for closure
+
+            def residual(xk: np.ndarray) -> np.ndarray:
+                return xk - x_rhs - h * model.f(xk, u, d, p, t_next)
+
+            def jacobian(xk: np.ndarray) -> np.ndarray:
+                return I_nx - h * model.dfdx(xk, u, d, p, t_next)
+
+            x = _newton_solve(
+                residual, jacobian, x_n,
+                tol=self._newton_tol,
+                max_iter=self._newton_max_iter,
+            )
+
+            # Sensitivity matrix Φ = (I − h A_{n+1})⁻¹
+            # The converged Newton Jacobian is already (I − h A_{n+1}),
+            # so we solve Φ via the same matrix.
+            M = jacobian(x)          # (nx, nx)
+            Phi = np.linalg.solve(M, I_nx)   # Φ = M⁻¹
+
+            # Covariance propagation
+            tau = P + h * sigma_n @ sigma_n.T
+            P = Phi @ tau @ Phi.T
+            P = (P + P.T) * 0.5      # symmetrise
+
+            t_n = t_next
 
         self._x_np = x
         self._P_np = P
