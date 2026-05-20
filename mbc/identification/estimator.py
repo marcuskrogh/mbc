@@ -279,47 +279,34 @@ class ParameterEstimator:
         x0: np.ndarray,
         history: List[dict],
     ) -> Tuple[np.ndarray, float, bool]:
-        """Gradient-based minimisation, falling back to Nelder–Mead."""
-        try:
-            from scipy.optimize import minimize  # optional dependency
+        """Gradient-based minimisation using scipy L-BFGS-B."""
+        from scipy.optimize import minimize
 
-            # Always use finite-difference gradient of the *full* objective
-            # (likelihood + regularization + bounds guard) so the gradient is
-            # consistent with the function being minimized, regardless of
-            # whether a regularization_fn is set.
-            h = 1e-5
+        # Always use finite-difference gradient of the *full* objective
+        # (likelihood + regularization + bounds guard) so the gradient is
+        # consistent with the function being minimized, regardless of
+        # whether a regularization_fn is set.
+        h = 1e-5
 
-            def grad(theta: np.ndarray) -> np.ndarray:
-                f0 = objective(theta)
-                g = np.zeros(len(theta), dtype=float)
-                for i in range(len(theta)):
-                    th = theta.copy()
-                    th[i] += h
-                    g[i] = (objective(th) - f0) / h
-                return g
+        def grad(theta: np.ndarray) -> np.ndarray:
+            f0 = objective(theta)
+            g = np.zeros(len(theta), dtype=float)
+            for i in range(len(theta)):
+                th = theta.copy()
+                th[i] += h
+                g[i] = (objective(th) - f0) / h
+            return g
 
-            bounds_scipy = self._bounds  # list of (lo, hi) or None
-            res = minimize(
-                objective,
-                x0,
-                jac=grad,
-                method="L-BFGS-B",
-                bounds=bounds_scipy,
-                options={"maxiter": 500, "ftol": 1e-8, "gtol": 1e-5},
-            )
-            return res.x, float(res.fun), res.success
-
-        except ImportError:
-            _LOGGER.debug(
-                "scipy not available; falling back to Nelder–Mead for "
-                "gradient-based step."
-            )
-            return nelder_mead(
-                objective,
-                x0,
-                tol=1e-4,
-                max_iter=400 * len(x0),
-            )
+        bounds_scipy = self._bounds  # list of (lo, hi) or None
+        res = minimize(
+            objective,
+            x0,
+            jac=grad,
+            method="L-BFGS-B",
+            bounds=bounds_scipy,
+            options={"maxiter": 500, "ftol": 1e-8, "gtol": 1e-5},
+        )
+        return res.x, float(res.fun), res.success
 
 
 # ── CD Parameter Estimator ────────────────────────────────────────────────────
@@ -553,40 +540,27 @@ class CDParameterEstimator:
         objective: Callable[[np.ndarray], float],
         x0: np.ndarray,
     ) -> Tuple[np.ndarray, float, bool]:
-        """Gradient-based minimisation, falling back to Nelder–Mead."""
-        try:
-            from scipy.optimize import minimize  # optional dependency
+        """Gradient-based minimisation using scipy L-BFGS-B."""
+        from scipy.optimize import minimize
 
-            h = 1e-5
+        h = 1e-5
 
-            def grad(theta: np.ndarray) -> np.ndarray:
-                f0 = objective(theta)
-                g = np.zeros(len(theta), dtype=float)
-                for i in range(len(theta)):
-                    th = theta.copy()
-                    th[i] += h
-                    g[i] = (objective(th) - f0) / h
-                return g
+        def grad(theta: np.ndarray) -> np.ndarray:
+            f0 = objective(theta)
+            g = np.zeros(len(theta), dtype=float)
+            for i in range(len(theta)):
+                th = theta.copy()
+                th[i] += h
+                g[i] = (objective(th) - f0) / h
+            return g
 
-            bounds_scipy = self._bounds
-            res = minimize(
-                objective,
-                x0,
-                jac=grad,
-                method="L-BFGS-B",
-                bounds=bounds_scipy,
-                options={"maxiter": 500, "ftol": 1e-8, "gtol": 1e-5},
-            )
-            return res.x, float(res.fun), res.success
-
-        except ImportError:
-            _LOGGER.debug(
-                "scipy not available; falling back to Nelder–Mead for "
-                "gradient-based step."
-            )
-            return nelder_mead(
-                objective,
-                x0,
-                tol=1e-4,
-                max_iter=400 * len(x0),
-            )
+        bounds_scipy = self._bounds
+        res = minimize(
+            objective,
+            x0,
+            jac=grad,
+            method="L-BFGS-B",
+            bounds=bounds_scipy,
+            options={"maxiter": 500, "ftol": 1e-8, "gtol": 1e-5},
+        )
+        return res.x, float(res.fun), res.success

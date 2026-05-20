@@ -154,6 +154,19 @@ def test_make_nlp_backend_solver_selection_keys_and_aliases():
     assert scipy_method_backend._method == "SLSQP"
 
 
+def test_make_nlp_backend_raises_for_unknown_solver():
+    """Unrecognised solver names must raise ValueError immediately."""
+    import pytest as _pytest
+    with _pytest.raises(ValueError, match="Unknown solver"):
+        make_nlp_backend("foobar_solver")
+
+    with _pytest.raises(ValueError, match="Unknown solver"):
+        make_nlp_backend("ippo")  # plausible IPOPT typo
+
+    with _pytest.raises(ValueError, match="Unknown solver"):
+        make_nlp_backend("scipy_v2")  # plausible future typo
+
+
 def test_ipopt_backend_passes_no_analytical_derivatives_when_not_supplied(monkeypatch):
     recorded: dict[str, object] = {}
 

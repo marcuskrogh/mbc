@@ -1085,3 +1085,185 @@ class TestCDNMPCController:
             u = ctrl.step(ym, d_traj, p=None, t=float(k))
             assert np.all(u >= -3.0 - 1e-6), f"u={u} below u_min at step {k}"
             assert np.all(u <= 3.0 + 1e-6), f"u={u} above u_max at step {k}"
+
+
+# ── Tests: Analytical Jacobians ───────────────────────────────────────────────
+
+
+class TestAnalyticalJacobians:
+    """
+    Verify that the analytical constraint and objective Jacobians match the
+    finite-difference Jacobians produced by the NLP itself.
+    """
+
+    def _make_sde_ocp(self):
+        """Small SDE tracking OCP with ROM and soft-z constraints."""
+        model = ScalarNonlinear()
+        return EconomicOptimalControlProblem(
+            model,
+            N=2,
+            Q_z=np.eye(1) * 2.0,
+            z_ref=np.array([1.5]),
+            Q_du=np.eye(1) * 0.5,
+            p_u_eco=np.array([0.1]),
+            du_min=np.array([-2.0]),
+            du_max=np.array([2.0]),
+            z_min=np.array([0.0]),
+            z_max=np.array([3.0]),
+            rho_z_2=500.0,
+            n_steps=2,
+            dt=1.0,
+        )
+
+    def _fd_jac(self, fun, z, h=1e-5):
+        """Forward finite-difference Jacobian of fun(z)."""
+        f0 = np.asarray(fun(z), dtype=float)
+        J = np.zeros((f0.size, z.size))
+        for i in range(z.size):
+            ze = z.copy()
+            ze[i] += h
+            J[:, i] = (np.asarray(fun(ze), dtype=float) - f0) / h
+        return J
+
+    def _setup_ocp_state(self, ocp):
+        """Return (z0, x_hat, d_traj, u_prev_0, p_theta, t0) for testing."""
+        L = ocp._layout
+        x0 = np.array([0.3])
+        d_traj = np.zeros((ocp._N, ocp._nd))
+        u_prev_0 = np.zeros(ocp._nu)
+        p_theta = np.array([])
+        t0 = 0.0
+        z0 = ocp._build_initial_guess(x0, None, None, None)
+        return z0, x0, d_traj, u_prev_0, p_theta, t0
+
+    def test_equality_jac_matches_fd(self):
+        ocp = self._make_sde_ocp()
+        z0, x_hat, d_traj, _, p_theta, t0 = self._setup_ocp_state(ocp)
+
+        fun = lambda z: ocp._equality_constraints(z, x_hat, d_traj, p_theta, t0)
+        J_ana = ocp._equality_constraint_jac(z0, x_hat, d_traj, p_theta, t0)
+        J_fd = self._fd_jac(fun, z0)
+
+        assert J_ana.shape == J_fd.shape, f"shape mismatch: {J_ana.shape} vs {J_fd.shape}"
+        np.testing.assert_allclose(J_ana, J_fd, atol=1e-4, rtol=1e-4,
+                                   err_msg="Equality constraint Jacobian mismatch")
+
+    def test_inequality_jac_matches_fd(self):
+        ocp = self._make_sde_ocp()
+        z0, _, d_traj, u_prev_0, p_theta, t0 = self._setup_ocp_state(ocp)
+
+        fun = lambda z: ocp._inequality_constraints(z, u_prev_0, d_traj, p_theta, t0)
+        J_ana = ocp._inequality_constraint_jac(z0, u_prev_0, d_traj, p_theta, t0)
+        J_fd = self._fd_jac(fun, z0)
+
+        assert J_ana.shape == J_fd.shape, f"shape mismatch: {J_ana.shape} vs {J_fd.shape}"
+        np.testing.assert_allclose(J_ana, J_fd, atol=1e-4, rtol=1e-4,
+                                   err_msg="Inequality constraint Jacobian mismatch")
+
+    def test_objective_jac_matches_fd_when_all_terms_analytical(self):
+        """For a pure tracking OCP (no user lagrange/mayer), objective grad is analytical."""
+        model = ScalarNonlinear()
+        ocp = EconomicOptimalControlProblem(
+            model,
+            N=2,
+            Q_z=np.eye(1) * 2.0,
+            z_ref=np.array([1.5]),
+            Q_du=np.eye(1) * 0.5,
+            p_u_eco=np.array([0.1]),
+            n_steps=2,
+            dt=1.0,
+        )
+        z0, x_hat, d_traj, u_prev_0, p_theta, t0 = self._setup_ocp_state(ocp)
+
+        assert ocp._can_use_analytical_objective_jac(), (
+            "Expected analytical objective Jacobian to be available"
+        )
+
+        fun = lambda z: np.array([ocp._objective(z, x_hat, d_traj, u_prev_0, p_theta, t0)])
+        grad_ana = ocp._objective_jac(z0, d_traj, u_prev_0, p_theta, t0)
+        grad_fd = self._fd_jac(fun, z0).ravel()
+
+        np.testing.assert_allclose(grad_ana, grad_fd, atol=1e-4, rtol=1e-4,
+                                   err_msg="Objective gradient mismatch")
+
+    def test_cdtracking_ocp_has_analytical_jac(self):
+        """CDTrackingOptimalControlProblem always provides analytical lagrange/mayer Jacs."""
+        model = ScalarNonlinear()
+        ocp_wrapper = CDTrackingOptimalControlProblem(
+            model, N=3,
+            Q=np.eye(1) * 2.0,
+            R=np.eye(1) * 0.1,
+            P=np.eye(1) * 5.0,
+            z_ref=np.array([1.5]),
+            dt=1.0,
+        )
+        eocp = ocp_wrapper._eocp
+        assert eocp._can_use_analytical_objective_jac(), (
+            "CDTrackingOCP should provide analytical Jacobians for all objective terms"
+        )
+
+    def test_cdtracking_ocp_objective_jac_matches_fd(self):
+        """CDTrackingOptimalControlProblem objective gradient matches finite differences."""
+        model = ScalarNonlinear()
+        ocp_wrapper = CDTrackingOptimalControlProblem(
+            model, N=2,
+            Q=np.eye(1) * 2.0,
+            R=np.eye(1) * 0.1,
+            P=np.eye(1) * 5.0,
+            z_ref=np.array([1.5]),
+            dt=1.0,
+            n_steps=2,
+        )
+        ocp = ocp_wrapper._eocp
+        x0 = np.array([0.5])
+        d_traj = np.zeros((2, model.nd))
+        u_prev_0 = np.zeros(1)
+        p_theta = np.array([])
+        t0 = 0.0
+        z0 = ocp._build_initial_guess(x0, None, None, None)
+
+        fun = lambda z: np.array([ocp._objective(z, x0, d_traj, u_prev_0, p_theta, t0)])
+        grad_ana = ocp._objective_jac(z0, d_traj, u_prev_0, p_theta, t0)
+        grad_fd = self._fd_jac(fun, z0).ravel()
+
+        np.testing.assert_allclose(grad_ana, grad_fd, atol=1e-4, rtol=1e-4,
+                                   err_msg="CDTracking objective gradient mismatch")
+
+    def test_solve_produces_same_result_with_analytical_jac(self):
+        """Solving with analytical Jacobians yields the same optimum as without."""
+        model = ScalarNonlinear()
+
+        # Without analytical Jacobians (no lagrange_jac)
+        ocp_nograd = EconomicOptimalControlProblem(
+            model, N=3,
+            lagrange=lambda t, x, y, u, p: float(u @ u),
+            Q_z=np.eye(1) * 2.0,
+            z_ref=np.array([1.5]),
+            n_steps=3,
+            dt=1.0,
+        )
+
+        # With analytical Jacobians
+        ocp_grad = EconomicOptimalControlProblem(
+            model, N=3,
+            lagrange=lambda t, x, y, u, p: float(u @ u),
+            lagrange_jac=lambda t, x, y, u, p: (
+                np.zeros_like(x), np.zeros_like(y), 2.0 * u
+            ),
+            Q_z=np.eye(1) * 2.0,
+            z_ref=np.array([1.5]),
+            n_steps=3,
+            dt=1.0,
+        )
+
+        x0 = np.array([0.0])
+        d_traj = np.zeros((3, model.nd))
+
+        U_nograd, cost_nograd, _ = ocp_nograd.solve(x0, d_traj)
+        U_grad, cost_grad, _ = ocp_grad.solve(x0, d_traj)
+
+        np.testing.assert_allclose(U_nograd, U_grad, atol=1e-4,
+                                   err_msg="Optimal inputs differ with/without analytical Jac")
+        assert abs(cost_nograd - cost_grad) < 1e-4, (
+            f"Cost differs: {cost_nograd:.6f} vs {cost_grad:.6f}"
+        )

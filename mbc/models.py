@@ -479,6 +479,14 @@ class ContinuousDiscreteModel(ABC):
         """
         return _fd_jacobian(lambda v: self.hm(x, u, d, v, t), p, m_out=self.nym)
 
+    def dgmdx(self, x, u, d, p, t) -> np.ndarray:
+        """Jacobian ∂gm/∂x at (x, u, d, p, t)  →  (nz, nx) ndarray."""
+        return _fd_jacobian(lambda v: self.gm(v, u, d, p, t), x)
+
+    def dgmdu(self, x, u, d, p, t) -> np.ndarray:
+        """Jacobian ∂gm/∂u at (x, u, d, p, t)  →  (nz, nu) ndarray."""
+        return _fd_jacobian(lambda v: self.gm(x, v, d, p, t), u)
+
     # ── Parameters ────────────────────────────────────────────────────────
 
     @property
@@ -753,6 +761,14 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         """Analytic ∂hm/∂p = 0  (LTI hm does not depend on p)."""
         return np.zeros((self.nym, p.shape[0]))
 
+    def dgmdx(self, x, u, d, p, t) -> np.ndarray:
+        """Analytic ∂gm/∂x = Cz."""
+        return self.Cz.copy()
+
+    def dgmdu(self, x, u, d, p, t) -> np.ndarray:
+        """Analytic ∂gm/∂u = Dz."""
+        return self.Dz.copy()
+
     # ── Concrete discretisation methods ───────────────────────────────────
 
     def discretize(self, d: "matrix") -> Tuple["matrix", "matrix", "matrix"]:
@@ -995,3 +1011,15 @@ class ContinuousDiscreteDAEModel(ContinuousDiscreteModel):
         Returns an empty ``(ny, 0)`` array when ``p`` is empty.
         """
         return _fd_jacobian(lambda v: self.g(x, y, u, d, v, t), p, m_out=self.ny)
+
+    def dgmdx(self, x, y, u, d, p, t) -> np.ndarray:
+        """Jacobian ∂gm/∂x at (x, y, u, d, p, t)  →  (nz, nx) ndarray."""
+        return _fd_jacobian(lambda v: self.gm(v, y, u, d, p, t), x)
+
+    def dgmdy(self, x, y, u, d, p, t) -> np.ndarray:
+        """Jacobian ∂gm/∂y at (x, y, u, d, p, t)  →  (nz, ny) ndarray."""
+        return _fd_jacobian(lambda v: self.gm(x, v, u, d, p, t), y)
+
+    def dgmdu(self, x, y, u, d, p, t) -> np.ndarray:
+        """Jacobian ∂gm/∂u at (x, y, u, d, p, t)  →  (nz, nu) ndarray."""
+        return _fd_jacobian(lambda v: self.gm(x, y, v, d, p, t), u)
