@@ -740,6 +740,35 @@ class TestEconomicOptimalControlProblem:
         # First input should be positive (pushing x toward z_min)
         assert u_opt[0, 0] > 0.0 - 1e-3
 
+    def test_soft_output_constraints_share_one_slack_per_output(self):
+        """Soft z bounds should use one shared slack block per output."""
+        model = ScalarNonlinear()
+        N = 4
+        ocp = EconomicOptimalControlProblem(
+            model,
+            N=N,
+            z_min=np.array([-0.5]),
+            z_max=np.array([0.5]),
+            rho_z_2=1e3,
+            u_min=np.array([-5.0]),
+            u_max=np.array([5.0]),
+            dt=1.0,
+        )
+        L = ocp._layout
+        assert L.pz_size == (L.M + 1) * model.nz
+        assert not hasattr(L, "pz_hi_size")
+        expected_total = (
+            L.u_size + L.x_size + L.y_size
+            + L.px_lo_size + L.px_hi_size + L.pz_size
+        )
+        assert L.total == expected_total
+
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+        u_opt, cost, _ = ocp.solve(x0, d_traj)
+        assert u_opt.shape == (N, model.nu)
+        assert np.isfinite(cost)
+
     def test_solver_backend_swap_with_reserved_scipy_key(self):
         """Selecting solver='scipy' should run via backend wrapper."""
         model = ScalarNonlinear()

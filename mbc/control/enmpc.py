@@ -20,9 +20,10 @@ Hard constraints (ControlToolbox §EMPC — *Constraints*):
 Soft (slacked) constraints with combined L1 + L2 exact penalty:
 
     x_min − p ≤ x_n ≤ x_max + q,    p, q ≥ 0
-    z_min − p ≤ z_n ≤ z_max + q,    p, q ≥ 0
+    z_min − s ≤ z_n ≤ z_max + s,    s ≥ 0
 
-penalised by  Σ_n (rho_·_2 ‖p_n‖² + rho_·_1^T p_n + rho_·_2 ‖q_n‖² + rho_·_1^T q_n) Δt.
+penalised by  Σ_n (rho_·_2 ‖p_n‖² + rho_·_1^T p_n + rho_·_2 ‖q_n‖² + rho_·_1^T q_n) Δt
+for state slacks and by Σ_n (rho_z_2 ‖s_n‖² + rho_z_1^T s_n) Δt for output slacks.
 
 The L1 (linear) component is an *exact* penalty: with sufficiently large
 ``rho_·_1``, the soft-constrained optimum coincides with the hard-constrained
@@ -105,7 +106,7 @@ class _DecisionLayout:
          x_0, x_1, ..., x_M,                                (differential state at sub-steps)
          y_0, y_1, ..., y_M,                                (algebraic state, only if SDAE)
          px_lo_0, ..., px_lo_M, px_hi_0, ..., px_hi_M,      (state slacks, only if soft x)
-         pz_lo_0, ..., pz_lo_M, pz_hi_0, ..., pz_hi_M]      (output slacks, only if soft z)
+         pz_0, ..., pz_M]                                    (output slacks, only if soft z)
 
     where M = N * n_steps is the total number of sub-step intervals; states
     are stored at M + 1 grid points.
@@ -154,13 +155,10 @@ class _DecisionLayout:
         self.px_hi_size = (self.M + 1) * nx if soft_x else 0
         offset += self.px_hi_size
 
-        # Soft-z slacks: lower + upper, each (M+1, nz)
-        self.pz_lo_off = offset
-        self.pz_lo_size = (self.M + 1) * nz if soft_z else 0
-        offset += self.pz_lo_size
-        self.pz_hi_off = offset
-        self.pz_hi_size = (self.M + 1) * nz if soft_z else 0
-        offset += self.pz_hi_size
+        # Soft-z slacks: shared for lower + upper, (M+1, nz)
+        self.pz_off = offset
+        self.pz_size = (self.M + 1) * nz if soft_z else 0
+        offset += self.pz_size
 
         self.total = offset
 
@@ -182,11 +180,8 @@ class _DecisionLayout:
     def get_PX_hi(self, z: np.ndarray) -> np.ndarray:
         return z[self.px_hi_off:self.px_hi_off + self.px_hi_size].reshape(self.M + 1, self.nx)
 
-    def get_PZ_lo(self, z: np.ndarray) -> np.ndarray:
-        return z[self.pz_lo_off:self.pz_lo_off + self.pz_lo_size].reshape(self.M + 1, self.nz)
-
-    def get_PZ_hi(self, z: np.ndarray) -> np.ndarray:
-        return z[self.pz_hi_off:self.pz_hi_off + self.pz_hi_size].reshape(self.M + 1, self.nz)
+    def get_PZ(self, z: np.ndarray) -> np.ndarray:
+        return z[self.pz_off:self.pz_off + self.pz_size].reshape(self.M + 1, self.nz)
 
 
 # ── Economic Optimal Control Problem ─────────────────────────────────────────
@@ -552,15 +547,10 @@ class EconomicOptimalControlProblem:
                     total += (self._rho_x_1 * q_n.sum() + self._rho_x_2 * (q_n @ q_n)) * h
 
         if self._has_soft_z:
-            PZ_lo = L.get_PZ_lo(z)
-            PZ_hi = L.get_PZ_hi(z)
+            PZ = L.get_PZ(z)
             for n in range(L.M + 1):
-                if self._z_min is not None:
-                    p_n = PZ_lo[n]
-                    total += (self._rho_z_1 * p_n.sum() + self._rho_z_2 * (p_n @ p_n)) * h
-                if self._z_max is not None:
-                    q_n = PZ_hi[n]
-                    total += (self._rho_z_1 * q_n.sum() + self._rho_z_2 * (q_n @ q_n)) * h
+                s_n = PZ[n]
+                total += (self._rho_z_1 * s_n.sum() + self._rho_z_2 * (s_n @ s_n)) * h
 
         return total
 
@@ -623,8 +613,8 @@ class EconomicOptimalControlProblem:
         * Hard input ROM box       du_min ≤ u_k − u_{k−1} ≤ du_max
         * Soft state lower         x_n + p_lo,n − x_min ≥ 0
         * Soft state upper         x_max + q_hi,n − x_n ≥ 0
-        * Soft output lower        z_n + p_lo,n − z_min ≥ 0
-        * Soft output upper        z_max + q_hi,n − z_n ≥ 0
+        * Soft output lower        z_n + s_n − z_min ≥ 0
+        * Soft output upper        z_max + s_n − z_n ≥ 0
 
         Plain input box ``u_min ≤ u_k ≤ u_max`` is enforced via scipy
         ``Bounds`` and is *not* repeated here.  Slack non-negativity is
@@ -661,8 +651,7 @@ class EconomicOptimalControlProblem:
 
         # ── Soft output slacks (require evaluating gm at every sub-step) ──
         if self._has_soft_z:
-            PZ_lo = L.get_PZ_lo(z)
-            PZ_hi = L.get_PZ_hi(z)
+            PZ = L.get_PZ(z)
             for n in range(L.M + 1):
                 k = min(n // self._n_steps, self._N - 1)
                 u_k = U[k]
@@ -671,9 +660,9 @@ class EconomicOptimalControlProblem:
                 y_n = Y[n] if self._is_dae else np.empty(0)
                 z_n = self._gm(X[n], y_n, u_k, d_k, p_theta, t_n)
                 if self._z_min is not None:
-                    out.extend(z_n + PZ_lo[n] - self._z_min)
+                    out.extend(z_n + PZ[n] - self._z_min)
                 if self._z_max is not None:
-                    out.extend(self._z_max + PZ_hi[n] - z_n)
+                    out.extend(self._z_max + PZ[n] - z_n)
 
         return np.asarray(out, dtype=float)
 
@@ -753,8 +742,7 @@ class EconomicOptimalControlProblem:
             lb[L.px_lo_off:L.px_lo_off + L.px_lo_size] = 0.0
             lb[L.px_hi_off:L.px_hi_off + L.px_hi_size] = 0.0
         if self._has_soft_z:
-            lb[L.pz_lo_off:L.pz_lo_off + L.pz_lo_size] = 0.0
-            lb[L.pz_hi_off:L.pz_hi_off + L.pz_hi_size] = 0.0
+            lb[L.pz_off:L.pz_off + L.pz_size] = 0.0
         constraints: list[NLPConstraint] = [
             NLPConstraint(
                 kind="eq",

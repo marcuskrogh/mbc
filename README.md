@@ -1710,7 +1710,8 @@ D(z_{n+1}, z_n, u_k, d_k, θ) = [
 φ_{u,eco} = Σ_k  p_{u,eco}^T u_k                                T_s   linear input cost
 φ_{lag}   = Σ_n  l(t_{n+1}, x_{n+1}, y_{n+1}, u_{k(n)}, θ)     Δt    user Lagrange
 φ_M       =       l̂(x_M, y_M, θ)                                     user Mayer
-φ_pq      = Σ_n  [‖p_n‖²_{rho_·_2} + rho_·_1^T p_n + ‖q_n‖²_{rho_·_2} + rho_·_1^T q_n] Δt
+φ_pq      = Σ_n  [‖p_n‖²_{rho_x_2} + rho_x_1^T p_n + ‖q_n‖²_{rho_x_2} + rho_x_1^T q_n
+                 + ‖s_n‖²_{rho_z_2} + rho_z_1^T s_n] Δt
 ```
 
 The L1 (linear) component of `φ_pq` is an **exact penalty**: with a
@@ -1728,12 +1729,12 @@ du_min ≤ u_k − u_{k−1}       ≤ du_max         (input rate-of-movement bo
 
 ```
 x_min − p_n ≤ x_n ≤ x_max + q_n,    p_n, q_n ≥ 0
-z_min − p_n ≤ z_n ≤ z_max + q_n,    p_n, q_n ≥ 0
+z_min − s_n ≤ z_n ≤ z_max + s_n,    s_n ≥ 0
 ```
 
-with `z_n = g^m(x_n, y_n, …)`.  The slacks `p_n, q_n` are themselves NLP
-decision variables; they are penalised in the objective by the L1 + L2
-exact-penalty form `φ_pq` above.
+with `z_n = g^m(x_n, y_n, …)`.  State slacks (`p_n, q_n`) and shared output
+slack (`s_n`) are NLP decision variables; they are penalised in the objective
+by the L1 + L2 exact-penalty form `φ_pq` above.
 
 ##### Parameters
 
