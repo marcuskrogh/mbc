@@ -320,6 +320,8 @@ class IpoptNLPBackend:
 
         options = {"print_level": 0}
         options.update(self._options)
+        if scaled_problem.objective_hess is None and "hessian_approximation" not in options:
+            options["hessian_approximation"] = "limited-memory"
         result = minimize_ipopt(
             scaled_problem.objective,
             scaled_problem.x0,
