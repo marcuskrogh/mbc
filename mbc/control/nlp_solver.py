@@ -320,6 +320,8 @@ class IpoptNLPBackend:
 
         options = {"print_level": 0}
         options.update(self._options)
+        if scaled_problem.objective_hess is None and "hessian_approximation" not in options:
+            options["hessian_approximation"] = "limited-memory"
         result = minimize_ipopt(
             scaled_problem.objective,
             scaled_problem.x0,
@@ -352,6 +354,25 @@ class IpoptNLPBackend:
         )
 
 
+_SCIPY_KNOWN_METHODS = {
+    "nelder-mead",
+    "powell",
+    "cg",
+    "bfgs",
+    "newton-cg",
+    "l-bfgs-b",
+    "tnc",
+    "cobyla",
+    "cobyqa",
+    "slsqp",
+    "trust-constr",
+    "dogleg",
+    "trust-ncg",
+    "trust-exact",
+    "trust-krylov",
+}
+
+
 def make_nlp_backend(
     solver: str | NLPSolverBackend,
     *,
@@ -380,6 +401,11 @@ def make_nlp_backend(
             method = str(options.pop("method"))
         return ScipyNLPBackend(method=method, options=options, scaling=scaling)
 
-    # Backwards-compatible path: any non-reserved string is treated
-    # as a scipy.optimize.minimize method name (e.g. "SLSQP", "trust-constr").
-    return ScipyNLPBackend(method=solver, options=options, scaling=scaling)
+    if key in _SCIPY_KNOWN_METHODS:
+        return ScipyNLPBackend(method=solver, options=options, scaling=scaling)
+
+    raise ValueError(
+        f"Unknown solver '{solver}'. "
+        "Use 'ipopt', 'scipy' (optionally with solver_options={'method': ...}), "
+        "or a known scipy.optimize.minimize method name such as 'SLSQP' or 'trust-constr'."
+    )

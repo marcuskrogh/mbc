@@ -270,8 +270,10 @@ class CDTrackingOptimalControlProblem:
     n_steps : int, optional
         Implicit-Euler sub-steps per control interval.  Default: 10.
     solver : str or NLPSolverBackend, optional
-        NLP backend selector. Reserved strings are ``"ipopt"`` and ``"scipy"``.
-        Any other string is treated as a scipy method name (default ``"SLSQP"``).
+        NLP backend selector. Reserved strings are ``"ipopt"``/``"cyipopt"``
+        and ``"scipy"``/``"scipy-minimize"``.  Known scipy method names (e.g.
+        ``"SLSQP"``, ``"trust-constr"``) are also accepted directly.  Any
+        other string raises ``ValueError``.  Default: ``"SLSQP"``.
     solver_options : dict or None, optional
         Forwarded to the NLP solver.
     solver_scaling : NLPScalingPolicy or dict or None, optional
@@ -321,6 +323,10 @@ class CDTrackingOptimalControlProblem:
         def _lagrange(t, x, y, u, theta, _R=R_arr):
             return float(u @ _R @ u)
 
+        def _lagrange_jac(t, x, y, u, theta, _R=R_arr):
+            # ∂L/∂x = 0,  ∂L/∂y = 0,  ∂L/∂u = 2 R u
+            return (np.zeros_like(x), np.zeros_like(y), 2.0 * _R @ u)
+
         # Terminal tracking ‖z_M − z_ref‖²_P encoded as a Mayer callable.
         if P is not None:
             P_arr = np.asarray(P, dtype=float)
@@ -339,14 +345,35 @@ class CDTrackingOptimalControlProblem:
                     z = _model.gm(x, _zu, _zd, theta, 0.0)
                 e = z - _zref
                 return float(e @ _P @ e)
+
+            def _mayer_jac(
+                x, y, theta,
+                _P=P_arr, _zref=z_ref_arr, _model=model,
+                _is_dae=is_dae, _zu=zeros_u, _zd=zeros_d,
+            ):
+                # Pgrad = 2 P (gm − z_ref);  ∂J/∂x = dgmdx^T Pgrad
+                if _is_dae:
+                    z = _model.gm(x, y, _zu, _zd, theta, 0.0)
+                    Pgrad = 2.0 * _P @ (z - _zref)
+                    dgmdx_val = _model.dgmdx(x, y, _zu, _zd, theta, 0.0)
+                    dgmdy_val = _model.dgmdy(x, y, _zu, _zd, theta, 0.0)
+                    return (dgmdx_val.T @ Pgrad, dgmdy_val.T @ Pgrad)
+                else:
+                    z = _model.gm(x, _zu, _zd, theta, 0.0)
+                    Pgrad = 2.0 * _P @ (z - _zref)
+                    dgmdx_val = _model.dgmdx(x, _zu, _zd, theta, 0.0)
+                    return (dgmdx_val.T @ Pgrad, np.zeros(0))
         else:
             _mayer = None
+            _mayer_jac = None
 
         self._eocp = EconomicOptimalControlProblem(
             model,
             N,
             lagrange=_lagrange,
+            lagrange_jac=_lagrange_jac,
             mayer=_mayer,
+            mayer_jac=_mayer_jac,
             Q_z=Q_arr,
             z_ref=z_ref_arr,
             Q_du=np.asarray(S, dtype=float) if S is not None else None,
