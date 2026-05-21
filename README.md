@@ -1610,13 +1610,31 @@ with the differential and algebraic states `{x_n, y_n}_{n=0..M}` at every
 sub-step (M = N · n_steps) — multiple shooting, not single shooting.  The
 NLP is solved through a swappable backend interface:
 
-- default: SciPy backend (`scipy.optimize.minimize`, method `"SLSQP"`)
-- optional: IPOPT backend (`solver="ipopt"`, requires `cyipopt`)
+- **SciPy backend** (default) — `scipy.optimize.minimize`, method `"SLSQP"`.
+  Select with `solver="SLSQP"` (or `"scipy"` / `"scipy-minimize"`).
+  Any `scipy.optimize.minimize` method is accepted directly
+  (`"trust-constr"`, `"L-BFGS-B"`, `"CG"`, etc.).
+- **IPOPT backend** (optional) — `cyipopt.minimize_ipopt`, requires the
+  `mbc[ipopt]` extra (`pip install -e ".[ipopt]"`).
+  Select with `solver="ipopt"` (alias: `"cyipopt"`).
+  By default the backend injects `hessian_approximation: "limited-memory"`
+  (L-BFGS quasi-Newton Hessian) when no analytical Hessian is supplied —
+  this avoids IPOPT's O(n) finite-difference Hessian loop and is strongly
+  recommended.  Override with
+  `solver_options={"hessian_approximation": "exact"}` only when a full
+  analytical Hessian is available.
+
+Both `EconomicOptimalControlProblem` and `CDTrackingOptimalControlProblem`
+provide **analytical constraint and objective Jacobians** to whichever
+backend is active, eliminating the O(n) finite-difference Jacobian overhead
+that arises when `jac` is not supplied (see benchmark results for nfev
+reduction ratios of 3–75× depending on horizon length and solver).
 
 You can swap backends without changing OCP construction.
 For comparative runtime/iteration baseline, horizon-scaling checks, and
 analytical-vs-numerical gradient/Hessian efficiency examples, run
-`python scripts/nlp_solver_benchmark.py`.
+`python scripts/nlp_solver_benchmark.py` or the benchmark test suite
+`python -m pytest tests/test_benchmark_jacobians.py -v`.
 
 #### `CDOptimalControlProblem` — `mbc.control`
 
@@ -1757,8 +1775,8 @@ by the L1 + L2 exact-penalty form `φ_pq` above.
 | `rho_z_1` | `float` | `0.0` | L1 weight on output slacks (exact penalty) |
 | `rho_z_2` | `float` | `1e4` | L2 weight on output slacks |
 | `n_steps` | `int` | `10` | Implicit-Euler sub-steps per control interval |
-| `solver` | `str` or backend object | `"SLSQP"` | `"scipy"` / `"ipopt"` backend key, or SciPy method name (`"SLSQP"`, `"trust-constr"`, …) |
-| `solver_options` | `dict` or `None` | `None` | Forwarded to the solver |
+| `solver` | `str` or backend object | `"SLSQP"` | `"scipy"` / `"scipy-minimize"` / `"ipopt"` / `"cyipopt"` backend key, or any SciPy method name (`"SLSQP"`, `"trust-constr"`, `"L-BFGS-B"`, …) |
+| `solver_options` | `dict` or `None` | `None` | Forwarded to the solver. IPOPT users: `hessian_approximation: "limited-memory"` (L-BFGS) is injected automatically; override with `{"hessian_approximation": "exact"}` only when a full Hessian is available. Common IPOPT options: `max_iter`, `tol`, `print_level`. |
 | `solver_scaling` | `dict` or `NLPScalingPolicy` or `None` | `None` | Backend-agnostic scaling (`objective_scale`, `variable_scale`, `constraint_scale`) |
 | `dt` | `float` or `None` | `model.dt` or `1.0` | Sampling interval `T_s` |
 
@@ -2084,8 +2102,8 @@ For each restart `r = 0, 1, …, n_restarts−1`:
 objective(θ) = −log L(θ|Qd, Rm, history) + regularization_fn(θ)
 ```
 
-using **Nelder–Mead** (gradient-free, default) or **L-BFGS-B** (gradient-based,
-requires `scipy`; activated by `use_gradient=True`).
+using **Nelder–Mead** (gradient-free, default; activated by `use_gradient=False`) or
+**L-BFGS-B** (gradient-based; activated by `use_gradient=True`).
 
 3. Track the best result across all restarts.
 
@@ -2101,7 +2119,7 @@ requires `scipy`; activated by `use_gradient=True`).
 | `regularization_fn` | `θ → float` or `None` | `None` | Optional regularisation penalty |
 | `n_restarts` | `int` | `3` | Number of optimisation restarts |
 | `restart_perturbation` | `float` | `0.5` | Std of Gaussian perturbation for restarts |
-| `use_gradient` | `bool` | `False` | Use L-BFGS-B; falls back to Nelder–Mead if scipy absent |
+| `use_gradient` | `bool` | `False` | If `True`, use L-BFGS-B (scipy is a required dependency). If `False`, use Nelder–Mead (gradient-free). |
 | `perturbation_fn` | `callable` or `None` | `None` | Custom restart initialiser |
 
 **Usage**:
@@ -2230,8 +2248,8 @@ For each restart `r = 0, 1, …, n_restarts−1`:
 objective(θ) = −log L(θ | x0, P0, dt, history) + regularization_fn(θ)
 ```
 
-using **Nelder–Mead** (gradient-free, default) or **L-BFGS-B** (gradient-based,
-requires scipy; activated by `use_gradient=True`).
+using **Nelder–Mead** (gradient-free, default; activated by `use_gradient=False`) or
+**L-BFGS-B** (gradient-based; activated by `use_gradient=True`).
 
 3. Track the best result across all restarts.
 
@@ -2249,7 +2267,7 @@ requires scipy; activated by `use_gradient=True`).
 | `regularization_fn` | `θ → float` or `None` | `None` | Optional regularisation penalty |
 | `n_restarts` | `int` | `3` | Number of optimisation restarts |
 | `restart_perturbation` | `float` | `0.5` | Std of Gaussian perturbation for restarts |
-| `use_gradient` | `bool` | `False` | Use L-BFGS-B; falls back to Nelder–Mead if scipy absent |
+| `use_gradient` | `bool` | `False` | If `True`, use L-BFGS-B (scipy is a required dependency). If `False`, use Nelder–Mead (gradient-free). |
 | `perturbation_fn` | `callable` or `None` | `None` | Custom restart initialiser |
 
 **Usage** (Monod bioreactor example):
