@@ -38,6 +38,9 @@ from mbc.control import (
     CDTrackingOptimalControlProblem,
     EconomicOptimalControlProblem,
     CDNMPCController,
+    CDLinearizedMPCController,
+    linearize_cd_model,
+    discretize_cd_linearization,
     NLPScalingPolicy,
     ScipyNLPBackend,
 )
@@ -1267,3 +1270,211 @@ class TestAnalyticalJacobians:
         assert abs(cost_nograd - cost_grad) < 1e-4, (
             f"Cost differs: {cost_nograd:.6f} vs {cost_grad:.6f}"
         )
+
+
+# ── Tests: CDLinearizedMPCController and linearisation utilities ─────────────────
+
+
+class _ScalarBoundedNonlinear(ContinuousDiscreteModel):
+    """Scalar nonlinear model with bounded input for linearised-MPC tests."""
+
+    @property
+    def nx(self): return 1
+
+    @property
+    def nu(self): return 1
+
+    @property
+    def nd(self): return 1
+
+    @property
+    def nw(self): return 1
+
+    @property
+    def nym(self): return 1
+
+    @property
+    def nz(self): return 1
+
+    @property
+    def Rm(self): return np.array([[0.01]])
+
+    def f(self, x, u, d, p, t):
+        return np.array([-x[0] + 0.2 * x[0] * x[0] + u[0] + 0.5 * d[0]])
+
+    def sigma(self, x, u, d, p, t):
+        return np.array([[0.1]])
+
+    def hm(self, x, u, d, p, t=0.0):
+        return np.array([x[0]])
+
+    def gm(self, x, u, d, p, t):
+        return np.array([x[0]])
+
+
+class _DummyEstimator2:
+    """Estimator stub returning (x_hat, P) with standard step signature."""
+
+    def __init__(self, x0):
+        self._x = np.asarray(x0, dtype=float)
+
+    def step(self, y, u, d, p, t):
+        self._x = np.asarray(y, dtype=float).copy()
+        return self._x.copy(), np.eye(self._x.shape[0])
+
+
+class _DummyEstimator3:
+    """Estimator stub returning (x_hat, y_hat, P) to mimic DAE-EKF output."""
+
+    def __init__(self, x0):
+        self._x = np.asarray(x0, dtype=float)
+
+    def step(self, y, u, d, p, t):
+        self._x = np.asarray(y, dtype=float).copy()
+        return self._x.copy(), self._x.copy(), np.eye(self._x.shape[0])
+
+
+class TestCDLinearizationUtilities:
+    def test_linearize_dimensions(self):
+        model = _ScalarBoundedNonlinear()
+        lin = linearize_cd_model(
+            model=model,
+            x_ss=np.array([0.2]),
+            u_ss=np.array([0.1]),
+            d_ss=np.array([0.3]),
+            p=np.array([]),
+            t=0.0,
+        )
+        assert lin["A"].shape == (1, 1)
+        assert lin["B"].shape == (1, 1)
+        assert lin["E"].shape == (1, 1)
+        assert lin["Cm"].shape == (1, 1)
+        assert lin["Cz"].shape == (1, 1)
+        assert lin["G"].shape == (1, 1)
+
+    def test_linearize_matches_known_linear_model(self):
+        model = SimpleLinearCD()
+        lin = linearize_cd_model(
+            model=model,
+            x_ss=np.array([1.2]),
+            u_ss=np.array([0.7]),
+            d_ss=np.array([0.0]),
+            p=np.array([]),
+            t=0.0,
+        )
+        np.testing.assert_allclose(lin["A"], model.A)
+        np.testing.assert_allclose(lin["B"], model.B)
+        np.testing.assert_allclose(lin["E"], model.E)
+        np.testing.assert_allclose(lin["Cm"], model.Cm)
+        np.testing.assert_allclose(lin["Cz"], model.Cz)
+
+    def test_discretize_matches_zoh_for_known_linear_model(self):
+        model = SimpleLinearCD()
+        lin = linearize_cd_model(
+            model=model,
+            x_ss=np.array([0.0]),
+            u_ss=np.array([0.0]),
+            d_ss=np.array([0.0]),
+            p=np.array([]),
+            t=0.0,
+        )
+        disc = discretize_cd_linearization(lin, dt=model.dt)
+        from mbc._utils import _zoh_full
+        Ad_ref, Bd_ref, Ed_ref = _zoh_full(model.A, model.B, model.E, model.dt)
+        np.testing.assert_allclose(disc["Ad"], Ad_ref, atol=1e-10, rtol=1e-10)
+        np.testing.assert_allclose(disc["Bd"], Bd_ref, atol=1e-10, rtol=1e-10)
+        np.testing.assert_allclose(disc["Ed"], Ed_ref, atol=1e-10, rtol=1e-10)
+
+
+class TestCDLinearizedMPCController:
+    def _make_ctrl(self, estimator, x_ref=np.array([2.0])):
+        model = _ScalarBoundedNonlinear()
+        Q = matrix(np.eye(1) * 5.0)
+        R = matrix(np.eye(1) * 0.05)
+        ctrl = CDLinearizedMPCController(
+            model=model,
+            estimator=estimator,
+            N=8,
+            Q=Q,
+            R=R,
+            dt=1.0,
+            u_min=np.array([-1.0]),
+            u_max=np.array([1.0]),
+            x_ref=x_ref,
+            y_offset=10.0,
+        )
+        return ctrl, model
+
+    def test_step_returns_absolute_action_and_sequences(self):
+        est = _DummyEstimator2([0.0])
+        ctrl, model = self._make_ctrl(estimator=est)
+        u, U, X = ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        assert u.shape == (model.nu,)
+        assert U.shape == (8, model.nu)
+        assert X.shape == (8, model.nx)
+
+    def test_step_respects_absolute_bounds(self):
+        est = _DummyEstimator2([0.0])
+        ctrl, _ = self._make_ctrl(estimator=est, x_ref=np.array([10.0]))
+        u, _, _ = ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        assert np.all(u >= -1.0 - 1e-8)
+        assert np.all(u <= 1.0 + 1e-8)
+
+    def test_relinearizes_each_step(self):
+        x0 = np.array([0.0])
+        P0 = np.eye(1)
+        model = _ScalarBoundedNonlinear()
+        ekf = ContinuousDiscreteEKF(model, x0=x0, P0=P0, dt=1.0)
+        Q = matrix(np.eye(1) * 2.0)
+        R = matrix(np.eye(1) * 0.1)
+        ctrl = CDLinearizedMPCController(
+            model=model, estimator=ekf, N=5, Q=Q, R=R, dt=1.0,
+            u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([1.0]), y_offset=10.0,
+        )
+
+        ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        Ad_0 = ctrl._lin_model.Ad.copy()
+        ctrl.step(y=np.array([1.0]), d=np.array([0.5]), p=np.array([]), t=1.0)
+        Ad_1 = ctrl._lin_model.Ad.copy()
+
+        assert not np.allclose(Ad_0, Ad_1), "Expected re-linearization to update local Ad"
+
+    def test_disturbance_hold_assumption_uses_zero_deviation_trajectory(self):
+        est = _DummyEstimator2([0.0])
+        ctrl, model = self._make_ctrl(estimator=est)
+        ctrl.step(y=np.array([0.0]), d=np.array([0.7]), p=np.array([]), t=0.0)
+        D_dev = ctrl.last_disturbance_deviation_trajectory
+        assert D_dev.shape == (8, model.nd)
+        assert np.allclose(D_dev, 0.0)
+
+    def test_closed_loop_moves_toward_reference(self):
+        model = _ScalarBoundedNonlinear()
+        x0 = np.array([0.0])
+        P0 = np.eye(1)
+        ekf = ContinuousDiscreteEKF(model, x0=x0.copy(), P0=P0, dt=1.0, n_steps=8)
+
+        Q = matrix(np.eye(1) * 8.0)
+        R = matrix(np.eye(1) * 0.05)
+        ctrl = CDLinearizedMPCController(
+            model=model, estimator=ekf, N=10, Q=Q, R=R, dt=1.0,
+            u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([2.0]), y_offset=10.0,
+        )
+
+        x = x0.copy()
+        p = np.array([])
+        for k in range(15):
+            y = model.hm(x, np.zeros(model.nu), np.zeros(model.nd), p, float(k))
+            u, _, _ = ctrl.step(y=y, d=np.zeros(model.nd), p=p, t=float(k))
+            x = x + model.f(x, u, np.zeros(model.nd), p, float(k)) * 1.0
+
+        assert abs(x[0] - 2.0) < 1.0
+
+    def test_estimator_return_tuple_compatibility_regression(self):
+        ctrl2, _ = self._make_ctrl(estimator=_DummyEstimator2([0.0]))
+        u2, _, _ = ctrl2.step(y=np.array([0.2]), d=np.array([0.0]), p=np.array([]), t=0.0)
+
+        ctrl3, _ = self._make_ctrl(estimator=_DummyEstimator3([0.0]))
+        u3, _, _ = ctrl3.step(y=np.array([0.2]), d=np.array([0.0]), p=np.array([]), t=0.0)
+
+        assert u2.shape == (1,)
+        assert u3.shape == (1,)

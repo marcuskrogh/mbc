@@ -1923,6 +1923,43 @@ matrices ``(Ad, Bd, Ed)`` via the internal ``_CDModelAdapter`` (computed
 from ``A``, ``B``, ``E``, ``dt`` at construction time).  Both operate on
 the same ``model`` object.
 
+#### `CDLinearizedMPCController` — `mbc.control`
+
+Successive-linearisation MPC for nonlinear continuous-discrete plants that
+reuses the linear QP OCP machinery (:class:`~mbc.control.OptimalControlProblem`).
+
+At each control interval, the controller:
+
+1. gets `x̂[k|k]` from any nonlinear estimator (`step(y, u_prev, d_prev, p, t)`),
+2. sets operating point `(x_ss, u_ss, d_ss) = (x̂[k|k], u[k-1], d[k])`,
+3. linearises `f`, `hm`, `gm` at the operating point,
+4. discretises `(A, B, E)` with ZOH,
+5. solves a deviation-coordinate QP and converts `u = u_ss + Δu`.
+
+**Disturbance assumption**: `d_ss` is held constant across the horizon at each
+interval, i.e. disturbance deviations are zero (`Δd[k+i] = 0`).
+
+**Usage**:
+
+```python
+from mbc.control import CDLinearizedMPCController
+
+ctrl = CDLinearizedMPCController(
+    model=nonlinear_model,
+    estimator=ekf,
+    N=20,
+    Q=Q_z,
+    R=R_u,
+    dt=1.0,
+    u_min=np.array([-3.0]),
+    u_max=np.array([3.0]),
+    x_ref=np.array([2.0]),
+)
+
+u, U_abs, X_abs = ctrl.step(y=ym, d=d_now, p=np.array([]), t=t_k)
+```
+
+
 #### `CDNMPCController` — `mbc.control` *(ControlToolbox §EMPC — *ENMPC Algorithm*)*
 
 Closed-loop continuous-discrete NMPC controller implementing the
