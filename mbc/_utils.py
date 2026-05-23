@@ -41,7 +41,7 @@ def _np_to_cvx(a: np.ndarray) -> matrix:
     if a.ndim == 1:
         return matrix(a.tolist(), (len(a), 1), tc="d")
     rows, cols = a.shape
-    return matrix(a.tolist(), (rows, cols), tc="d")
+    return matrix(a.flatten(order="F").tolist(), (rows, cols), tc="d")
 
 
 def _cvx_to_np(m: matrix) -> np.ndarray:
