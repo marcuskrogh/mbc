@@ -31,6 +31,7 @@ import numpy as np
 from .._utils import _any_to_np1d
 from ..estimation.cd_kalman import CDKalmanFilter
 from .cd_ocp import CDOptimalControlProblem
+from .ocp import _shift_warm_start
 
 if TYPE_CHECKING:
     from ..models import LinearContinuousDiscreteModel
@@ -62,12 +63,16 @@ class CDMPCController:
         model: "LinearContinuousDiscreteModel",
         estimator: CDKalmanFilter,
         ocp: CDOptimalControlProblem,
+        warm_start: bool = False,
     ) -> None:
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
+        self._warm_start = bool(warm_start)
         self._u_prev_np: np.ndarray = np.zeros(model.nu)
         self._d_prev_np: np.ndarray = np.zeros(model.nd)
+        self._prev_U: np.ndarray | None = None
+        self._prev_X: np.ndarray | None = None
 
     def step(
         self,
@@ -101,13 +106,19 @@ class CDMPCController:
         # Step 3: optimise (OCP returns numpy 1-D arrays)
         D_np = _any_to_np1d(D)
         x_ref_np = np.asarray(self._model.x_ref, dtype=float).reshape(-1)
+        warm = None
+        if self._warm_start and self._prev_U is not None:
+            warm = _shift_warm_start(
+                self._prev_U, self._prev_X, nu, self._model.nx
+            )
         U_seq, X_seq = self._ocp.solve(
-            x_hat_np, D_np, x_ref_np, u_prev=self._u_prev_np,
+            x_hat_np, D_np, x_ref_np, u_prev=self._u_prev_np, warm_start=warm,
         )
 
-        # Step 4: cache (u_now, d_now) for next step
+        # Step 4: cache state for the next step
         u = U_seq[:nu]
         self._u_prev_np = np.asarray(u, dtype=float).copy()
         self._d_prev_np = D_np[:nd].copy()
+        self._prev_U, self._prev_X = U_seq, X_seq
 
         return u, U_seq, X_seq

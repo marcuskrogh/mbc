@@ -56,6 +56,13 @@ class QPProblem:
     h: np.ndarray | None = None
     A: np.ndarray | None = None
     b: np.ndarray | None = None
+    warm_start: np.ndarray | None = None
+    """Optional primal warm-start point ``x`` (length ``n``).
+
+    Used as the initial iterate when the backend supports it.  A warm start
+    never changes the optimum — at worst it is ignored — so callers may
+    always supply the previous solution in a receding-horizon loop.
+    """
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,7 @@ class QPResult:
     obj: float
     success: bool
     status: str
+    iterations: int | None = None
     raw: Any = None
 
 
@@ -76,37 +84,42 @@ class QPSolverBackend(Protocol):
         """Solve a convex QP and return a normalised result."""
 
 
-def _stack_constraints(
-    problem: QPProblem,
-    n: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Stack inequality and equality rows into a single constraint system.
+def _stack_constraints(problem: QPProblem, n: int):
+    """Stack inequality and equality rows into a single sparse constraint system.
 
-    Returns ``(A_con, row_lower, row_upper)`` with the row-bound convention
-    used by HiGHS: inequality ``G x ≤ h`` becomes ``-inf ≤ G x ≤ h`` and
-    equality ``A x = b`` becomes ``b ≤ A x ≤ b``.
+    Accepts dense ndarrays or ``scipy.sparse`` matrices for ``G``/``A`` and
+    returns ``(A_con_csc, row_lower, row_upper)`` with the row-bound
+    convention used by HiGHS: inequality ``G x ≤ h`` becomes
+    ``-inf ≤ G x ≤ h`` and equality ``A x = b`` becomes ``b ≤ A x ≤ b``.
+    The constraint matrix is built sparsely so the simultaneous (banded)
+    formulation never materialises a dense block.
     """
-    rows: list[np.ndarray] = []
+    import scipy.sparse as sp
+
+    rows = []
     low: list[np.ndarray] = []
     upp: list[np.ndarray] = []
 
-    if problem.G is not None and problem.G.size:
-        G = np.asarray(problem.G, dtype=float).reshape(-1, n)
-        h = np.asarray(problem.h, dtype=float).reshape(-1)
-        rows.append(G)
-        low.append(np.full(G.shape[0], -np.inf))
-        upp.append(h)
+    def _nrows(M) -> int:
+        return M.shape[0] if sp.issparse(M) else np.asarray(M).reshape(-1, n).shape[0]
 
-    if problem.A is not None and problem.A.size:
-        A = np.asarray(problem.A, dtype=float).reshape(-1, n)
+    if problem.G is not None and getattr(problem.G, "shape", (0,))[0]:
+        G = sp.csr_matrix(problem.G) if not sp.issparse(problem.G) else problem.G.tocsr()
+        m = _nrows(G)
+        rows.append(G)
+        low.append(np.full(m, -np.inf))
+        upp.append(np.asarray(problem.h, dtype=float).reshape(-1))
+
+    if problem.A is not None and getattr(problem.A, "shape", (0,))[0]:
+        A = sp.csr_matrix(problem.A) if not sp.issparse(problem.A) else problem.A.tocsr()
         b = np.asarray(problem.b, dtype=float).reshape(-1)
         rows.append(A)
         low.append(b)
         upp.append(b)
 
     if rows:
-        return np.vstack(rows), np.concatenate(low), np.concatenate(upp)
-    return np.zeros((0, n)), np.zeros(0), np.zeros(0)
+        return sp.vstack(rows, format="csc"), np.concatenate(low), np.concatenate(upp)
+    return sp.csc_matrix((0, n)), np.zeros(0), np.zeros(0)
 
 
 class HighsQPBackend:
@@ -132,16 +145,16 @@ class HighsQPBackend:
                 "Install it with 'pip install highspy'."
             ) from exc
 
-        from scipy.sparse import csc_matrix
+        import scipy.sparse as sp
 
-        P = np.asarray(problem.P, dtype=float)
+        P = problem.P if sp.issparse(problem.P) else np.asarray(problem.P, dtype=float)
         q = np.asarray(problem.q, dtype=float).reshape(-1)
         n = q.shape[0]
         lb = np.asarray(problem.lb, dtype=float).reshape(-1)
         ub = np.asarray(problem.ub, dtype=float).reshape(-1)
 
-        A_con, row_lower, row_upper = _stack_constraints(problem, n)
-        m = A_con.shape[0]
+        A_csc, row_lower, row_upper = _stack_constraints(problem, n)
+        m = A_csc.shape[0]
 
         inf = highspy.kHighsInf
         lb = np.where(np.isneginf(lb), -inf, lb)
@@ -159,7 +172,6 @@ class HighsQPBackend:
         lp.row_upper_ = row_upper
 
         # Constraint matrix in compressed-sparse-column form.
-        A_csc = csc_matrix(A_con) if m else csc_matrix((0, n))
         lp.a_matrix_.format_ = highspy.MatrixFormat.kColwise
         lp.a_matrix_.num_col_ = n
         lp.a_matrix_.num_row_ = m
@@ -168,7 +180,8 @@ class HighsQPBackend:
         lp.a_matrix_.value_ = A_csc.data.astype(float)
 
         # Hessian Q (objective ½ xᵀQx): HiGHS stores the lower triangle in CSC.
-        P_tri = csc_matrix(np.tril(P))
+        P_csc = P.tocsc() if sp.issparse(P) else sp.csc_matrix(P)
+        P_tri = sp.tril(P_csc).tocsc()
         hessian = highspy.HighsHessian()
         hessian.dim_ = n
         hessian.format_ = highspy.HessianFormat.kTriangular
@@ -186,23 +199,45 @@ class HighsQPBackend:
             h.setOptionValue(key, value)
 
         h.passModel(model)
+
+        # Optional primal warm start.  HiGHS accepts a starting point via
+        # setSolution; a warm start never alters the optimum (it is only an
+        # initial iterate), so it is safe to pass best-effort.
+        if problem.warm_start is not None:
+            ws = np.asarray(problem.warm_start, dtype=float).reshape(-1)
+            if ws.shape[0] == n:
+                try:
+                    start = highspy.HighsSolution()
+                    start.col_value = ws.tolist()
+                    h.setSolution(start)
+                except Exception:  # pragma: no cover - version-dependent API
+                    pass
+
         run_status = h.run()
 
         model_status = h.getModelStatus()
         status_str = h.modelStatusToString(model_status)
         optimal = model_status == highspy.HighsModelStatus.kOptimal
 
+        try:
+            info = h.getInfo()
+            iterations = int(getattr(info, "qp_iteration_count", 0)) or None
+        except Exception:  # pragma: no cover - version-dependent API
+            iterations = None
+
         solution = h.getSolution()
         x = np.asarray(solution.col_value, dtype=float).reshape(-1)
         if x.shape[0] != n:
             x = np.zeros(n)
-        obj = float(0.5 * x @ P @ x + q @ x) if x.shape[0] == n else float("nan")
+        Px = np.asarray(P @ x, dtype=float).reshape(-1)
+        obj = float(0.5 * x @ Px + q @ x)
 
         return QPResult(
             x=x,
             obj=obj,
             success=bool(optimal and run_status == highspy.HighsStatus.kOk),
             status=str(status_str),
+            iterations=iterations,
             raw=solution,
         )
 

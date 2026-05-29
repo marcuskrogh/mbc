@@ -401,6 +401,26 @@ s.t.        G z_qp ≤ h
 
 solved through a pluggable convex-QP backend (HiGHS by default).
 
+**QP formulations.** The same QP is built in one of two equivalent ways,
+selected by the `formulation` argument:
+
+- `"condensed"` *(what `"auto"` selects)* — eliminate the states via the
+  lifted prediction `X = Ψ x₀ + Γ U + Λ D` and optimise over `[U; ε]` only.
+  Small dense problem; fastest with HiGHS.
+- `"sparse"` — keep the states as decision variables `[X; U; ε]` with the
+  dynamics as block-banded equality constraints. Assembled with
+  `scipy.sparse` (O(N) nonzeros). Correct and available, but only faster than
+  condensed with a backend that exploits the banded KKT structure (e.g. OSQP
+  or a Riccati solver). With HiGHS's active-set QP solver, condensed is
+  faster, so `"auto"` resolves to condensed.
+
+**Warm-starting.** `MPCController`/`CDMPCController` accept `warm_start=True`
+to seed each QP with the previous horizon solution (shifted one step). It
+never changes the optimiser. It is a no-op (slight overhead) with HiGHS,
+which ignores the primal start; enable it with a warm-start-capable backend.
+Both formulations and warm-starting are exercised in `tests/test_mpc.py`, and
+`scripts/qp_formulation_benchmark.py` reports the trade-offs.
+
 **Parameters**:
 
 | Parameter | Type | Default | Description |

@@ -1492,3 +1492,111 @@ class TestCDLinearizedMPCController:
 
         assert u2.shape == (1,)
         assert u3.shape == (1,)
+
+
+# ── Tests: condensed vs sparse formulation equivalence ───────────────────────
+
+
+class TestOCPFormulationEquivalence:
+    """The condensed and sparse QP formulations must give the same optimum."""
+
+    @pytest.mark.parametrize("N", [3, 10, 30])
+    @pytest.mark.parametrize("use_rom", [False, True])
+    def test_discrete_condensed_equals_sparse(self, N, use_rom):
+        model = DoubleIntegrator()
+        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
+        if use_rom:
+            kw["S"] = np.eye(1) * 5.0
+        ocp_c = OptimalControlProblem(formulation="condensed", **kw)
+        ocp_s = OptimalControlProblem(formulation="sparse", **kw)
+
+        x0 = np.array([0.0, 0.0])
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        Uc, Xc = ocp_c.solve(x0, D, x_ref, u_prev=np.array([0.5]))
+        Us, Xs = ocp_s.solve(x0, D, x_ref, u_prev=np.array([0.5]))
+        np.testing.assert_allclose(Uc, Us, atol=1e-5)
+        np.testing.assert_allclose(Xc, Xs, atol=1e-5)
+
+    def test_cd_condensed_equals_sparse(self):
+        model = SimpleLinearCD()
+        N = 12
+        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0)
+        ocp_c = CDOptimalControlProblem(formulation="condensed", **kw)
+        ocp_s = CDOptimalControlProblem(formulation="sparse", **kw)
+        x0 = np.array([0.0])
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        Uc, Xc = ocp_c.solve(x0, D, x_ref)
+        Us, Xs = ocp_s.solve(x0, D, x_ref)
+        np.testing.assert_allclose(Uc, Us, atol=1e-5)
+        np.testing.assert_allclose(Xc, Xs, atol=1e-5)
+
+    def test_auto_resolves_to_condensed(self):
+        """``auto`` selects condensed (fastest with the HiGHS backend)."""
+        model = DoubleIntegrator()
+        kw = dict(Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
+        for N in (5, 40, 100):
+            ocp = OptimalControlProblem(model, N=N, **kw)
+            assert ocp._resolve_formulation() == "condensed"
+
+    def test_explicit_formulation_overrides_auto(self):
+        model = DoubleIntegrator()
+        ocp = OptimalControlProblem(
+            model, N=5, Q=np.eye(1), R=np.eye(1), formulation="sparse"
+        )
+        assert ocp._resolve_formulation() == "sparse"
+
+    def test_invalid_formulation_raises(self):
+        model = DoubleIntegrator()
+        with pytest.raises(ValueError):
+            OptimalControlProblem(model, N=5, Q=np.eye(1), R=np.eye(1),
+                                  formulation="banana")
+
+
+# ── Tests: warm-starting the receding-horizon loop ───────────────────────────
+
+
+class TestWarmStartMPC:
+    """Warm-starting must not change the closed-loop trajectory."""
+
+    def _run(self, warm_start, N=10, n_steps=12, formulation="auto"):
+        model = DoubleIntegrator()
+        kf = KalmanFilter(model)
+        ocp = OptimalControlProblem(
+            model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=20.0,
+            formulation=formulation,
+        )
+        ctrl = MPCController(model, estimator=kf, ocp=ocp, warm_start=warm_start)
+        us = []
+        for k in range(n_steps):
+            y = np.array([0.1 * k])
+            D = np.zeros(N * model.nd)
+            u, _, _ = ctrl.step(y, D)
+            us.append(np.asarray(u, dtype=float).copy())
+        return np.array(us)
+
+    def test_warm_vs_cold_same_inputs(self):
+        u_cold = self._run(warm_start=False)
+        u_warm = self._run(warm_start=True)
+        np.testing.assert_allclose(u_warm, u_cold, atol=1e-5)
+
+    def test_warm_start_with_sparse_formulation(self):
+        u_cold = self._run(warm_start=False, formulation="sparse")
+        u_warm = self._run(warm_start=True, formulation="sparse")
+        np.testing.assert_allclose(u_warm, u_cold, atol=1e-5)
+
+    def test_cd_warm_vs_cold_same_inputs(self):
+        def run(warm):
+            model = SimpleLinearCD()
+            kf = CDKalmanFilter(model, n_steps=10)
+            ocp = CDOptimalControlProblem(
+                model, N=10, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0
+            )
+            ctrl = CDMPCController(model, estimator=kf, ocp=ocp, warm_start=warm)
+            us = []
+            for k in range(10):
+                u, _, _ = ctrl.step(np.array([0.1 * k]), np.zeros(10 * model.nd))
+                us.append(float(np.asarray(u).ravel()[0]))
+            return np.array(us)
+        np.testing.assert_allclose(run(True), run(False), atol=1e-5)

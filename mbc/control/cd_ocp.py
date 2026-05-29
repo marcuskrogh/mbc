@@ -193,6 +193,7 @@ class CDOptimalControlProblem(OptimalControlProblem):
         y_offset: float = 2.0,
         solver: str | QPSolverBackend = "highs",
         solver_options: dict[str, Any] | None = None,
+        formulation: str = "auto",
     ) -> None:
         # Store the original CD model for direct access.
         self._cd_model = model
@@ -210,6 +211,7 @@ class CDOptimalControlProblem(OptimalControlProblem):
             y_offset=y_offset,
             solver=solver,
             solver_options=solver_options,
+            formulation=formulation,
         )
 
 

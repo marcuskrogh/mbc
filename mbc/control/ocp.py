@@ -4,9 +4,9 @@ Optimal Control Problem (OCP) for linear discrete-time MPC.
 Linear specialisation of the ControlToolbox §EMPC formulation: when the
 plant dynamics are linear and the OCP is restricted to quadratic stage
 costs and box / soft-box constraints, the entire NLP reduces to a single
-finite-horizon **quadratic program** that the lifted (batch) form solves
-directly with a convex-QP backend (HiGHS by default) — strictly more
-efficient than the implicit-Euler direct-simultaneous formulation used by
+finite-horizon **quadratic program** that is solved directly with a convex-QP
+backend (HiGHS by default) — strictly more efficient than the implicit-Euler
+direct-simultaneous formulation used by
 :class:`~mbc.control.EconomicOptimalControlProblem` for nonlinear plants.
 
 Plant model (ControlToolbox notation, discrete-time specialisation)
@@ -15,8 +15,7 @@ Plant model (ControlToolbox notation, discrete-time specialisation)
     z[k]   = Cz x[k] + Dz u[k] + Fz d[k]
     ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
 
-The OCP optimises the *output* ``z[k] = Cz x[k] + …`` — the same continuous
-output ``g^m`` used in the nonlinear EOCP.  When the plant has
+The OCP optimises the *output* ``z[k] = Cz x[k] + …``.  When the plant has
 ``Cz = Cm`` (the default of :class:`~mbc.models.LinearDiscreteModel`) the
 output and measurement coincide and the OCP tracks the measured channel
 directly.
@@ -28,7 +27,8 @@ Cost function over horizon N
          + ρ Σ_{k=0}^{N-1} ‖ε[k+1]‖²
 
 with Δu[k] = u[k] − u[k−1] (rate of movement) and ε[k] the soft-output
-slack variable.
+slack variable.  (The QP objective is scaled by ½ relative to Φ, which does
+not change the optimiser.)
 
 Constraints
 -----------
@@ -37,27 +37,28 @@ Constraints
     z_ref − δ − ε[k+1] ≤ Cz x[k+1] ≤ z_ref + δ + ε[k+1]  (soft output box)
     ε[k+1] ≥ 0                                            (slack non-negativity)
 
-The decision variable is ``Z = [U; ε]`` and the QP is cast as
+Two equivalent formulations
+---------------------------
+The same QP is built in one of two ways, selected by ``formulation``:
 
-    min_Z   ½ Zᵀ H Z + fᵀ Z
-    s.t.    G_qp Z ≤ h_qp
-            lb ≤ Z ≤ ub
+* **condensed** — eliminate the states via the lifted prediction
+  ``X = Ψ x₀ + Γ U + Λ D`` and optimise over ``Z = [U; ε]`` only.  The
+  Hessian is dense and the prediction matrices cost O(N²) to build, but the
+  problem is small (``N·nu + N·nz`` variables).  Best for short horizons.
 
-The hard input box and the slack non-negativity are passed as variable
-bounds; the soft-output band is passed as the inequality rows ``G_qp``.
-The QP is solved through a :class:`~mbc.control.qp_solver.QPSolverBackend`
-(default: HiGHS).
+* **sparse** (a.k.a. simultaneous / non-condensed) — keep the states as
+  decision variables ``Z = [X; U; ε]`` and impose the dynamics as
+  block-banded linear *equality* constraints.  The Hessian and constraint
+  matrices are sparse with O(N) nonzeros, so this scales far better for long
+  horizons; HiGHS exploits the sparsity directly.
 
-Batch (lifted) form
--------------------
-Stacking the state predictions ``X = [x[1]; …; x[N]]`` gives
-
-    X = Ψ x₀ + Γ U + Λ D
-
-where Ψ, Γ, Λ are the standard prediction matrices built from Ad, Bd, Ed.
-Stacking the outputs ``Z = C̄_z X`` (block-diagonal C̄_z) gives
-
-    Z = C̄_z Ψ x₀ + C̄_z Γ U + C̄_z Λ D
+``formulation="auto"`` (default) resolves to ``condensed`` because the
+bundled HiGHS backend solves the small dense condensed QP faster than the
+larger banded simultaneous QP (its active-set QP solver does not exploit the
+banded KKT structure).  The ``sparse`` form is provided — correct and
+O(N)-sparse to assemble — for backends that *do* exploit that structure
+(e.g. OSQP or a Riccati solver), where it scales far better for long
+horizons.  Both formulations yield the same optimiser to solver tolerance.
 
 Notation
 --------
@@ -74,7 +75,7 @@ Notation
 from __future__ import annotations
 
 import warnings
-from typing import Any, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING
 
 import numpy as np
 from scipy.linalg import block_diag
@@ -107,6 +108,32 @@ def _build_D_diff(nu: int, N: int) -> np.ndarray:
             if k > 0:
                 D[k * nu + i, (k - 1) * nu + i] = -1.0
     return D
+
+
+def _shift_warm_start(
+    U_seq: np.ndarray,
+    X_seq: np.ndarray,
+    nu: int,
+    nx: int,
+) -> dict[str, np.ndarray]:
+    """
+    Shift a previous horizon solution forward by one step for warm-starting.
+
+    Given the previous optimal input sequence ``U_seq = [u₀ … u_{N−1}]`` and
+    predicted states ``X_seq = [x₁ … x_N]``, the next receding-horizon QP
+    starts one step later, so a good initial guess re-uses the tail and
+    repeats the final element:
+
+        U_warm = [u₁, …, u_{N−1}, u_{N−1}]
+        X_warm = [x₂, …, x_N,     x_N]
+
+    Returns a ``{"U": …, "X": …}`` dict suitable for ``solve(warm_start=…)``.
+    """
+    U = np.asarray(U_seq, dtype=float).reshape(-1, nu)
+    X = np.asarray(X_seq, dtype=float).reshape(-1, nx)
+    U_warm = np.vstack([U[1:], U[-1:]]) if U.shape[0] > 1 else U
+    X_warm = np.vstack([X[1:], X[-1:]]) if X.shape[0] > 1 else X
+    return {"U": U_warm.reshape(-1), "X": X_warm.reshape(-1)}
 
 
 # ── Optimal Control Problem ─────────────────────────────────────────────
@@ -149,6 +176,13 @@ class OptimalControlProblem:
         supplied directly.
     solver_options : dict, optional
         Backend-specific options forwarded to the QP solver.
+    formulation : {"auto", "condensed", "sparse"}, optional
+        QP construction strategy (see the module docstring).  Default
+        ``"auto"``, which resolves to ``"condensed"`` — the faster choice for
+        the bundled HiGHS backend.  The ``"sparse"`` simultaneous form is
+        correct and available but only pays off with a backend that exploits
+        the banded KKT structure (e.g. OSQP / a Riccati solver); HiGHS's
+        active-set QP solves the small dense condensed problem faster.
     """
 
     def __init__(
@@ -163,7 +197,13 @@ class OptimalControlProblem:
         y_offset: float = 2.0,
         solver: str | QPSolverBackend = "highs",
         solver_options: dict[str, Any] | None = None,
+        formulation: str = "auto",
     ) -> None:
+        if formulation not in ("auto", "condensed", "sparse"):
+            raise ValueError(
+                f"formulation must be 'auto', 'condensed', or 'sparse'; "
+                f"got {formulation!r}."
+            )
         self._model = model
         self._N = N
         self._Q = _any_to_np2d(Q)
@@ -173,6 +213,7 @@ class OptimalControlProblem:
         self._rho = rho
         self._y_offset = y_offset
         self._backend = make_qp_backend(solver, solver_options=solver_options)
+        self._formulation = formulation
 
         nu = model.nu
         # Pre-compute constant structures
@@ -182,12 +223,27 @@ class OptimalControlProblem:
             self._D_diff = _build_D_diff(nu, N)
             self._S_bar = block_diag(*([self._S] * N))
 
+    def _resolve_formulation(self) -> str:
+        """Return the concrete formulation ('condensed' or 'sparse').
+
+        ``"auto"`` resolves to ``"condensed"``: with the default HiGHS
+        backend the small dense condensed QP solves faster than the larger
+        banded simultaneous QP.  Select ``formulation="sparse"`` explicitly
+        when using a backend that exploits banded structure.
+        """
+        if self._formulation != "auto":
+            return self._formulation
+        return "condensed"
+
+    # ── Public solve ─────────────────────────────────────────────────────
+
     def solve(
         self,
         x0: Any,
         D: Any,
         x_ref: Any,
         u_prev: Any | None = None,
+        warm_start: dict[str, np.ndarray] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Solve the QP starting from state estimate ``x0``.
@@ -202,6 +258,10 @@ class OptimalControlProblem:
         u_prev : (nu,) array-like, optional
             Previously-applied input — used only when an input rate-of-
             movement penalty ``S`` is active.
+        warm_start : dict, optional
+            ``{"U": (N·nu,), "X": (N·nx,)}`` primal warm-start trajectory
+            (typically the previous solution shifted one step by
+            :func:`_shift_warm_start`).  Ignored if the shapes do not match.
 
         Returns
         -------
@@ -220,102 +280,32 @@ class OptimalControlProblem:
         x_ref = _any_to_np1d(x_ref).reshape(-1)
         D = _any_to_np1d(D).reshape(-1) if D is not None else np.zeros(N * nd)
 
-        # ── Discrete-time matrices (LTI; LPV scheduling not handled here) ──
         Ad = _any_to_np2d(self._model.Ad)
         Bd = _any_to_np2d(self._model.Bd)
         Ed = _any_to_np2d(self._model.Ed)
 
-        # ── Powers of Ad ─────────────────────────────────────────────────
-        Ad_pow = [np.eye(nx)]
-        for _ in range(N):
-            Ad_pow.append(Ad @ Ad_pow[-1])
-
-        # ── State prediction matrices  X = Ψ x₀ + Γ U + Λ D ──────────────
-        Psi = np.zeros((N * nx, nx))
-        Gamma = np.zeros((N * nx, N * nu))
-        Lambda = np.zeros((N * nx, N * nd))
-
-        for k in range(N):
-            Psi[k * nx:(k + 1) * nx, :] = Ad_pow[k + 1]
-            for j_step in range(k + 1):
-                Ak_j = Ad_pow[k - j_step]
-                Gamma[k * nx:(k + 1) * nx, j_step * nu:(j_step + 1) * nu] = Ak_j @ Bd
-                Lambda[k * nx:(k + 1) * nx, j_step * nd:(j_step + 1) * nd] = Ak_j @ Ed
-
-        # ── Output prediction matrices  Z = C̄_z X ──────────────────────
-        Cz_bar = np.kron(np.eye(N), Cz)
-        CG = Cz_bar @ Gamma        # (N · nz) × (N · nu)
-        CP = Cz_bar @ Psi          # (N · nz) × nx
-        CL = Cz_bar @ Lambda       # (N · nz) × (N · nd)
-
-        # ── Cost matrices ────────────────────────────────────────────────
-        Q_bar = block_diag(*([self._Q] * (N - 1) + [self._P])) if N > 1 else self._P
-        R_bar = block_diag(*([self._R] * N))
-
-        # Reference and free response in OUTPUT space
-        z_ref = Cz @ x_ref                                   # (nz,)
-        z_ref_bar = np.tile(z_ref, N)                        # (N · nz,)
-        Z_free = CP @ x0 + CL @ D                            # (N · nz,)
-        e_free = Z_free - z_ref_bar                          # (N · nz,)
-
-        # Hessian and gradient for U-part
-        H_uu = CG.T @ Q_bar @ CG + R_bar                     # (N · nu) × (N · nu)
-        f_u = CG.T @ Q_bar @ e_free                          # (N · nu,)
-
-        # Rate-of-movement penalty
+        # Rate-of-movement reference input
         if self._S is not None:
-            if u_prev is None:
-                u_prev = np.zeros(nu)
-            else:
-                u_prev = _any_to_np1d(u_prev).reshape(-1)
-            d0_shift = np.zeros(N * nu)
-            d0_shift[:nu] = -u_prev
-            H_uu = H_uu + self._D_diff.T @ self._S_bar @ self._D_diff
-            f_u = f_u + self._D_diff.T @ self._S_bar @ d0_shift
+            u_prev_np = (
+                np.zeros(nu) if u_prev is None
+                else _any_to_np1d(u_prev).reshape(-1)
+            )
+        else:
+            u_prev_np = None
 
-        # ── Decision variable Z = [U; ε],  ε ∈ ℝ^{N · nz} ───────────────
-        n_U = N * nu
-        n_eps = N * nz
-        n_Z = n_U + n_eps
+        formulation = self._resolve_formulation()
+        if formulation == "sparse":
+            qp_kwargs, extract = self._build_sparse(
+                x0, D, x_ref, Ad, Bd, Ed, Cz, nx, nu, nd, nz, u_prev_np
+            )
+        else:
+            qp_kwargs, extract = self._build_condensed(
+                x0, D, x_ref, Ad, Bd, Ed, Cz, nx, nu, nd, nz, u_prev_np
+            )
 
-        # Full Hessian  H = blkdiag(H_uu, ρ I)  and gradient  f = [f_u; 0]
-        H = np.zeros((n_Z, n_Z))
-        H[:n_U, :n_U] = H_uu
-        H[n_U:, n_U:] = self._rho * np.eye(n_eps)
-        # Symmetrise to guard against floating-point skew (HiGHS wants a
-        # symmetric Hessian for the convex QP).
-        H = 0.5 * (H + H.T)
+        z_warm = self._assemble_warm(formulation, warm_start, N, nx, nu, nz)
 
-        f = np.zeros(n_Z)
-        f[:n_U] = f_u
-
-        # ── Variable bounds: hard input box, slack non-negativity ────────
-        u_min_np, u_max_np = self._model.u_bounds
-        u_min_tiled = np.tile(_any_to_np1d(u_min_np).reshape(-1), N)
-        u_max_tiled = np.tile(_any_to_np1d(u_max_np).reshape(-1), N)
-        lb = np.concatenate([u_min_tiled, np.zeros(n_eps)])
-        ub = np.concatenate([u_max_tiled, np.full(n_eps, np.inf)])
-
-        # ── Soft output box as inequality rows  G_qp Z ≤ h_qp ────────────
-        #   (2a) −C̄_z Γ U − ε ≤ −z_min + Z_free
-        #   (2b)  C̄_z Γ U − ε ≤  z_max − Z_free
-        z_min = z_ref - self._y_offset
-        z_max = z_ref + self._y_offset
-        z_min_tiled = np.tile(z_min, N)
-        z_max_tiled = np.tile(z_max, N)
-
-        neg_I = -np.eye(n_eps)
-        G_lo = np.hstack([-CG, neg_I])
-        G_hi = np.hstack([CG, neg_I])
-        G_qp = np.vstack([G_lo, G_hi])
-        h_qp = np.concatenate(
-            [-z_min_tiled + Z_free, z_max_tiled - Z_free]
-        )
-
-        # ── Solve QP ─────────────────────────────────────────────────────
-        result = self._backend.solve(
-            QPProblem(P=H, q=f, lb=lb, ub=ub, G=G_qp, h=h_qp)
-        )
+        result = self._backend.solve(QPProblem(warm_start=z_warm, **qp_kwargs))
 
         if not result.success:
             warnings.warn(
@@ -324,11 +314,262 @@ class OptimalControlProblem:
                 RuntimeWarning,
                 stacklevel=2,
             )
-            U_flat = np.zeros(n_U)
+            U_flat = np.zeros(N * nu)
+            X_flat = self._simulate(x0, U_flat, D, Ad, Bd, Ed, N, nx, nu, nd)
+            return U_flat, X_flat
+
+        return extract(np.asarray(result.x, dtype=float))
+
+    # ── Warm-start assembly ────────────────────────────────────────────
+
+    @staticmethod
+    def _assemble_warm(
+        formulation: str,
+        warm_start: dict[str, np.ndarray] | None,
+        N: int,
+        nx: int,
+        nu: int,
+        nz: int,
+    ) -> np.ndarray | None:
+        """Map a physical ``{"U", "X"}`` warm start to the decision vector."""
+        if warm_start is None:
+            return None
+        n_U = N * nu
+        n_eps = N * nz
+        n_X = N * nx
+        U_w = warm_start.get("U")
+        if U_w is None:
+            return None
+        U_w = np.asarray(U_w, dtype=float).reshape(-1)
+        if U_w.shape[0] != n_U:
+            return None
+        if formulation == "condensed":
+            return np.concatenate([U_w, np.zeros(n_eps)])
+        X_w = warm_start.get("X")
+        if X_w is None:
+            return None
+        X_w = np.asarray(X_w, dtype=float).reshape(-1)
+        if X_w.shape[0] != n_X:
+            return None
+        return np.concatenate([X_w, U_w, np.zeros(n_eps)])
+
+    # ── Forward simulation (fallback X reconstruction) ──────────────────
+
+    @staticmethod
+    def _simulate(
+        x0: np.ndarray,
+        U_flat: np.ndarray,
+        D: np.ndarray,
+        Ad: np.ndarray,
+        Bd: np.ndarray,
+        Ed: np.ndarray,
+        N: int,
+        nx: int,
+        nu: int,
+        nd: int,
+    ) -> np.ndarray:
+        """Roll the deterministic dynamics forward to get ``X = [x₁ … x_N]``."""
+        X = np.zeros(N * nx)
+        xk = x0
+        for k in range(N):
+            uk = U_flat[k * nu:(k + 1) * nu]
+            dk = D[k * nd:(k + 1) * nd]
+            xk = Ad @ xk + Bd @ uk + Ed @ dk
+            X[k * nx:(k + 1) * nx] = xk
+        return X
+
+    # ── Condensed (dense, state-eliminated) builder ─────────────────────
+
+    def _build_condensed(
+        self, x0, D, x_ref, Ad, Bd, Ed, Cz, nx, nu, nd, nz, u_prev_np,
+    ) -> tuple[dict[str, Any], Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]]:
+        N = self._N
+
+        # Powers of Ad
+        Ad_pow = [np.eye(nx)]
+        for _ in range(N):
+            Ad_pow.append(Ad @ Ad_pow[-1])
+
+        # State prediction matrices  X = Ψ x₀ + Γ U + Λ D
+        Psi = np.zeros((N * nx, nx))
+        Gamma = np.zeros((N * nx, N * nu))
+        Lambda = np.zeros((N * nx, N * nd))
+        for k in range(N):
+            Psi[k * nx:(k + 1) * nx, :] = Ad_pow[k + 1]
+            for j in range(k + 1):
+                Ak = Ad_pow[k - j]
+                Gamma[k * nx:(k + 1) * nx, j * nu:(j + 1) * nu] = Ak @ Bd
+                Lambda[k * nx:(k + 1) * nx, j * nd:(j + 1) * nd] = Ak @ Ed
+
+        Cz_bar = np.kron(np.eye(N), Cz)
+        CG = Cz_bar @ Gamma
+        CP = Cz_bar @ Psi
+        CL = Cz_bar @ Lambda
+
+        Q_bar = block_diag(*([self._Q] * (N - 1) + [self._P])) if N > 1 else self._P
+        R_bar = block_diag(*([self._R] * N))
+
+        z_ref = Cz @ x_ref
+        z_ref_bar = np.tile(z_ref, N)
+        Z_free = CP @ x0 + CL @ D
+        e_free = Z_free - z_ref_bar
+
+        H_uu = CG.T @ Q_bar @ CG + R_bar
+        f_u = CG.T @ Q_bar @ e_free
+
+        if self._S is not None:
+            d0 = np.zeros(N * nu)
+            d0[:nu] = -u_prev_np
+            H_uu = H_uu + self._D_diff.T @ self._S_bar @ self._D_diff
+            f_u = f_u + self._D_diff.T @ self._S_bar @ d0
+
+        n_U = N * nu
+        n_eps = N * nz
+        n_Z = n_U + n_eps
+
+        H = np.zeros((n_Z, n_Z))
+        H[:n_U, :n_U] = H_uu
+        H[n_U:, n_U:] = self._rho * np.eye(n_eps)
+        H = 0.5 * (H + H.T)
+
+        f = np.zeros(n_Z)
+        f[:n_U] = f_u
+
+        u_min, u_max = self._model.u_bounds
+        u_min_t = np.tile(_any_to_np1d(u_min).reshape(-1), N)
+        u_max_t = np.tile(_any_to_np1d(u_max).reshape(-1), N)
+        lb = np.concatenate([u_min_t, np.zeros(n_eps)])
+        ub = np.concatenate([u_max_t, np.full(n_eps, np.inf)])
+
+        z_min_t = np.tile(z_ref - self._y_offset, N)
+        z_max_t = np.tile(z_ref + self._y_offset, N)
+        neg_I = -np.eye(n_eps)
+        G = np.vstack([np.hstack([-CG, neg_I]), np.hstack([CG, neg_I])])
+        h = np.concatenate([-z_min_t + Z_free, z_max_t - Z_free])
+
+        def extract(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            U_flat = z[:n_U]
+            X_flat = Psi @ x0 + Gamma @ U_flat + Lambda @ D
+            return U_flat, X_flat
+
+        return {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h}, extract
+
+    # ── Sparse (simultaneous, banded) builder ───────────────────────────
+
+    def _build_sparse(
+        self, x0, D, x_ref, Ad, Bd, Ed, Cz, nx, nu, nd, nz, u_prev_np,
+    ) -> tuple[dict[str, Any], Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]]:
+        import scipy.sparse as sp
+
+        N = self._N
+        n_X = N * nx
+        n_U = N * nu
+        n_eps = N * nz
+        n_Z = n_X + n_U + n_eps
+        oU = n_X            # offset of U block
+        oE = n_X + n_U      # offset of ε block
+
+        z_ref = Cz @ x_ref
+        f = np.zeros(n_Z)
+
+        # ── Objective Hessian ½ ZᵀHZ (block diagonal, assembled sparse) ──
+        Czt = Cz.T
+        H_state = Czt @ self._Q @ Cz          # repeated stage state-cost block
+        H_state_term = Czt @ self._P @ Cz     # terminal state-cost block
+        x_blocks = [H_state] * (N - 1) + [H_state_term] if N > 1 else [H_state_term]
+        for k in range(N):
+            Qk = self._P if k == N - 1 else self._Q
+            f[k * nx:(k + 1) * nx] = -Czt @ (Qk @ z_ref)
+
+        R_bar = block_diag(*([self._R] * N))
+        if self._S is not None:
+            d0 = np.zeros(n_U)
+            d0[:nu] = -u_prev_np
+            H_uu = R_bar + self._D_diff.T @ self._S_bar @ self._D_diff
+            f[oU:oU + n_U] = self._D_diff.T @ self._S_bar @ d0
         else:
-            U_flat = np.asarray(result.x[:n_U], dtype=float)
+            H_uu = R_bar
 
-        # ── Predicted state trajectory ───────────────────────────────────
-        X_flat = Psi @ x0 + Gamma @ U_flat + Lambda @ D
+        H = sp.block_diag(
+            x_blocks + [H_uu, self._rho * sp.eye(n_eps)],
+            format="csc",
+        )
 
-        return U_flat, X_flat
+        # ── Dynamics equality constraints  A_eq Z = b_eq (banded) ───────
+        rows: list[int] = []
+        cols: list[int] = []
+        vals: list[float] = []
+
+        def _add_block(r0, c0, M):
+            Mr, Mc = M.shape
+            for i in range(Mr):
+                for j in range(Mc):
+                    v = M[i, j]
+                    if v != 0.0:
+                        rows.append(r0 + i)
+                        cols.append(c0 + j)
+                        vals.append(v)
+
+        b_eq = np.zeros(n_X)
+        eye_nx = np.eye(nx)
+        for k in range(N):                     # equation for x[k+1]
+            rs = k * nx
+            _add_block(rs, k * nx, eye_nx)             # +x[k+1]
+            _add_block(rs, oU + k * nu, -Bd)           # −Bd u[k]
+            dk = D[k * nd:(k + 1) * nd]
+            if k == 0:
+                b_eq[rs:rs + nx] = Ad @ x0 + Ed @ dk
+            else:
+                _add_block(rs, (k - 1) * nx, -Ad)      # −Ad x[k]
+                b_eq[rs:rs + nx] = Ed @ dk
+        A_eq = sp.csc_matrix((vals, (rows, cols)), shape=(n_X, n_Z))
+
+        # ── Bounds ──────────────────────────────────────────────────────
+        u_min, u_max = self._model.u_bounds
+        u_min_t = np.tile(_any_to_np1d(u_min).reshape(-1), N)
+        u_max_t = np.tile(_any_to_np1d(u_max).reshape(-1), N)
+        lb = np.concatenate([np.full(n_X, -np.inf), u_min_t, np.zeros(n_eps)])
+        ub = np.concatenate([np.full(n_X, np.inf), u_max_t, np.full(n_eps, np.inf)])
+
+        # ── Soft output box (inequalities on the states), assembled sparse
+        #   Cz x[k+1] − ε[k] ≤ z_max     and    −Cz x[k+1] − ε[k] ≤ −z_min
+        g_rows: list[int] = []
+        g_cols: list[int] = []
+        g_vals: list[float] = []
+
+        def _add_g(r0, c0, M):
+            Mr, Mc = M.shape
+            for i in range(Mr):
+                for j in range(Mc):
+                    v = M[i, j]
+                    if v != 0.0:
+                        g_rows.append(r0 + i)
+                        g_cols.append(c0 + j)
+                        g_vals.append(v)
+
+        neg_eye_nz = -np.eye(nz)
+        h = np.zeros(2 * n_eps)
+        z_min = z_ref - self._y_offset
+        z_max = z_ref + self._y_offset
+        for k in range(N):
+            xs = k * nx
+            es = oE + k * nz
+            r_hi = k * nz
+            r_lo = n_eps + k * nz
+            _add_g(r_hi, xs, Cz)
+            _add_g(r_hi, es, neg_eye_nz)
+            h[r_hi:r_hi + nz] = z_max
+            _add_g(r_lo, xs, -Cz)
+            _add_g(r_lo, es, neg_eye_nz)
+            h[r_lo:r_lo + nz] = -z_min
+        G = sp.csc_matrix((g_vals, (g_rows, g_cols)), shape=(2 * n_eps, n_Z))
+
+        def extract(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+            X_flat = z[:n_X]
+            U_flat = z[oU:oU + n_U]
+            return U_flat, X_flat
+
+        return (
+            {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h, "A": A_eq, "b": b_eq},
+            extract,
+        )

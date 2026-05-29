@@ -24,7 +24,7 @@ import numpy as np
 
 from .._utils import _any_to_np1d
 from ..estimation import KalmanFilter
-from .ocp import OptimalControlProblem
+from .ocp import OptimalControlProblem, _shift_warm_start
 
 if TYPE_CHECKING:
     from ..models import LinearDiscreteModel
@@ -46,6 +46,13 @@ class MPCController:
     model     : LinearDiscreteModel
     estimator : KalmanFilter
     ocp       : OptimalControlProblem
+    warm_start : bool, optional
+        Re-use the previous horizon solution (shifted one step) as the QP
+        warm start on each call.  Default: ``False``.  Warm-starting never
+        changes the optimiser; it only seeds the solver's initial iterate.
+        It is a no-op (slight overhead) with the default HiGHS active-set QP
+        solver, which ignores the primal start — enable it when using a
+        backend that benefits from primal warm starts (e.g. OSQP).
     """
 
     def __init__(
@@ -53,13 +60,18 @@ class MPCController:
         model: "LinearDiscreteModel",
         estimator: KalmanFilter,
         ocp: OptimalControlProblem,
+        warm_start: bool = False,
     ) -> None:
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
+        self._warm_start = bool(warm_start)
         # Previous applied (u, d) — used by the estimator's predict step.
         self._u_prev_np: np.ndarray = np.zeros(model.nu)
         self._d_prev_np: np.ndarray = np.zeros(model.nd)
+        # Previous horizon solution — used to warm-start the next QP.
+        self._prev_U: np.ndarray | None = None
+        self._prev_X: np.ndarray | None = None
 
     def step(
         self,
@@ -93,13 +105,19 @@ class MPCController:
         # Step 3: optimise (OCP returns numpy 1-D arrays)
         D_np = _any_to_np1d(D)
         x_ref_np = np.asarray(self._model.x_ref, dtype=float).reshape(-1)
+        warm = None
+        if self._warm_start and self._prev_U is not None:
+            warm = _shift_warm_start(
+                self._prev_U, self._prev_X, nu, self._model.nx
+            )
         U_seq, X_seq = self._ocp.solve(
-            x_hat_np, D_np, x_ref_np, u_prev=self._u_prev_np,
+            x_hat_np, D_np, x_ref_np, u_prev=self._u_prev_np, warm_start=warm,
         )
 
-        # Step 4: extract the first action; cache (u_now, d_now) for next step
+        # Step 4: extract the first action; cache state for the next step
         u = U_seq[:nu]
         self._u_prev_np = np.asarray(u, dtype=float).copy()
         self._d_prev_np = D_np[:nd].copy()
+        self._prev_U, self._prev_X = U_seq, X_seq
 
         return u, U_seq, X_seq
