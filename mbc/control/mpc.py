@@ -50,9 +50,11 @@ class MPCController:
         Re-use the previous horizon solution (shifted one step) as the QP
         warm start on each call.  Default: ``False``.  Warm-starting never
         changes the optimiser; it only seeds the solver's initial iterate.
-        It is a no-op (slight overhead) with the default HiGHS active-set QP
-        solver, which ignores the primal start — enable it when using a
-        backend that benefits from primal warm starts (e.g. OSQP).
+        With the current per-solve setup it gives little measurable speedup
+        (the primal-only start is rebuilt each step); substantial
+        receding-horizon gains require solver-level factorisation reuse
+        (persistent OSQP ``update`` with primal+dual starts) — planned future
+        work.  Left available and correct for that path and for HiGHS.
     """
 
     def __init__(

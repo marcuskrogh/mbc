@@ -1500,11 +1500,14 @@ class TestCDLinearizedMPCController:
 class TestOCPFormulationEquivalence:
     """The condensed and sparse QP formulations must give the same optimum."""
 
+    # Pin the exact HiGHS active-set backend so the test validates the
+    # formulation *math* (OSQP's first-order tolerance is checked separately).
     @pytest.mark.parametrize("N", [3, 10, 30])
     @pytest.mark.parametrize("use_rom", [False, True])
     def test_discrete_condensed_equals_sparse(self, N, use_rom):
         model = DoubleIntegrator()
-        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
+        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0,
+                  solver="highs")
         if use_rom:
             kw["S"] = np.eye(1) * 5.0
         ocp_c = OptimalControlProblem(formulation="condensed", **kw)
@@ -1521,7 +1524,8 @@ class TestOCPFormulationEquivalence:
     def test_cd_condensed_equals_sparse(self):
         model = SimpleLinearCD()
         N = 12
-        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0)
+        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0,
+                  solver="highs")
         ocp_c = CDOptimalControlProblem(formulation="condensed", **kw)
         ocp_s = CDOptimalControlProblem(formulation="sparse", **kw)
         x0 = np.array([0.0])
@@ -1532,13 +1536,30 @@ class TestOCPFormulationEquivalence:
         np.testing.assert_allclose(Uc, Us, atol=1e-5)
         np.testing.assert_allclose(Xc, Xs, atol=1e-5)
 
-    def test_auto_resolves_to_condensed(self):
-        """``auto`` selects condensed (fastest with the HiGHS backend)."""
+    def test_all_backends_agree_on_optimum(self):
+        """HiGHS and OSQP (with their auto formulations) reach the same U*."""
+        model = DoubleIntegrator()
+        N = 15
+        x0 = np.array([0.0, 0.0])
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
+        U_ref, _ = OptimalControlProblem(solver="highs", formulation="condensed",
+                                         **kw).solve(x0, D, x_ref)
+        for solver in ("highs", "osqp"):
+            U, _ = OptimalControlProblem(solver=solver, **kw).solve(x0, D, x_ref)
+            np.testing.assert_allclose(U, U_ref, atol=1e-4,
+                                       err_msg=f"{solver} disagrees with reference")
+
+    def test_auto_is_backend_aware(self):
+        """``auto`` → sparse for OSQP (banded-exploiting), condensed for HiGHS."""
         model = DoubleIntegrator()
         kw = dict(Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
         for N in (5, 40, 100):
-            ocp = OptimalControlProblem(model, N=N, **kw)
-            assert ocp._resolve_formulation() == "condensed"
+            assert OptimalControlProblem(
+                model, N=N, solver="osqp", **kw)._resolve_formulation() == "sparse"
+            assert OptimalControlProblem(
+                model, N=N, solver="highs", **kw)._resolve_formulation() == "condensed"
 
     def test_explicit_formulation_overrides_auto(self):
         model = DoubleIntegrator()

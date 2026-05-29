@@ -26,6 +26,7 @@ from .qp_solver import (
     QPResult,
     QPSolverBackend,
     HighsQPBackend,
+    OSQPBackend,
     make_qp_backend,
 )
 
@@ -50,5 +51,6 @@ __all__ = [
     "QPResult",
     "QPSolverBackend",
     "HighsQPBackend",
+    "OSQPBackend",
     "make_qp_backend",
 ]

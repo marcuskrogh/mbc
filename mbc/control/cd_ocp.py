@@ -5,7 +5,7 @@ Optimal Control Problems for continuous-discrete systems.
     A thin, typed wrapper around :class:`OptimalControlProblem` for
     :class:`~mbc.models.LinearContinuousDiscreteModel`.  Solves the
     receding-horizon QP via the lifted (batch) formulation using
-    a convex-QP backend (HiGHS by default; M.Sc. thesis Ch. 5).
+    a convex-QP backend (OSQP by default; M.Sc. thesis Ch. 5).
 
 ``CDTrackingOptimalControlProblem``
     Convenience wrapper around
@@ -41,7 +41,7 @@ The receding-horizon quadratic program over horizon N is:
           ε[k+1] ≥ 0
 
 The lifted (batch) QP is solved through a pluggable convex-QP backend
-(HiGHS by default).
+(OSQP by default; HiGHS available).
 
 Notation
 ---------
@@ -191,7 +191,7 @@ class CDOptimalControlProblem(OptimalControlProblem):
         S: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
-        solver: str | QPSolverBackend = "highs",
+        solver: str | QPSolverBackend = "osqp",
         solver_options: dict[str, Any] | None = None,
         formulation: str = "auto",
     ) -> None:

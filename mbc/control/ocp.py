@@ -5,8 +5,8 @@ Linear specialisation of the ControlToolbox §EMPC formulation: when the
 plant dynamics are linear and the OCP is restricted to quadratic stage
 costs and box / soft-box constraints, the entire NLP reduces to a single
 finite-horizon **quadratic program** that is solved directly with a convex-QP
-backend (HiGHS by default) — strictly more efficient than the implicit-Euler
-direct-simultaneous formulation used by
+backend (OSQP by default; HiGHS also available) — strictly more efficient than
+the implicit-Euler direct-simultaneous formulation used by
 :class:`~mbc.control.EconomicOptimalControlProblem` for nonlinear plants.
 
 Plant model (ControlToolbox notation, discrete-time specialisation)
@@ -52,13 +52,18 @@ The same QP is built in one of two ways, selected by ``formulation``:
   matrices are sparse with O(N) nonzeros, so this scales far better for long
   horizons; HiGHS exploits the sparsity directly.
 
-``formulation="auto"`` (default) resolves to ``condensed`` because the
-bundled HiGHS backend solves the small dense condensed QP faster than the
-larger banded simultaneous QP (its active-set QP solver does not exploit the
-banded KKT structure).  The ``sparse`` form is provided — correct and
-O(N)-sparse to assemble — for backends that *do* exploit that structure
-(e.g. OSQP or a Riccati solver), where it scales far better for long
-horizons.  Both formulations yield the same optimiser to solver tolerance.
+``formulation="auto"`` (default) is **backend-aware**: with OSQP (the default
+backend) it resolves to ``sparse``, and with HiGHS it resolves to
+``condensed``.  This pairs each solver with the formulation it handles best —
+OSQP's sparse first-order solver exploits the banded KKT structure and warm
+starts, scaling ~linearly in the horizon, whereas HiGHS's active-set QP is
+fastest on the small dense condensed problem (and the dense condensed Hessian
+is ill-conditioned for first-order methods at long horizons).  Both
+formulations yield the same optimiser to solver tolerance.
+
+Empirically (see ``scripts/qp_formulation_benchmark.py``) OSQP+sparse is the
+fastest combination and scales best with the horizon, which is why it is the
+default; hence ``solver="osqp"`` with ``formulation="auto"``.
 
 Notation
 --------
@@ -170,19 +175,19 @@ class OptimalControlProblem:
         Symmetric half-width δ of the soft-output band ``[z_ref − δ,
         z_ref + δ]``.  Default: 2.0.
     solver : str or QPSolverBackend, optional
-        Convex-QP backend selector.  ``"highs"`` (default) uses the
-        MIT-licensed HiGHS solver via ``highspy``.  A
+        Convex-QP backend selector.  ``"osqp"`` (default) uses the Apache-2.0
+        OSQP solver (sparse, warm-startable, fastest here); ``"highs"`` uses
+        the MIT-licensed HiGHS solver via ``highspy``.  A
         :class:`~mbc.control.qp_solver.QPSolverBackend` instance may also be
         supplied directly.
     solver_options : dict, optional
         Backend-specific options forwarded to the QP solver.
     formulation : {"auto", "condensed", "sparse"}, optional
         QP construction strategy (see the module docstring).  Default
-        ``"auto"``, which resolves to ``"condensed"`` — the faster choice for
-        the bundled HiGHS backend.  The ``"sparse"`` simultaneous form is
-        correct and available but only pays off with a backend that exploits
-        the banded KKT structure (e.g. OSQP / a Riccati solver); HiGHS's
-        active-set QP solves the small dense condensed problem faster.
+        ``"auto"`` is backend-aware: ``"sparse"`` for OSQP and ``"condensed"``
+        for HiGHS.  Note that OSQP with ``"condensed"`` is *not* recommended
+        for long horizons — the dense condensed Hessian is ill-conditioned for
+        OSQP's first-order method; use the (default) sparse form with OSQP.
     """
 
     def __init__(
@@ -195,7 +200,7 @@ class OptimalControlProblem:
         S: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
-        solver: str | QPSolverBackend = "highs",
+        solver: str | QPSolverBackend = "osqp",
         solver_options: dict[str, Any] | None = None,
         formulation: str = "auto",
     ) -> None:
@@ -226,14 +231,19 @@ class OptimalControlProblem:
     def _resolve_formulation(self) -> str:
         """Return the concrete formulation ('condensed' or 'sparse').
 
-        ``"auto"`` resolves to ``"condensed"``: with the default HiGHS
-        backend the small dense condensed QP solves faster than the larger
-        banded simultaneous QP.  Select ``formulation="sparse"`` explicitly
-        when using a backend that exploits banded structure.
+        ``"auto"`` is backend-aware:
+
+        * OSQP (sparse first-order, exploits the banded KKT structure and
+          warm starts) → ``"sparse"`` — scales ~linearly in the horizon and
+          is the faster, well-conditioned choice.
+        * HiGHS (active-set QP, does not exploit banded structure; the dense
+          condensed Hessian is ill-conditioned for first-order methods but
+          fine for active-set) → ``"condensed"``.
         """
         if self._formulation != "auto":
             return self._formulation
-        return "condensed"
+        from .qp_solver import OSQPBackend
+        return "sparse" if isinstance(self._backend, OSQPBackend) else "condensed"
 
     # ── Public solve ─────────────────────────────────────────────────────
 

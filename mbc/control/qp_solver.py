@@ -242,6 +242,120 @@ class HighsQPBackend:
         )
 
 
+class OSQPBackend:
+    """Convex-QP backend built on OSQP (Apache-2.0).
+
+    OSQP is a sparse first-order (ADMM) solver that exploits the banded KKT
+    structure of the *simultaneous* MPC formulation and supports primal/dual
+    warm-starting, so it is the natural partner for
+    ``OptimalControlProblem(formulation="sparse", ...)`` in a receding-horizon
+    loop.
+
+    Parameters
+    ----------
+    options : dict, optional
+        OSQP settings forwarded to ``setup`` (e.g. ``eps_abs``, ``eps_rel``,
+        ``max_iter``, ``polishing``).  Defaults tighten the ADMM tolerances
+        and enable solution polishing so the result matches the interior-point
+        / active-set backends to ~1e-6; output is silenced.
+    """
+
+    _DEFAULTS = {
+        "verbose": False,
+        "eps_abs": 1e-7,
+        "eps_rel": 1e-7,
+        "max_iter": 20000,
+        "polishing": True,
+    }
+
+    def __init__(self, *, options: dict[str, Any] | None = None) -> None:
+        self._options = dict(options) if options is not None else {}
+
+    def solve(self, problem: QPProblem) -> QPResult:
+        try:
+            import osqp
+        except ImportError as exc:  # pragma: no cover - optional dependency
+            raise RuntimeError(
+                "OSQP backend requested but 'osqp' is not available. "
+                "Install optional dependency 'mbc[osqp]'."
+            ) from exc
+
+        import scipy.sparse as sp
+
+        P = problem.P if sp.issparse(problem.P) else np.asarray(problem.P, dtype=float)
+        q = np.asarray(problem.q, dtype=float).reshape(-1)
+        n = q.shape[0]
+        lb = np.asarray(problem.lb, dtype=float).reshape(-1)
+        ub = np.asarray(problem.ub, dtype=float).reshape(-1)
+
+        # OSQP expects the upper-triangular part of P in CSC.
+        P_csc = P.tocsc() if sp.issparse(P) else sp.csc_matrix(P)
+        P_tri = sp.triu(P_csc, format="csc")
+
+        # Single constraint system  l ≤ A x ≤ u:
+        #   inequalities G x ≤ h      → −inf ≤ G x ≤ h
+        #   equalities   A x = b      →    b ≤ A x ≤ b
+        #   variable box lb ≤ x ≤ ub  → identity rows
+        blocks = []
+        low: list[np.ndarray] = []
+        upp: list[np.ndarray] = []
+        if problem.G is not None and getattr(problem.G, "shape", (0,))[0]:
+            G = problem.G.tocsc() if sp.issparse(problem.G) else sp.csc_matrix(problem.G)
+            blocks.append(G)
+            low.append(np.full(G.shape[0], -np.inf))
+            upp.append(np.asarray(problem.h, dtype=float).reshape(-1))
+        if problem.A is not None and getattr(problem.A, "shape", (0,))[0]:
+            A = problem.A.tocsc() if sp.issparse(problem.A) else sp.csc_matrix(problem.A)
+            b = np.asarray(problem.b, dtype=float).reshape(-1)
+            blocks.append(A)
+            low.append(b)
+            upp.append(b)
+        blocks.append(sp.eye(n, format="csc"))
+        low.append(lb)
+        upp.append(ub)
+
+        A_osqp = sp.vstack(blocks, format="csc")
+        l = np.concatenate(low)
+        u = np.concatenate(upp)
+
+        settings = dict(self._DEFAULTS)
+        settings.update(self._options)
+
+        solver = osqp.OSQP()
+        solver.setup(P=P_tri, q=q, A=A_osqp, l=l, u=u, **settings)
+
+        if problem.warm_start is not None:
+            ws = np.asarray(problem.warm_start, dtype=float).reshape(-1)
+            if ws.shape[0] == n:
+                try:
+                    solver.warm_start(x=ws)
+                except Exception:  # pragma: no cover - version-dependent API
+                    pass
+
+        try:
+            res = solver.solve(raise_error=False)
+        except TypeError:  # pragma: no cover - older osqp without the kwarg
+            res = solver.solve()
+        status = str(res.info.status)
+        success = status in ("solved", "solved inaccurate")
+        x = res.x
+        if x is None or np.asarray(x).shape[0] != n or not np.all(np.isfinite(x)):
+            x = np.zeros(n)
+            success = False
+        x = np.asarray(x, dtype=float).reshape(-1)
+        Px = np.asarray(P @ x, dtype=float).reshape(-1)
+        obj = float(0.5 * x @ Px + q @ x)
+
+        return QPResult(
+            x=x,
+            obj=obj,
+            success=success,
+            status=status,
+            iterations=int(getattr(res.info, "iter", 0)) or None,
+            raw=res,
+        )
+
+
 def make_qp_backend(
     solver: str | QPSolverBackend = "highs",
     *,
@@ -257,8 +371,10 @@ def make_qp_backend(
     key = solver.lower()
     if key in {"highs", "highspy"}:
         return HighsQPBackend(options=solver_options)
+    if key in {"osqp"}:
+        return OSQPBackend(options=solver_options)
 
     raise ValueError(
-        f"Unknown QP solver '{solver}'. Supported: 'highs'. "
+        f"Unknown QP solver '{solver}'. Supported: 'highs', 'osqp'. "
         "Alternatively pass a QPSolverBackend instance."
     )

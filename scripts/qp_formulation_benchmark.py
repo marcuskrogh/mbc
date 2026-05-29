@@ -1,18 +1,21 @@
 """
-Benchmark the linear-MPC QP formulations and warm-starting.
+Benchmark the linear-MPC QP backends and formulations.
 
-Compares the two ``OptimalControlProblem`` build strategies — the dense
-*condensed* (state-eliminated) form and the sparse *simultaneous* form with
-banded dynamics equalities — across a range of prediction horizons, and
-checks that they agree to solver tolerance.  Also times a receding-horizon
-loop with and without warm-starting.
+Compares the QP backends (HiGHS, OSQP) crossed with the two
+``OptimalControlProblem`` build strategies — the dense *condensed*
+(state-eliminated) form and the sparse *simultaneous* form with banded
+dynamics equalities — across a range of prediction horizons, and checks that
+they agree to solver tolerance.
 
-Finding (with the default HiGHS backend): the condensed form is faster — its
-active-set QP solver does not exploit the banded KKT structure, so the small
-dense condensed QP beats the larger simultaneous QP, and primal warm starts
-are ignored.  The sparse form and warm-starting are therefore opt-in and are
-intended for a banded-exploiting backend (e.g. OSQP / a Riccati solver),
-where the simultaneous structure and warm starts pay off for long horizons.
+Findings:
+- **OSQP + sparse** is the fastest combination and scales ~linearly in the
+  horizon (it exploits the banded KKT structure) — this is the default
+  (`solver="osqp"`, `formulation="auto"` → sparse).
+- HiGHS solves the small dense *condensed* QP fast (active-set, exact) but its
+  solver does not exploit the banded structure, so HiGHS + sparse is slow at
+  long horizons; `formulation="auto"` therefore pairs HiGHS with condensed.
+- OSQP + condensed is *not* recommended for long horizons: the dense condensed
+  Hessian is ill-conditioned for OSQP's first-order method.
 
 Usage:
     python scripts/qp_formulation_benchmark.py
@@ -28,8 +31,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mbc.control import MPCController, OptimalControlProblem
-from mbc.estimation import KalmanFilter
+from mbc.control import OptimalControlProblem
 from mbc.models import LinearDiscreteModel
 
 
@@ -101,32 +103,30 @@ def main() -> None:
     x0 = np.zeros(model.nx)
     x_ref = model.x_ref
 
-    print(f"{'N':>4} | {'condensed (ms)':>15} | {'sparse (ms)':>12} | {'max|dU|':>10}")
-    print("-" * 52)
+    combos = [
+        ("highs", "condensed"),
+        ("highs", "sparse"),
+        ("osqp", "condensed"),
+        ("osqp", "sparse"),
+    ]
+    header = "  ".join(f"{s}/{f}".rjust(14) for s, f in combos)
+    print(f"{'N':>4} | {header}   | {'max|dU|':>9}")
+    print("-" * (8 + len(header) + 14))
     for N in [5, 10, 20, 40, 80]:
         D = np.zeros(N * model.nd)
-        kw = dict(model=model, N=N, Q=np.eye(model.nx), R=np.eye(model.nu) * 0.1,
-                  y_offset=5.0)
-        oc = OptimalControlProblem(formulation="condensed", **kw)
-        os_ = OptimalControlProblem(formulation="sparse", **kw)
-        tc, Uc, _ = _time_solve(oc, x0, D, x_ref)
-        ts, Us, _ = _time_solve(os_, x0, D, x_ref)
-        d = float(np.max(np.abs(Uc - Us)))
-        print(f"{N:>4} | {tc * 1e3:>15.2f} | {ts * 1e3:>12.2f} | {d:>10.2e}")
-
-    # Warm-start vs cold-start over a receding-horizon loop.
-    print("\nReceding-horizon loop (N=40, 40 steps):")
-    for warm in (False, True):
-        kf = KalmanFilter(model)
-        ocp = OptimalControlProblem(
-            model, N=40, Q=np.eye(model.nx), R=np.eye(model.nu) * 0.1, y_offset=5.0,
-        )
-        ctrl = MPCController(model, estimator=kf, ocp=ocp, warm_start=warm)
-        t0 = time.perf_counter()
-        for k in range(40):
-            ctrl.step(np.zeros(model.nx), np.zeros(40 * model.nd))
-        dt = time.perf_counter() - t0
-        print(f"  warm_start={str(warm):>5}:  {dt * 1e3:8.1f} ms total")
+        times = []
+        Us = []
+        for solver, form in combos:
+            ocp = OptimalControlProblem(
+                model, N=N, Q=np.eye(model.nx), R=np.eye(model.nu) * 0.1,
+                y_offset=5.0, solver=solver, formulation=form,
+            )
+            t, U, _ = _time_solve(ocp, x0, D, x_ref)
+            times.append(t * 1e3)
+            Us.append(U)
+        dev = max(float(np.max(np.abs(U - Us[0]))) for U in Us[1:])
+        cells = "  ".join(f"{t:14.2f}" for t in times)
+        print(f"{N:>4} | {cells}   | {dev:>9.2e}")
 
 
 if __name__ == "__main__":
