@@ -9,8 +9,8 @@ description = "Generic model-based control library for linear discrete-time syst
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
-    "cvxopt",
     "scipy",
+    "highspy",
 ]
 
 [project.optional-dependencies]

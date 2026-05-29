@@ -1,9 +1,8 @@
 """
 Generic system-identification tests using a synthetic first-order linear model.
 
-All tests in this module use **only** the public ``mbc`` API (plus cvxopt,
-which mbc already depends on) — there is no dependency on the HeatingAssistant
-domain code.
+All tests in this module use **only** the public ``mbc`` API — there is no
+dependency on the HeatingAssistant domain code.
 
 Synthetic model
 ---------------
@@ -61,12 +60,11 @@ class _ScalarModel:
     def nd(self) -> int:
         return 1
 
-    def discretize(self, d_cvx):
-        """Return cvxopt 1×1 matrices A, B, E."""
-        from cvxopt import matrix as cvx_matrix
-        A = cvx_matrix([[self._a]])
-        B = cvx_matrix([[self._b]])
-        E = cvx_matrix([[self._e]])
+    def discretize(self, d=None):
+        """Return 1×1 numpy matrices A, B, E."""
+        A = np.array([[self._a]])
+        B = np.array([[self._b]])
+        E = np.array([[self._e]])
         return A, B, E
 
     def predict_offset(self, d_np: np.ndarray) -> np.ndarray:
@@ -93,23 +91,19 @@ class _ScalarModel:
         self, d_np: np.ndarray, h: float = 1e-5
     ):
         """Finite-difference Jacobians ∂A_d/∂θ_i, ∂B_d/∂θ_i, ∂E_d/∂θ_i."""
-        from cvxopt import matrix as cvx_matrix
-        d_cvx = cvx_matrix(d_np.tolist(), (len(d_np), 1), tc="d")
+        d_arr = np.asarray(d_np, dtype=float)
         theta0 = self.params
-        A0_cvx, B0_cvx, E0_cvx = self.discretize(d_cvx)
-        A0 = np.array([[A0_cvx[0, 0]]])
-        B0 = np.array([[B0_cvx[0, 0]]])
-        E0 = np.array([[E0_cvx[0, 0]]])
+        A0, B0, E0 = self.discretize(d_arr)
 
         dA, dB, dE = [], [], []
         for i in range(len(theta0)):
             theta_h = theta0.copy()
             theta_h[i] += h
             m_h = self.with_params(theta_h)
-            Ah_cvx, Bh_cvx, Eh_cvx = m_h.discretize(d_cvx)
-            dA.append((np.array([[Ah_cvx[0, 0]]]) - A0) / h)
-            dB.append((np.array([[Bh_cvx[0, 0]]]) - B0) / h)
-            dE.append((np.array([[Eh_cvx[0, 0]]]) - E0) / h)
+            Ah, Bh, Eh = m_h.discretize(d_arr)
+            dA.append((np.asarray(Ah, dtype=float) - A0) / h)
+            dB.append((np.asarray(Bh, dtype=float) - B0) / h)
+            dE.append((np.asarray(Eh, dtype=float) - E0) / h)
         return dA, dB, dE
 
 

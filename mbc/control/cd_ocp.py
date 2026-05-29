@@ -5,7 +5,7 @@ Optimal Control Problems for continuous-discrete systems.
     A thin, typed wrapper around :class:`OptimalControlProblem` for
     :class:`~mbc.models.LinearContinuousDiscreteModel`.  Solves the
     receding-horizon QP via the lifted (batch) formulation using
-    ``cvxopt.solvers.qp`` (M.Sc. thesis Ch. 5).
+    a convex-QP backend (HiGHS by default; M.Sc. thesis Ch. 5).
 
 ``CDTrackingOptimalControlProblem``
     Convenience wrapper around
@@ -40,7 +40,8 @@ The receding-horizon quadratic program over horizon N is:
           y_min − ε[k+1] ≤ y[k+1] ≤ y_max + ε[k+1]   (soft output box)
           ε[k+1] ≥ 0
 
-The lifted (batch) QP is solved using ``cvxopt.solvers.qp``.
+The lifted (batch) QP is solved through a pluggable convex-QP backend
+(HiGHS by default).
 
 Notation
 ---------
@@ -56,14 +57,13 @@ Notation
 
 from __future__ import annotations
 
-from typing import Tuple, TYPE_CHECKING
+from typing import Any, Tuple, TYPE_CHECKING
 
 import numpy as np
-from cvxopt import matrix
 
 from .ocp import OptimalControlProblem
+from .qp_solver import QPSolverBackend
 from .nlp_solver import NLPScalingPolicy, NLPSolverBackend
-from .._utils import _np_to_cvx
 
 if TYPE_CHECKING:
     from ..models import ContinuousDiscreteModel, LinearContinuousDiscreteModel
@@ -161,13 +161,13 @@ class CDOptimalControlProblem(OptimalControlProblem):
         ``E``, ``Cm``, ``dt``, and ``u_bounds``.
     N : int
         Prediction horizon (number of sampling intervals).
-    Q : cvxopt.matrix (ny, ny)
+    Q : (ny, ny) array-like
         Stage output tracking cost  ‖y − r‖²_Q.
-    R : cvxopt.matrix (nu, nu)
+    R : (nu, nu) array-like
         Stage input cost  ‖u‖²_R.
-    P : cvxopt.matrix (ny, ny), optional
+    P : (ny, ny) array-like, optional
         Terminal output tracking cost.  Default: Q.
-    S : cvxopt.matrix (nu, nu), optional
+    S : (nu, nu) array-like, optional
         Input rate-of-movement cost  ‖Δu‖²_S.  ``None`` → disabled.
     rho : float, optional
         Penalty weight on soft output constraint violation.  Default: 1e4.
@@ -185,18 +185,20 @@ class CDOptimalControlProblem(OptimalControlProblem):
         self,
         model: "LinearContinuousDiscreteModel",
         N: int,
-        Q: matrix,
-        R: matrix,
-        P: matrix | None = None,
-        S: matrix | None = None,
+        Q: Any,
+        R: Any,
+        P: Any | None = None,
+        S: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
+        solver: str | QPSolverBackend = "highs",
+        solver_options: dict[str, Any] | None = None,
     ) -> None:
-        # Store the original CD model for direct access (e.g. x_ref_cvx)
+        # Store the original CD model for direct access.
         self._cd_model = model
 
         # Pass an adapter to the parent so that OptimalControlProblem.solve
-        # receives the cvxopt-compatible interface it expects.
+        # receives the numpy interface it expects (ZOH-discretised matrices).
         super().__init__(
             model=_CDModelAdapter(model),  # type: ignore[arg-type]
             N=N,
@@ -206,6 +208,8 @@ class CDOptimalControlProblem(OptimalControlProblem):
             S=S,
             rho=rho,
             y_offset=y_offset,
+            solver=solver,
+            solver_options=solver_options,
         )
 
 

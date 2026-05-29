@@ -21,6 +21,13 @@ from .nlp_solver import (
     ScipyNLPBackend,
     IpoptNLPBackend,
 )
+from .qp_solver import (
+    QPProblem,
+    QPResult,
+    QPSolverBackend,
+    HighsQPBackend,
+    make_qp_backend,
+)
 
 __all__ = [
     "OptimalControlProblem",
@@ -39,4 +46,9 @@ __all__ = [
     "NLPSolverBackend",
     "ScipyNLPBackend",
     "IpoptNLPBackend",
+    "QPProblem",
+    "QPResult",
+    "QPSolverBackend",
+    "HighsQPBackend",
+    "make_qp_backend",
 ]

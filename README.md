@@ -13,10 +13,13 @@ All implemented methods are based on the following references:
   (EKF, UKF, EnKF, PF), DAE estimation, Economic NMPC, and Monte Carlo
   closed-loop simulation.
 
-Matrix types: `numpy.ndarray` is used throughout for all model interfaces and
-estimator computations. `cvxopt.matrix` is used only internally by the QP-based
-MPC solvers (`KalmanFilter`, `OptimalControlProblem`, `CDKalmanFilter`,
-`CDOptimalControlProblem`).
+Matrix types: `numpy.ndarray` is used throughout for all model interfaces,
+estimator computations, and solver inputs/outputs. The QP-based MPC solvers
+(`OptimalControlProblem`, `CDOptimalControlProblem`, …) assemble their problem
+data in numpy and solve it through a pluggable convex-QP backend — by default
+the MIT-licensed [HiGHS](https://highs.dev) solver (`highspy`). For backward
+compatibility, the controller entry points still accept legacy `cvxopt.matrix`
+column/array inputs, but `cvxopt` is no longer a dependency.
 
 ---
 
@@ -334,8 +337,8 @@ the linear specialisation of the ControlToolbox §EMPC formulation.  When
 the plant dynamics are linear and the OCP is restricted to quadratic stage
 costs and box / soft-box constraints, the entire NLP reduces to a single
 finite-horizon **quadratic program** that the lifted (batch) form solves
-directly with ``cvxopt.solvers.qp`` — strictly more efficient than the
-direct-simultaneous formulation used by
+directly with a convex-QP backend (HiGHS by default) — strictly more efficient
+than the direct-simultaneous formulation used by
 :class:`~mbc.control.EconomicOptimalControlProblem` for nonlinear plants.
 
 The OCP tracks the **output** ``z[k] = Cz x[k] + Dz u[k] + Fz d[k]`` —
@@ -396,7 +399,7 @@ min_{z_qp}  ½ z_qpᵀ H z_qp + fᵀ z_qp
 s.t.        G z_qp ≤ h
 ```
 
-solved with :func:`cvxopt.solvers.qp`.
+solved through a pluggable convex-QP backend (HiGHS by default).
 
 **Parameters**:
 
@@ -2690,10 +2693,17 @@ X_std  = result.X.std(axis=0)     # (T+1, nx) — trajectory std
 pip install -e .
 ```
 
-**Core dependencies**: `numpy`, `cvxopt`, `scipy`.
+**Core dependencies**: `numpy`, `scipy`, `highspy` (HiGHS — MIT-licensed
+LP/QP solver, default convex-QP backend). All core dependencies are permissively
+licensed (BSD / MIT), keeping mbc cleanly MIT-licensed with no copyleft
+obligations.
 
 **Optional dependencies**:
-- `cyipopt` (`pip install -e ".[ipopt]"`) for IPOPT NLP backend support in nonlinear MPC/OCP.
+- `cyipopt` (`pip install -e ".[ipopt]"`) for the IPOPT NLP backend in nonlinear
+  MPC/OCP. IPOPT is distributed under the EPL (a weak/file-level copyleft
+  licence); it is installed and linked only as an opt-in extra and is never
+  bundled, so the MIT core is unaffected. Select it per problem with
+  `solver="ipopt"`.
 
 ## Running Tests
 
