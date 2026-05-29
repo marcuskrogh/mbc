@@ -462,10 +462,10 @@ from mbc.identification import (
     cd_ped_neg_log_likelihood_gradient,
     CDParameterEstimator,
 )
-from mbc.models import ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDE
 
 
-class _MonodModel(ContinuousDiscreteModel):
+class _MonodModel(ContinuousDiscreteSDE):
     """
     Monod bioreactor — re-implemented locally so the test file is
     self-contained.  Parameterised by theta = [log(mu_max), log(K_s)].

@@ -71,7 +71,7 @@ from mbc.control.nlp_solver import (
     NLPResult,
     ScipyNLPBackend,
 )
-from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDAE, ContinuousDiscreteSDE
 
 
 _cyipopt_available = pytest.mark.skipif(
@@ -107,7 +107,7 @@ class _StrippedJacBackend:
 # ── Benchmark models ──────────────────────────────────────────────────────────
 
 
-class _ScalarNonlinear(ContinuousDiscreteModel):
+class _ScalarNonlinear(ContinuousDiscreteSDE):
     """SDE: dx = (−0.2 x + tanh(u)) dt + 0.05 dw."""
 
     @property
@@ -144,7 +144,7 @@ class _ScalarNonlinear(ContinuousDiscreteModel):
         return np.array([x[0]])
 
 
-class _IsomerisationReactor(ContinuousDiscreteDAEModel):
+class _IsomerisationReactor(ContinuousDiscreteSDAE):
     """SDAE: isomerisation reactor with equilibrium algebraic constraint."""
 
     _K_eq = 3.0

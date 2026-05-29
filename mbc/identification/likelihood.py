@@ -276,7 +276,7 @@ def cd_ped_neg_log_likelihood(
     Parameters
     ----------
     model_factory : callable  θ → model
-        Returns a :class:`~mbc.models.ContinuousDiscreteModel` (or any object
+        Returns a :class:`~mbc.models.ContinuousDiscreteSDE` (or any object
         exposing ``f``, ``sigma``, ``hm``, ``dfdx``, ``dhmdx``, ``Rm``, and
         ``params``).  ``model.params`` is used as the parameter vector ``p``
         passed to all model function calls.  May raise any exception for

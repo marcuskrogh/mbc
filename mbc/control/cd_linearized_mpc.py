@@ -14,7 +14,7 @@ from typing import Any
 import numpy as np
 
 from .._utils import _fd_jacobian, _zoh_full, _van_loan
-from ..models import LinearDiscreteModel, ContinuousDiscreteModel
+from ..models import LinearDiscreteModel, ContinuousDiscreteSDE
 from .ocp import OptimalControlProblem
 
 
@@ -149,7 +149,7 @@ class _DeviationLinearDiscreteModel(LinearDiscreteModel):
 
 
 def linearize_cd_model(
-    model: ContinuousDiscreteModel,
+    model: ContinuousDiscreteSDE,
     x_ss: np.ndarray,
     u_ss: np.ndarray,
     d_ss: np.ndarray,
@@ -236,7 +236,7 @@ class CDLinearizedMPCController:
 
     def __init__(
         self,
-        model: ContinuousDiscreteModel,
+        model: ContinuousDiscreteSDE,
         estimator: Any,
         N: int,
         Q: Any,

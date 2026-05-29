@@ -22,14 +22,14 @@ Linear discrete-time interface
 
 Continuous-discrete SDE interface
 ---------------------------------
-``ContinuousDiscreteModel`` — abstract base for continuous-discrete
+``ContinuousDiscreteSDE`` — abstract base for continuous-discrete
 stochastic systems (ControlToolbox §SDE):
 
     dx(t)   = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
     z(t)    = gm(x, u, d, p, t)
     ym(tk)  = hm(x, u, d, p, tk) + v(tk),                         v(tk) ~ N(0, Rm)
 
-``LinearContinuousDiscreteModel`` — extends ``ContinuousDiscreteModel`` for
+``ContinuousDiscreteLinearSDE`` — extends ``ContinuousDiscreteSDE`` for
 linear systems where the drift, diffusion, output, and observation functions
 take the specific forms:
 
@@ -38,8 +38,8 @@ take the specific forms:
     gm(x, u, d, p, t)    = Cz x + Dz u + Fz d
     hm(x, u, d, p, t)    = Cm x + Dm u + Fm d
 
-``ContinuousDiscreteDAEModel`` — extends ``ContinuousDiscreteModel`` with an
-algebraic constraint and algebraic states y (ControlToolbox §SDAE):
+``ContinuousDiscreteSDAE`` — standalone abstract base for continuous-discrete
+stochastic differential-algebraic systems (ControlToolbox §SDAE):
 
     dx(t)   = f(x, y, u, d, p, t) dt + sigma(x, y, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
     0       = g(x, y, u, d, p, t)
@@ -48,13 +48,13 @@ algebraic constraint and algebraic states y (ControlToolbox §SDAE):
 """
 
 from .linear_discrete import LinearDiscreteModel
-from .continuous_discrete import ContinuousDiscreteModel
-from .linear_continuous_discrete import LinearContinuousDiscreteModel
-from .continuous_discrete_dae import ContinuousDiscreteDAEModel
+from .continuous_discrete_sde import ContinuousDiscreteSDE
+from .continuous_discrete_linear_sde import ContinuousDiscreteLinearSDE
+from .continuous_discrete_sdae import ContinuousDiscreteSDAE
 
 __all__ = [
     "LinearDiscreteModel",
-    "ContinuousDiscreteModel",
-    "LinearContinuousDiscreteModel",
-    "ContinuousDiscreteDAEModel",
+    "ContinuousDiscreteSDE",
+    "ContinuousDiscreteLinearSDE",
+    "ContinuousDiscreteSDAE",
 ]

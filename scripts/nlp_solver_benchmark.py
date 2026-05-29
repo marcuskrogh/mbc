@@ -19,7 +19,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mbc.control import EconomicOptimalControlProblem
 from mbc.control import NLPProblem, ScipyNLPBackend
-from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDAE, ContinuousDiscreteSDE
 
 SAFE_DIVISOR_FLOOR = 1e-12  # Fallback floor to avoid division-by-zero in ratio calculations.
 
@@ -36,7 +36,7 @@ class RunStats:
     cost: float
 
 
-class ScalarNonlinear(ContinuousDiscreteModel):
+class ScalarNonlinear(ContinuousDiscreteSDE):
     @property
     def nx(self): return 1
 
@@ -71,7 +71,7 @@ class ScalarNonlinear(ContinuousDiscreteModel):
         return np.array([x[0]])
 
 
-class IsomerisationReactor(ContinuousDiscreteDAEModel):
+class IsomerisationReactor(ContinuousDiscreteSDAE):
     _K_eq = 3.0
     _C_feed = 5.0
 

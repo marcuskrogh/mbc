@@ -37,7 +37,7 @@ from mbc.control import (
     EconomicOptimalControlProblem,
 )
 from mbc.control.nlp_solver import NLPConstraint, NLPProblem, NLPResult, ScipyNLPBackend
-from mbc.models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDAE, ContinuousDiscreteSDE
 
 
 # ── Helper: strip all Jacobians from an NLPProblem ───────────────────────────
@@ -73,7 +73,7 @@ class _StrippedJacBackend:
 # ── Benchmark models ─────────────────────────────────────────────────────────
 
 
-class ScalarNonlinear(ContinuousDiscreteModel):
+class ScalarNonlinear(ContinuousDiscreteSDE):
     """
     Scalar SDE model:  dx = (−0.2 x + tanh(u)) dt + 0.05 dw.
 
@@ -114,7 +114,7 @@ class ScalarNonlinear(ContinuousDiscreteModel):
         return np.array([x[0]])
 
 
-class IsomerisationReactor(ContinuousDiscreteDAEModel):
+class IsomerisationReactor(ContinuousDiscreteSDAE):
     """
     Scalar SDAE model (isomerisation reactor, equilibrium algebraic constraint).
 
@@ -180,7 +180,7 @@ class _SolveRecord:
 
 
 def _solve_eocp(
-    model: ContinuousDiscreteModel,
+    model: ContinuousDiscreteSDE,
     N: int,
     n_steps: int,
     *,
@@ -227,7 +227,7 @@ def _solve_eocp(
 
 
 def _solve_cdtracking(
-    model: ContinuousDiscreteModel,
+    model: ContinuousDiscreteSDE,
     N: int,
     n_steps: int,
     *,

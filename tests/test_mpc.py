@@ -40,9 +40,9 @@ def matrix(data, size=None, tc=None):
 
 from mbc.models import (
     LinearDiscreteModel,
-    LinearContinuousDiscreteModel,
-    ContinuousDiscreteModel,
-    ContinuousDiscreteDAEModel,
+    ContinuousDiscreteLinearSDE,
+    ContinuousDiscreteSDE,
+    ContinuousDiscreteSDAE,
 )
 from mbc.estimation import KalmanFilter, CDKalmanFilter, ContinuousDiscreteEKF
 from mbc.control import (
@@ -115,7 +115,7 @@ class DoubleIntegrator(LinearDiscreteModel):
     def u_bounds(self): return np.array([-5.0]), np.array([5.0])
 
 
-class SimpleLinearCD(LinearContinuousDiscreteModel):
+class SimpleLinearCD(ContinuousDiscreteLinearSDE):
     """
     First-order lag:  dx/dt = -x + u,  y = x,  dt = 1.0.
     """
@@ -166,7 +166,7 @@ class SimpleLinearCD(LinearContinuousDiscreteModel):
     def u_bounds(self): return np.array([-5.0]), np.array([5.0])
 
 
-class ScalarNonlinear(ContinuousDiscreteModel):
+class ScalarNonlinear(ContinuousDiscreteSDE):
     """
     Scalar nonlinear system:  dx/dt = -x + u,  y = x,  z = x.
     Same as linear but implemented nonlinearly to test the NLP path.
@@ -886,7 +886,7 @@ class TestEconomicOptimalControlProblem:
 # ── Tests: EconomicOptimalControlProblem on SDAE plant ──────────────────────
 
 
-class _IsomerisationReactor(ContinuousDiscreteDAEModel):
+class _IsomerisationReactor(ContinuousDiscreteSDAE):
     """
     Minimal SDAE plant for testing the EOCP's SDAE code path.
 
@@ -1289,7 +1289,7 @@ class TestAnalyticalJacobians:
 # ── Tests: CDLinearizedMPCController and linearisation utilities ─────────────────
 
 
-class _ScalarBoundedNonlinear(ContinuousDiscreteModel):
+class _ScalarBoundedNonlinear(ContinuousDiscreteSDE):
     """Scalar nonlinear model with bounded input for linearised-MPC tests."""
 
     @property

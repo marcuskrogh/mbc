@@ -46,7 +46,7 @@ import numpy as np
 from .._utils import _any_to_np1d, _any_to_np2d
 
 if TYPE_CHECKING:
-    from ..models import LinearContinuousDiscreteModel
+    from ..models import ContinuousDiscreteLinearSDE
 
 
 class CDKalmanFilter:
@@ -60,7 +60,7 @@ class CDKalmanFilter:
 
     Parameters
     ----------
-    model : LinearContinuousDiscreteModel
+    model : ContinuousDiscreteLinearSDE
         Linear continuous-discrete plant providing ``A``, ``B``, ``E``,
         ``G``, ``Cm``, ``Rm``, ``dt``, ``x``, ``nx``, ``nu``, ``nd``.
     x0 : (nx,) ndarray, optional
@@ -73,7 +73,7 @@ class CDKalmanFilter:
 
     def __init__(
         self,
-        model: "LinearContinuousDiscreteModel",
+        model: "ContinuousDiscreteLinearSDE",
         x0: np.ndarray | None = None,
         P0: np.ndarray | None = None,
         n_steps: int = 10,

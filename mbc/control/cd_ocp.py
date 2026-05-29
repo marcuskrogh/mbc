@@ -3,7 +3,7 @@ Optimal Control Problems for continuous-discrete systems.
 
 ``CDOptimalControlProblem``
     A thin, typed wrapper around :class:`OptimalControlProblem` for
-    :class:`~mbc.models.LinearContinuousDiscreteModel`.  Solves the
+    :class:`~mbc.models.ContinuousDiscreteLinearSDE`.  Solves the
     receding-horizon QP via the lifted (batch) formulation using
     a convex-QP backend (OSQP by default; M.Sc. thesis Ch. 5).
 
@@ -66,12 +66,12 @@ from .qp_solver import QPSolverBackend
 from .nlp_solver import NLPScalingPolicy, NLPSolverBackend
 
 if TYPE_CHECKING:
-    from ..models import ContinuousDiscreteModel, LinearContinuousDiscreteModel
+    from ..models import ContinuousDiscreteSDE, ContinuousDiscreteLinearSDE
 
 
 class _CDModelAdapter:
     """
-    Thin adapter that wraps a ``LinearContinuousDiscreteModel`` and exposes
+    Thin adapter that wraps a ``ContinuousDiscreteLinearSDE`` and exposes
     the numpy interface expected by ``OptimalControlProblem``.
 
     ``OptimalControlProblem.solve`` accesses:
@@ -85,7 +85,7 @@ class _CDModelAdapter:
     The ZOH-discretised matrices are computed once at construction time.
     """
 
-    def __init__(self, model: "LinearContinuousDiscreteModel") -> None:
+    def __init__(self, model: "ContinuousDiscreteLinearSDE") -> None:
         self._m = model
         # Compute ZOH-discretised matrices once at construction time to avoid
         # repeated computation and any thread-safety concerns with lazy init.
@@ -149,14 +149,14 @@ class CDOptimalControlProblem(OptimalControlProblem):
 
     Inherits the full QP formulation and solver from
     ``OptimalControlProblem``.  The only difference is the model type:
-    a ``_CDModelAdapter`` wraps a ``LinearContinuousDiscreteModel``,
+    a ``_CDModelAdapter`` wraps a ``ContinuousDiscreteLinearSDE``,
     computing ZOH-discretised matrices ``Ad``, ``Bd``, ``Ed`` at construction
     time and exposing them as numpy arrays for the inherited ``solve`` method.
     The original CD model is also stored as ``self._cd_model`` for direct access.
 
     Parameters
     ----------
-    model : LinearContinuousDiscreteModel
+    model : ContinuousDiscreteLinearSDE
         Plant model.  Must implement ``nx``, ``nu``, ``nd``, ``A``, ``B``,
         ``E``, ``Cm``, ``dt``, and ``u_bounds``.
     N : int
@@ -183,7 +183,7 @@ class CDOptimalControlProblem(OptimalControlProblem):
 
     def __init__(
         self,
-        model: "LinearContinuousDiscreteModel",
+        model: "ContinuousDiscreteLinearSDE",
         N: int,
         Q: Any,
         R: Any,
@@ -243,7 +243,7 @@ class CDTrackingOptimalControlProblem:
 
     Parameters
     ----------
-    model : ContinuousDiscreteModel or ContinuousDiscreteDAEModel
+    model : ContinuousDiscreteSDE or ContinuousDiscreteSDAE
         Nonlinear continuous-discrete plant.  ``model.gm`` provides the
         output ``z`` used in tracking and the soft-z constraints.
     N : int
@@ -291,7 +291,7 @@ class CDTrackingOptimalControlProblem:
 
     def __init__(
         self,
-        model: "ContinuousDiscreteModel",
+        model: "ContinuousDiscreteSDE",
         N: int,
         Q: np.ndarray,
         R: np.ndarray,

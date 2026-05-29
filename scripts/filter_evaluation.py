@@ -37,7 +37,7 @@ import numpy as np
 
 from mbc.estimation.ekf import ContinuousDiscreteEKF
 from mbc.estimation.ukf import ContinuousDiscreteUKF
-from mbc.models import ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDE
 
 # ── Scenario (identical to bioreactor_comparative.py) ─────────────────────────
 
@@ -65,7 +65,7 @@ def _sin_schedule(t: float) -> float:
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 
-class ProductInhibitionBioreactor(ContinuousDiscreteModel):
+class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
     """3-state product-inhibition CSTR (identical to comparative script)."""
 
     def __init__(self, Q_c: np.ndarray, R: np.ndarray) -> None:

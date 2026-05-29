@@ -8,10 +8,10 @@ model-based control, estimation, identification, and simulation.
       Abstract model interfaces:
 
       * ``LinearDiscreteModel``              – linear discrete-time system (ZOH).
-      * ``LinearContinuousDiscreteModel``    – linear continuous-discrete system
+      * ``ContinuousDiscreteSDE``            – nonlinear SDE (Ph.D. Ch. 5).
+      * ``ContinuousDiscreteLinearSDE``      – linear continuous-discrete SDE
                                                (M.Sc. Ch. 5).
-      * ``ContinuousDiscreteModel``          – nonlinear SDE (Ph.D. Ch. 5).
-      * ``ContinuousDiscreteDAEModel``       – nonlinear SDAE (Ph.D. Ch. 6).
+      * ``ContinuousDiscreteSDAE``           – nonlinear SDAE (Ph.D. Ch. 6).
 
   mbc.estimation
       State-estimation algorithms:
@@ -76,9 +76,9 @@ model-based control, estimation, identification, and simulation.
 
 from .models import (
     LinearDiscreteModel,
-    LinearContinuousDiscreteModel,
-    ContinuousDiscreteModel,
-    ContinuousDiscreteDAEModel,
+    ContinuousDiscreteLinearSDE,
+    ContinuousDiscreteSDE,
+    ContinuousDiscreteSDAE,
 )
 from .estimation import (
     KalmanFilter,
@@ -112,9 +112,9 @@ from .monte_carlo import MonteCarloSimulation, MonteCarloResult
 __all__ = [
     # Models
     "LinearDiscreteModel",
-    "LinearContinuousDiscreteModel",
-    "ContinuousDiscreteModel",
-    "ContinuousDiscreteDAEModel",
+    "ContinuousDiscreteLinearSDE",
+    "ContinuousDiscreteSDE",
+    "ContinuousDiscreteSDAE",
     # Estimation
     "KalmanFilter",
     "CDKalmanFilter",

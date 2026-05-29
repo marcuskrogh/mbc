@@ -1,7 +1,7 @@
 """
 Continuous-discrete SDE model interface.
 
-``ContinuousDiscreteModel`` — abstract base for continuous-discrete
+``ContinuousDiscreteSDE`` — abstract base for continuous-discrete
 stochastic systems (ControlToolbox §SDE):
 
     dx(t)   = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
@@ -18,7 +18,7 @@ import numpy as np
 from .._utils import _fd_jacobian
 
 
-class ContinuousDiscreteModel(ABC):
+class ContinuousDiscreteSDE(ABC):
     """
     Abstract interface for a continuous-discrete stochastic system
     (ControlToolbox §SDE).

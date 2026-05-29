@@ -1,7 +1,7 @@
 """
 Unit and system tests for ContinuousDiscreteEKF.
 
-Two reactor examples are implemented as concrete ContinuousDiscreteModel
+Two reactor examples are implemented as concrete ContinuousDiscreteSDE
 subclasses and used as test systems:
 
 CSTR (van de Vusse reaction)
@@ -42,7 +42,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mbc.models import ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDE
 from mbc.estimation.ekf import ContinuousDiscreteEKF
 
 
@@ -59,11 +59,11 @@ def _rk4_step(f_rhs, x, dt):
 
 def _simulate_noiseless(model, x0, U, D, P_traj, dt, n_sub=20):
     """
-    Euler-Maruyama (noiseless) simulation of a ContinuousDiscreteModel.
+    Euler-Maruyama (noiseless) simulation of a ContinuousDiscreteSDE.
 
     Parameters
     ----------
-    model   : ContinuousDiscreteModel
+    model   : ContinuousDiscreteSDE
     x0      : (nx,) initial state
     U       : (T, nu) input trajectory
     D       : (T, nd) disturbance trajectory
@@ -91,7 +91,7 @@ def _simulate_noiseless(model, x0, U, D, P_traj, dt, n_sub=20):
 
 # ── Model 1: van de Vusse CSTR ────────────────────────────────────────────────
 
-class VanDeVusseCSTR(ContinuousDiscreteModel):
+class VanDeVusseCSTR(ContinuousDiscreteSDE):
     """
     Van de Vusse CSTR (A → B → C, 2A → D).
 
@@ -167,7 +167,7 @@ _VDV_P = np.zeros(0)
 
 # ── Model 2: Monod fed-batch bioreactor ───────────────────────────────────────
 
-class MonodBioreactor(ContinuousDiscreteModel):
+class MonodBioreactor(ContinuousDiscreteSDE):
     """
     Fed-batch bioreactor with Monod growth kinetics.
 

@@ -328,7 +328,7 @@ class CDParameterEstimator:
 
     * Choosing the parametrisation of ``θ`` (e.g. log-space for positive
       parameters).
-    * Providing a ``model_factory(θ) → ContinuousDiscreteModel`` that returns
+    * Providing a ``model_factory(θ) → ContinuousDiscreteSDE`` that returns
       a model whose ``params`` property returns ``θ`` (or a function of it).
     * Supplying appropriate ``x0`` and ``P0`` (initial state estimate and
       covariance at the first history time point).
@@ -338,7 +338,7 @@ class CDParameterEstimator:
     Parameters
     ----------
     model_factory : callable  θ → model
-        Returns a :class:`~mbc.models.ContinuousDiscreteModel` (or any object
+        Returns a :class:`~mbc.models.ContinuousDiscreteSDE` (or any object
         exposing ``f``, ``sigma``, ``hm``, ``dfdx``, ``dhmdx``, ``Rm``, and
         ``params``).  ``model.params`` is used as the parameter vector ``p``
         in all model function calls.  May raise any exception for invalid

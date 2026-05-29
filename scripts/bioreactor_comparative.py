@@ -51,7 +51,7 @@ from mbc.estimation.ekf import ContinuousDiscreteEKF
 from mbc.estimation.enkf import ContinuousDiscreteEnKF
 from mbc.estimation.pf import ContinuousDiscreteParticleFilter
 from mbc.estimation.ukf import ContinuousDiscreteUKF
-from mbc.models import ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDE
 
 # ── Reproducibility ───────────────────────────────────────────────────────────
 
@@ -130,7 +130,7 @@ BAND_ALPHA = 0.15   # opacity of ±2σ shaded bands
 # Model
 # ══════════════════════════════════════════════════════════════════════════════
 
-class ProductInhibitionBioreactor(ContinuousDiscreteModel):
+class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
     """
     Product-inhibition CSTR with 3 states and analytic Jacobians.
 

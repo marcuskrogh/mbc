@@ -1,7 +1,7 @@
 """
-Linear continuous-discrete model interface.
+Linear continuous-discrete SDE model interface.
 
-``LinearContinuousDiscreteModel`` — extends ``ContinuousDiscreteModel`` for
+``ContinuousDiscreteLinearSDE`` — extends ``ContinuousDiscreteSDE`` for
 linear systems where the drift, diffusion, output, and observation functions
 take the specific forms:
 
@@ -18,14 +18,14 @@ from typing import Tuple
 
 import numpy as np
 
-from .continuous_discrete import ContinuousDiscreteModel
+from .continuous_discrete_sde import ContinuousDiscreteSDE
 
 
-class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
+class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
     """
     Abstract interface for a linear continuous-discrete stochastic system.
 
-    Extends :class:`ContinuousDiscreteModel` with the specific linear forms:
+    Extends :class:`ContinuousDiscreteSDE` with the specific linear forms:
 
         dx(t)  = (A x(t) + B u(t) + E d(t)) dt + G dw(t),  dw(t) ~ N(0, I dt)
         z(t)   = Cz x(t) + Dz u(t) + Fz d(t)
@@ -71,7 +71,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         Qd = ∫₀^{dt} expm(A τ) G Gᵀ expm(A τ)ᵀ dτ
     """
 
-    # ── Abstract dimensions (inherited from ContinuousDiscreteModel) ──────
+    # ── Abstract dimensions (inherited from ContinuousDiscreteSDE) ────────
     #   nx, nu, nd are abstract in the parent and must be implemented by
     #   concrete subclasses.  nym and nw are provided as concrete derivations
     #   from Cm and G below.
@@ -138,7 +138,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
     def u_bounds(self) -> Tuple[np.ndarray, np.ndarray]:
         """Box constraint on inputs (u_min, u_max), each a (nu,) ndarray."""
 
-    # ── Concrete implementations of ContinuousDiscreteModel abstracts ─────
+    # ── Concrete implementations of ContinuousDiscreteSDE abstracts ───────
 
     @property
     def nym(self) -> int:

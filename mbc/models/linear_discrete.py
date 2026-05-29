@@ -31,7 +31,7 @@ class LinearDiscreteModel(ABC):
 
     The system matrices ``Ad, Bd, Ed, Gd, Cm, Cz, Dm, Dz, Fm, Fz`` are
     constant (LTI).  This interface is the discrete-time analogue of
-    :class:`LinearContinuousDiscreteModel` and uses the same naming
+    :class:`ContinuousDiscreteLinearSDE` and uses the same naming
     conventions (``Cz``/``Cm``/``Qd``/``Rm``/``Gd``) that the
     continuous-discrete state-estimation documents
     (ControlToolbox §SDE / §SDAE) prescribe for the linearised filter.
