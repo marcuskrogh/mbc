@@ -44,7 +44,7 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from .._utils import _np_to_cvx, _cvx_to_np
+from .._utils import _any_to_np2d
 
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -140,13 +140,13 @@ def ped_neg_log_likelihood(
 
         # Discretise at the previous disturbance
         try:
-            A_cvx, B_cvx, E_cvx = model.discretize(_np_to_cvx(d_prev))
+            A_raw, B_raw, E_raw = model.discretize(np.asarray(d_prev, dtype=float))
         except Exception:
             return _INVALID_LIKELIHOOD
 
-        A = _cvx_to_np(A_cvx)
-        B = _cvx_to_np(B_cvx)
-        E = _cvx_to_np(E_cvx)
+        A = _any_to_np2d(A_raw)
+        B = _any_to_np2d(B_raw)
+        E = _any_to_np2d(E_raw)
 
         # Optional additive offset (e.g. known constant heat gain)
         offset: np.ndarray

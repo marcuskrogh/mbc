@@ -13,10 +13,15 @@ All implemented methods are based on the following references:
   (EKF, UKF, EnKF, PF), DAE estimation, Economic NMPC, and Monte Carlo
   closed-loop simulation.
 
-Matrix types: `numpy.ndarray` is used throughout for all model interfaces and
-estimator computations. `cvxopt.matrix` is used only internally by the QP-based
-MPC solvers (`KalmanFilter`, `OptimalControlProblem`, `CDKalmanFilter`,
-`CDOptimalControlProblem`).
+Matrix types: `numpy.ndarray` is used throughout for all model interfaces,
+estimator computations, and solver inputs/outputs. The QP-based MPC solvers
+(`OptimalControlProblem`, `CDOptimalControlProblem`, …) assemble their problem
+data in numpy and solve it through a pluggable convex-QP backend — by default
+the Apache-2.0 [OSQP](https://osqp.org) solver (sparse, warm-startable);
+the MIT-licensed [HiGHS](https://highs.dev) solver (`highspy`) is also
+available via `solver="highs"`. For backward compatibility, the controller
+entry points still accept legacy `cvxopt.matrix` column/array inputs, but
+`cvxopt` is no longer a dependency.
 
 ---
 
@@ -334,8 +339,8 @@ the linear specialisation of the ControlToolbox §EMPC formulation.  When
 the plant dynamics are linear and the OCP is restricted to quadratic stage
 costs and box / soft-box constraints, the entire NLP reduces to a single
 finite-horizon **quadratic program** that the lifted (batch) form solves
-directly with ``cvxopt.solvers.qp`` — strictly more efficient than the
-direct-simultaneous formulation used by
+directly with a convex-QP backend (OSQP by default; HiGHS available) — strictly more efficient
+than the direct-simultaneous formulation used by
 :class:`~mbc.control.EconomicOptimalControlProblem` for nonlinear plants.
 
 The OCP tracks the **output** ``z[k] = Cz x[k] + Dz u[k] + Fz d[k]`` —
@@ -396,7 +401,40 @@ min_{z_qp}  ½ z_qpᵀ H z_qp + fᵀ z_qp
 s.t.        G z_qp ≤ h
 ```
 
-solved with :func:`cvxopt.solvers.qp`.
+solved through a pluggable convex-QP backend (OSQP by default; HiGHS available).
+
+**QP backends.** Selected by `solver`:
+
+- `"osqp"` *(default)* — [OSQP](https://osqp.org) (Apache-2.0), a sparse
+  first-order (ADMM) solver that exploits the banded KKT structure and warm
+  starts. Fastest here and scales ~linearly in the horizon.
+- `"highs"` — [HiGHS](https://highs.dev) (MIT), an exact active-set QP solver.
+  Fastest on the small dense *condensed* problem.
+
+**QP formulations.** Selected by `formulation`:
+
+- `"condensed"` — eliminate the states via the lifted prediction
+  `X = Ψ x₀ + Γ U + Λ D` and optimise over `[U; ε]` only. Small dense problem.
+- `"sparse"` — keep the states as decision variables `[X; U; ε]` with the
+  dynamics as block-banded equality constraints, assembled with `scipy.sparse`
+  (O(N) nonzeros). Scales far better at long horizons with a banded-exploiting
+  solver.
+- `"auto"` *(default)* is **backend-aware**: `"sparse"` for OSQP, `"condensed"`
+  for HiGHS. (OSQP + condensed is not recommended at long horizons — the dense
+  condensed Hessian is ill-conditioned for OSQP's first-order method.)
+
+All backend/formulation combinations yield the same optimiser to solver
+tolerance; this is verified in `tests/test_mpc.py` / `tests/test_qp_solver.py`,
+and `scripts/qp_formulation_benchmark.py` reports the timings (OSQP + sparse is
+the fastest combination, e.g. ~8× faster than HiGHS + condensed at N=80 and
+widening with the horizon).
+
+**Warm-starting.** `MPCController`/`CDMPCController` accept `warm_start=True`
+to seed each QP with the previous horizon solution (shifted one step); it never
+changes the optimiser. With the current per-solve setup it gives little
+measurable speedup (the primal start is rebuilt each step) — substantial
+receding-horizon gains require solver-level factorisation reuse (persistent
+OSQP `update` with primal+dual starts), which is planned future work.
 
 **Parameters**:
 
@@ -2690,10 +2728,19 @@ X_std  = result.X.std(axis=0)     # (T+1, nx) — trajectory std
 pip install -e .
 ```
 
-**Core dependencies**: `numpy`, `cvxopt`, `scipy`.
+**Core dependencies**: `numpy`, `scipy`, `osqp` (Apache-2.0 — default convex-QP
+backend) and `highspy` (HiGHS — MIT-licensed LP/QP solver, alternative QP
+backend). All core dependencies are permissively licensed (BSD / MIT /
+Apache-2.0), keeping mbc cleanly MIT-licensed with no copyleft obligations.
 
 **Optional dependencies**:
-- `cyipopt` (`pip install -e ".[ipopt]"`) for IPOPT NLP backend support in nonlinear MPC/OCP.
+- `cyipopt` (`pip install -e ".[ipopt]"`) for the IPOPT NLP backend in nonlinear
+  MPC/OCP. IPOPT is distributed under the EPL (a weak/file-level copyleft
+  licence); it is installed and linked only as an opt-in extra and is never
+  bundled, so the MIT core is unaffected. Select it per problem with
+  `solver="ipopt"`. The NLP default stays the zero-dependency scipy backend;
+  IPOPT is the recommended high-performance opt-in (it needs a system IPOPT
+  library, e.g. `coinor-libipopt-dev`).
 
 ## Running Tests
 

@@ -14,14 +14,11 @@ take the specific forms:
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Tuple, TYPE_CHECKING
+from typing import Tuple
 
 import numpy as np
 
 from .continuous_discrete import ContinuousDiscreteModel
-
-if TYPE_CHECKING:
-    from cvxopt import matrix
 
 
 class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
@@ -292,9 +289,9 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
 
     # ── Concrete discretisation methods ───────────────────────────────────
 
-    def discretize(self, d: "matrix") -> Tuple["matrix", "matrix", "matrix"]:
+    def discretize(self, d: np.ndarray | None = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        ZOH-discretised matrices (Ad, Bd, Ed) as cvxopt dense matrices.
+        ZOH-discretised matrices (Ad, Bd, Ed) as numpy arrays.
 
         Uses the augmented-matrix method so that no matrix inverse is
         required:
@@ -309,24 +306,19 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
 
         Parameters
         ----------
-        d : (nd, 1) cvxopt column  — current disturbance (ignored for LTI).
+        d : (nd,) ndarray, optional  — current disturbance (ignored for LTI).
 
         Returns
         -------
-        Ad : (nx, nx) cvxopt dense — discrete state-transition matrix.
-        Bd : (nx, nu) cvxopt dense — discrete input matrix.
-        Ed : (nx, nd) cvxopt dense — discrete disturbance matrix.
-
-        Note
-        ----
-        Returns cvxopt.matrix for compatibility with ``OptimalControlProblem``.
+        Ad : (nx, nx) ndarray — discrete state-transition matrix.
+        Bd : (nx, nu) ndarray — discrete input matrix.
+        Ed : (nx, nd) ndarray — discrete disturbance matrix.
         """
-        from .._utils import _zoh_full, _np_to_cvx
+        from .._utils import _zoh_full
 
-        A_d_np, B_d_np, E_d_np = _zoh_full(self.A, self.B, self.E, self.dt)
-        return _np_to_cvx(A_d_np), _np_to_cvx(B_d_np), _np_to_cvx(E_d_np)
+        return _zoh_full(self.A, self.B, self.E, self.dt)
 
-    def discretize_noise(self) -> "matrix":
+    def discretize_noise(self) -> np.ndarray:
         """
         Exact discrete process-noise covariance Qd via Van Loan (1978).
 
@@ -339,18 +331,13 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
 
         Returns
         -------
-        Qd : (nx, nx) cvxopt dense — discrete process-noise covariance.
-
-        Note
-        ----
-        Returns cvxopt.matrix for compatibility with ``OptimalControlProblem``.
+        Qd : (nx, nx) ndarray — discrete process-noise covariance.
         """
-        from .._utils import _van_loan, _np_to_cvx
+        from .._utils import _van_loan
 
         # dw ~ N(0, I dt), so the noise intensity is G G^T.
         # Computed via the Van Loan (1978) augmented matrix method.
-        Q_d_np = _van_loan(self.A, self.G, np.eye(self.nw), self.dt)
-        return _np_to_cvx(Q_d_np)
+        return _van_loan(self.A, self.G, np.eye(self.nw), self.dt)
 
     # ── Parameter-identification interface (non-abstract, overridable) ────
 

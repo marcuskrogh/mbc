@@ -1,11 +1,11 @@
 """
-Shared utility functions for numpy/cvxopt conversions and discretisation.
+Shared utility functions for array conversion and discretisation.
 
 Provides helpers used across the mbc sub-packages:
 
-  - ``_np_to_cvx`` / ``_cvx_to_np`` / ``_cvx_col_to_np``  – array conversion
-  - ``_any_to_np1d`` / ``_any_to_np2d``                   – accept cvxopt or numpy
-  - ``_eye`` / ``_zeros`` / ``_symmetrise``               – matrix construction / symmetry
+  - ``_any_to_np1d`` / ``_any_to_np2d``                   – coerce any array-like
+                                                            (numpy, list, or legacy
+                                                            cvxopt matrix) to numpy
   - ``_zoh_full``                                         – ZOH discretisation
   - ``_van_loan``                                         – exact discrete process-noise
                                                             covariance (Van Loan 1978)
@@ -30,30 +30,13 @@ from collections.abc import Callable
 
 import numpy as np
 from scipy.linalg import expm as _expm  # noqa: F401 — re-exported for callers
-from cvxopt import matrix
 
 
-# ── Numpy / cvxopt conversions ────────────────────────────────────────────
-
-
-def _np_to_cvx(a: np.ndarray) -> matrix:
-    """Convert a numpy array to a cvxopt dense matrix (column-major)."""
-    if a.ndim == 1:
-        return matrix(a.tolist(), (len(a), 1), tc="d")
-    rows, cols = a.shape
-    return matrix(a.flatten(order="F").tolist(), (rows, cols), tc="d")
-
-
-def _cvx_to_np(m: matrix) -> np.ndarray:
-    """Convert a cvxopt dense matrix to a 2-D numpy array."""
-    rows, cols = m.size
-    # cvxopt stores matrices in column-major (Fortran) order
-    return np.array(list(m), dtype=float).reshape((rows, cols), order="F")
-
-
-def _cvx_col_to_np(m: matrix) -> np.ndarray:
-    """Convert a cvxopt column vector to a 1-D numpy array."""
-    return np.array(list(m), dtype=float)
+# ── Array coercion ─────────────────────────────────────────────────────────
+#
+# The toolbox is numpy-native.  ``_any_to_np*`` additionally accept legacy
+# cvxopt matrices (if a caller still has cvxopt installed) so that external
+# code passing cvxopt columns keeps working; cvxopt itself is not a dependency.
 
 
 def _any_to_np1d(v) -> np.ndarray:
@@ -77,27 +60,6 @@ def _any_to_np2d(v) -> np.ndarray:
     except ImportError:
         pass
     return np.asarray(v, dtype=float)
-
-
-# ── cvxopt matrix construction ────────────────────────────────────────────
-
-
-def _eye(n: int) -> matrix:
-    """Return an n×n identity matrix (cvxopt dense, float)."""
-    I = matrix(0.0, (n, n))
-    for i in range(n):
-        I[i, i] = 1.0
-    return I
-
-
-def _zeros(rows: int, cols: int) -> matrix:
-    """Return a rows×cols zero matrix (cvxopt dense, float)."""
-    return matrix(0.0, (rows, cols))
-
-
-def _symmetrise(M: matrix) -> matrix:
-    """Force symmetry: M ← ½(M + Mᵀ)."""
-    return (M + M.T) * 0.5
 
 
 # ── Matrix exponential and ZOH discretisation ─────────────────────────────

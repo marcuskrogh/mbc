@@ -12,7 +12,6 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from cvxopt import matrix
 
 from .._utils import _fd_jacobian, _zoh_full, _van_loan
 from ..models import LinearDiscreteModel, ContinuousDiscreteModel
@@ -240,14 +239,14 @@ class CDLinearizedMPCController:
         model: ContinuousDiscreteModel,
         estimator: Any,
         N: int,
-        Q: matrix,
-        R: matrix,
+        Q: Any,
+        R: Any,
         dt: float,
         u_min: np.ndarray,
         u_max: np.ndarray,
         x_ref: np.ndarray | None = None,
-        P: matrix | None = None,
-        S: matrix | None = None,
+        P: Any | None = None,
+        S: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
     ) -> None:
@@ -347,10 +346,10 @@ class CDLinearizedMPCController:
         # Deviation MPC uses constant disturbance over the horizon: dd[k] = 0.
         D_dev_np = np.zeros((self._N, self._model.nd), dtype=float)
         self._last_D_dev = D_dev_np.copy()
-        D_dev = matrix(D_dev_np.reshape(-1).tolist(), (self._N * self._model.nd, 1))
+        D_dev = D_dev_np.reshape(-1)
 
         x0_dev = np.zeros(self._model.nx, dtype=float)
-        u_prev_dev = matrix(np.zeros(self._model.nu).tolist(), (self._model.nu, 1))
+        u_prev_dev = np.zeros(self._model.nu, dtype=float)
 
         U_dev, X_dev = self._ocp.solve(
             x0=x0_dev,
@@ -359,8 +358,8 @@ class CDLinearizedMPCController:
             u_prev=u_prev_dev,
         )
 
-        U_dev_np = np.array(list(U_dev), dtype=float).reshape(self._N, self._model.nu)
-        X_dev_np = np.array(list(X_dev), dtype=float).reshape(self._N, self._model.nx)
+        U_dev_np = np.asarray(U_dev, dtype=float).reshape(self._N, self._model.nu)
+        X_dev_np = np.asarray(X_dev, dtype=float).reshape(self._N, self._model.nx)
 
         U_abs = U_dev_np + u_ss.reshape(1, -1)
         X_abs = X_dev_np + x_ss.reshape(1, -1)
