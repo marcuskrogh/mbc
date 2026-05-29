@@ -1,17 +1,8 @@
 # mbc — Model-Based Control Toolbox
 
 A Python toolbox for linear and nonlinear model-based control, state estimation,
-system identification, and realization. The toolbox follows the notation and
-algorithms of the author's M.Sc. and Ph.D. theses and is structured to support
-both discrete-discrete and continuous-discrete stochastic systems.
-
-All implemented methods are based on the following references:
-
-- **M.Sc. thesis** — Realization, Kalman filtering, discrete-time MPC, and system
-  identification.
-- **Ph.D. thesis** — Continuous-discrete SDE/SDAE models, nonlinear Kalman filters
-  (EKF, UKF, EnKF, PF), DAE estimation, Economic NMPC, and Monte Carlo
-  closed-loop simulation.
+system identification, and realization. The toolbox supports both discrete-discrete
+and continuous-discrete stochastic systems.
 
 Matrix types: `numpy.ndarray` is used throughout for all model interfaces,
 estimator computations, and solver inputs/outputs. The QP-based MPC solvers
@@ -19,9 +10,7 @@ estimator computations, and solver inputs/outputs. The QP-based MPC solvers
 data in numpy and solve it through a pluggable convex-QP backend — by default
 the Apache-2.0 [OSQP](https://osqp.org) solver (sparse, warm-startable);
 the MIT-licensed [HiGHS](https://highs.dev) solver (`highspy`) is also
-available via `solver="highs"`. For backward compatibility, the controller
-entry points still accept legacy `cvxopt.matrix` column/array inputs, but
-`cvxopt` is no longer a dependency.
+available via `solver="highs"`.
 
 ---
 
@@ -153,8 +142,7 @@ print(m.nz)   # 1  (= Cz.shape[0]; Cz defaults to Cm)
 
 Discrete-time Kalman filter with Joseph-stabilised covariance update — the
 linear specialisation of the continuous-discrete EKF
-(:class:`~mbc.estimation.ContinuousDiscreteEKF`) and a direct counterpart of
-the M.Sc. thesis Ch. 5 formulation.  The notation matches the
+(:class:`~mbc.estimation.ContinuousDiscreteEKF`).  The notation matches the
 ControlToolbox §SDE / §SDAE state-estimation conventions:
 
 | Symbol | Meaning |
@@ -650,7 +638,7 @@ ym(tk) = Cm x(tk) + Dm u(tk) + Fm d(tk) + v(tk),   v(tk) ~ N(0, Rm)
 Inputs `u` and disturbances `d` are held constant (zero-order hold) over each
 sampling interval `[tk, tk+1]`.
 
-**Notation** (ControlToolbox §SDE; M.Sc. thesis Ch. 5):
+**Notation** (ControlToolbox §SDE):
 
 | Symbol | Dimension | Description |
 |--------|-----------|-------------|
@@ -2423,11 +2411,11 @@ ll = estimator.log_likelihood(history, theta=theta_candidate)  # float or None
 ## Part IV — Realization
 
 Algorithms for constructing minimal state-space models from transfer functions or
-input-output data (M.Sc. thesis, Ch. 2–4).
+input-output data.
 
 ### 4.1 SISO Realization
 
-#### `SISORealization` — `mbc.realization` *(partially implemented — M.Sc. Ch. 2–3)*
+#### `SISORealization` — `mbc.realization` *(partially implemented)*
 
 Constructs a discrete-time SISO state-space model from a rational transfer
 function or sampled impulse response data.
@@ -2505,7 +2493,7 @@ monic).  The output noise `e[k]` in `y[k] = C_out x[k] + D u[k] + e[k]`
 corresponds to `C(z)` having a leading coefficient of 1.
 
 This structure means `G` can be passed directly as the `noise_matrix` argument to
-`KalmanFilter` or `CDKalmanFilter` for noise-separated filtering (M.Sc. Ch. 5.4).
+`KalmanFilter` or `CDKalmanFilter` for noise-separated filtering.
 
 **Transfer-function normalisation**: `den` must be supplied in **monic** form (leading
 coefficient 1.0).  If `den[0] ≠ 1`, divide both `num` and `den` by `den[0]` before
@@ -2561,7 +2549,7 @@ G = sys.G   # noise input matrix (None if no noise_num provided)
 
 ### 4.2 MIMO Realization
 
-#### `MIMORealization` — `mbc.realization` *(stub — M.Sc. Ch. 4)*
+#### `MIMORealization` — `mbc.realization` *(stub)*
 
 Constructs a MIMO discrete-time state-space model from its Markov parameters
 (impulse-response matrices) using the Ho–Kalman algorithm.
@@ -2635,7 +2623,7 @@ A, B, C, D = sys.A, sys.B, sys.C, sys.D
 
 ## Part V — Monte Carlo Simulation
 
-### `MonteCarloSimulation` — `mbc.monte_carlo` *(Ph.D. Ch. 12)*
+### `MonteCarloSimulation` — `mbc.monte_carlo`
 
 Closed-loop Monte Carlo framework for assessing controller and estimator
 performance under stochastic initial conditions and process noise.
