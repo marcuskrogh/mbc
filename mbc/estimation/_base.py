@@ -43,7 +43,7 @@ class IntegrationScheme(Enum):
 
     All schemes use a fixed sub-step size ``h = Ts / n_steps``.
 
-    ``EULER``
+    ``EXPLICIT_EULER``
         Explicit Euler / Euler-Maruyama.  For particle-based estimators
         (UKF, EnKF, PF) the drift and diffusion are both evaluated at the
         *current* sub-step (explicit-explicit, EE).  For the EKF the moment
@@ -58,7 +58,7 @@ class IntegrationScheme(Enum):
         ``Φ = (I − h A)⁻¹``, which guarantees positive-definiteness.
         Recommended for stiff drift dynamics.
     """
-    EULER = "euler"
+    EXPLICIT_EULER = "explicit_euler"
     IMPLICIT_EULER = "implicit_euler"
 
 

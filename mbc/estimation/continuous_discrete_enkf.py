@@ -63,20 +63,20 @@ class ContinuousDiscreteEnKFParams(EstimatorParams):
         Integration sub-steps per measurement interval.  Default: 10.
     scheme : IntegrationScheme
         Integration scheme applied to each ensemble member.
-        :attr:`~IntegrationScheme.EULER` (default) is explicit;
+        :attr:`~IntegrationScheme.EXPLICIT_EULER` (default) is explicit;
         :attr:`~IntegrationScheme.IMPLICIT_EULER` handles stiff drift.
     seed : int or None
         Random seed for reproducibility.  Default: None.
     newton_tol : float
         Newton convergence tolerance for the implicit sub-step drift solve.
-        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 1e-10.
+        Ignored when ``scheme=IntegrationScheme.EXPLICIT_EULER``.  Default: 1e-10.
     newton_max_iter : int
         Maximum Newton iterations per implicit sub-step.
-        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 50.
+        Ignored when ``scheme=IntegrationScheme.EXPLICIT_EULER``.  Default: 50.
     """
     N: int = 100
     n_steps: int = 10
-    scheme: IntegrationScheme = IntegrationScheme.EULER
+    scheme: IntegrationScheme = IntegrationScheme.EXPLICIT_EULER
     seed: int | None = None
     newton_tol: float = 1e-10
     newton_max_iter: int = 50
@@ -125,7 +125,7 @@ class ContinuousDiscreteEnKF(ContinuousDiscreteEstimator):
         self._h_sub = self._Ts / self._n_steps
         self._rng = np.random.default_rng(params.seed)
 
-        if params.scheme is IntegrationScheme.EULER:
+        if params.scheme is IntegrationScheme.EXPLICIT_EULER:
             self._substep = _EESubstep(model)
         else:
             self._substep = _IESubstep(model, params.newton_tol, params.newton_max_iter)

@@ -93,7 +93,7 @@ class ContinuousDiscreteUKFParams(EstimatorParams):
         Number of integration sub-steps per measurement interval.  Default: 10.
     scheme : IntegrationScheme
         Integration scheme applied to all sigma points.
-        :attr:`~IntegrationScheme.EULER` (default) is explicit;
+        :attr:`~IntegrationScheme.EXPLICIT_EULER` (default) is explicit;
         :attr:`~IntegrationScheme.IMPLICIT_EULER` handles stiff drift.
     alpha : float
         Sigma-point spread parameter α ∈ ]0, 1].  Default: 1.0.
@@ -104,13 +104,13 @@ class ContinuousDiscreteUKFParams(EstimatorParams):
         Secondary spread parameter κ ≥ 0.  Default: 0.0.
     newton_tol : float
         Newton convergence tolerance for the implicit sub-step drift solve.
-        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 1e-10.
+        Ignored when ``scheme=IntegrationScheme.EXPLICIT_EULER``.  Default: 1e-10.
     newton_max_iter : int
         Maximum Newton iterations per implicit sub-step.
-        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 50.
+        Ignored when ``scheme=IntegrationScheme.EXPLICIT_EULER``.  Default: 50.
     """
     n_steps: int = 10
-    scheme: IntegrationScheme = IntegrationScheme.EULER
+    scheme: IntegrationScheme = IntegrationScheme.EXPLICIT_EULER
     alpha: float = 1.0
     beta: float = 2.0
     kappa: float = 0.0
@@ -187,7 +187,7 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
         self._Wc_x = Wc_x
 
         # SDE sub-step kernel shared by both sigma-point sets
-        if params.scheme is IntegrationScheme.EULER:
+        if params.scheme is IntegrationScheme.EXPLICIT_EULER:
             self._substep = _EESubstep(model)
         else:
             self._substep = _IESubstep(model, params.newton_tol, params.newton_max_iter)

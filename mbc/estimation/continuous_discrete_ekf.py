@@ -19,7 +19,7 @@ Both mean and covariance are integrated with ``n_steps`` sub-steps of size
 ``h = Ts / n_steps``.  Two schemes are available, selected via
 :class:`~mbc.estimation.IntegrationScheme`:
 
-Explicit Euler  (``IntegrationScheme.EULER``, default)
+Explicit Euler  (``IntegrationScheme.EXPLICIT_EULER``, default)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     A_j     = ∂f/∂x (x̂_j, u, d, p, t_j)
     σ_j     = sigma (x̂_j, u, d, p, t_j)
@@ -160,18 +160,18 @@ class ContinuousDiscreteEKFParams(EstimatorParams):
     n_steps : int
         Number of integration sub-steps per sampling interval.  Default: 10.
     scheme : IntegrationScheme
-        Propagation scheme.  :attr:`~IntegrationScheme.EULER` is explicit and
+        Propagation scheme.  :attr:`~IntegrationScheme.EXPLICIT_EULER` is explicit and
         cheap; use :attr:`~IntegrationScheme.IMPLICIT_EULER` for stiff drift
-        dynamics.  Default: ``IntegrationScheme.EULER``.
+        dynamics.  Default: ``IntegrationScheme.EXPLICIT_EULER``.
     newton_tol : float
         Convergence tolerance for the implicit-Euler Newton solver.
-        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 1e-10.
+        Ignored when ``scheme=IntegrationScheme.EXPLICIT_EULER``.  Default: 1e-10.
     newton_max_iter : int
         Maximum Newton iterations per implicit sub-step.
-        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 50.
+        Ignored when ``scheme=IntegrationScheme.EXPLICIT_EULER``.  Default: 50.
     """
     n_steps: int = 10
-    scheme: IntegrationScheme = IntegrationScheme.EULER
+    scheme: IntegrationScheme = IntegrationScheme.EXPLICIT_EULER
     newton_tol: float = 1e-10
     newton_max_iter: int = 50
 
@@ -224,7 +224,7 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
         self._n_steps: int = int(params.n_steps)
         self._h: float = self._Ts / self._n_steps
 
-        if params.scheme is IntegrationScheme.EULER:
+        if params.scheme is IntegrationScheme.EXPLICIT_EULER:
             self._moment_step = _EulerMomentStep(model)
         else:
             self._moment_step = _ImplicitEulerMomentStep(

@@ -822,7 +822,7 @@ class TestEKFImplicitEuler:
         for _ in range(10000):
             x_rk4 = _rk4_step(lambda x: model.f(x, u, d, p, 0.0), x_rk4, dt / 10000)
 
-        ekf_e = ContinuousDiscreteEKF(model, x0.copy(), P0.copy(), params=ContinuousDiscreteEKFParams(n_steps=200, scheme=IntegrationScheme.EULER))
+        ekf_e = ContinuousDiscreteEKF(model, x0.copy(), P0.copy(), params=ContinuousDiscreteEKFParams(n_steps=200, scheme=IntegrationScheme.EXPLICIT_EULER))
         ekf_ie = ContinuousDiscreteEKF(model, x0.copy(), P0.copy(), params=ContinuousDiscreteEKFParams(n_steps=200, scheme=IntegrationScheme.IMPLICIT_EULER))
         ekf_e.predict(u, d, p, 0.0)
         ekf_ie.predict(u, d, p, 0.0)
