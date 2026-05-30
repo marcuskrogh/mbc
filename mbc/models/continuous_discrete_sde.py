@@ -34,6 +34,9 @@ class Linearisation(NamedTuple):
 
     The operating-point outputs ``z_s`` and ``ym_s`` are included so the
     caller can reconstruct absolute outputs without re-evaluating the model.
+
+    Call :meth:`discretize` to obtain a :class:`DiscreteLinearisedSDE` at a
+    given sampling interval.
     """
     A: np.ndarray
     B: np.ndarray
@@ -51,6 +54,35 @@ class Linearisation(NamedTuple):
     d_s: np.ndarray
     z_s: np.ndarray
     ym_s: np.ndarray
+
+    def discretize(self, Ts: float) -> "DiscreteLinearisedSDE":
+        """
+        ZOH-discretise the linearisation at sampling interval ``Ts``.
+
+        Uses the augmented matrix exponential (ZOH) for ``(Ad, Bd, Ed)``
+        and the Van Loan (1978) method for the process-noise covariance ``Qd``.
+
+        Parameters
+        ----------
+        Ts : sampling interval (seconds).
+
+        Returns
+        -------
+        DiscreteLinearisedSDE
+        """
+        from .._utils import _zoh_full, _van_loan
+        from ._concrete import _ConcreteDiscreteLinearisedSDE
+
+        Ad, Bd, Ed = _zoh_full(self.A, self.B, self.E, Ts)
+        Qd = _van_loan(self.A, self.G, np.eye(self.G.shape[1]), Ts)
+        return _ConcreteDiscreteLinearisedSDE(
+            Ad=Ad, Bd=Bd, Ed=Ed,
+            Cm=self.Cm, Qd=Qd, Rm=self.Rm,
+            Cz=self.Cz, Dz=self.Dz, Fz=self.Fz,
+            Dm=self.Dm, Fm=self.Fm,
+            x_s=self.x_s, u_s=self.u_s, d_s=self.d_s,
+            z_s=self.z_s, ym_s=self.ym_s,
+        )
 
 
 class ContinuousDiscreteSDE(ABC):
@@ -254,7 +286,7 @@ class ContinuousDiscreteSDE(ABC):
 
     # ── Linearisation factory methods ─────────────────────────────────────
 
-    def linearise(
+    def linearisation(
         self,
         x_s: np.ndarray,
         u_s: np.ndarray,
@@ -263,7 +295,8 @@ class ContinuousDiscreteSDE(ABC):
         t: float = 0.0,
     ) -> "Linearisation":
         """
-        Linearise the system at the operating point ``(x_s, u_s, d_s)``.
+        Return a :class:`Linearisation` with the system matrices evaluated at
+        the operating point ``(x_s, u_s, d_s)``.
 
         All Jacobians are evaluated via the registered analytic or
         finite-difference methods.  The diffusion matrix ``G`` is the
@@ -280,8 +313,6 @@ class ContinuousDiscreteSDE(ABC):
         Returns
         -------
         Linearisation
-            Named tuple containing the system matrices and operating-point
-            output values (see :class:`Linearisation`).
         """
         if p is None:
             p = self.params
@@ -304,25 +335,27 @@ class ContinuousDiscreteSDE(ABC):
             ym_s=self.hm(x_s, u_s, d_s, p, t),
         )
 
-    def linearised_model(
+    def linearise(
         self,
         x_s: np.ndarray,
         u_s: np.ndarray,
         d_s: np.ndarray,
-        dt: float,
         p: np.ndarray | None = None,
         t: float = 0.0,
     ) -> "ContinuousDiscreteLinearisedSDE":
         """
-        Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at
-        the operating point ``(x_s, u_s, d_s)`` with sampling interval ``dt``.
+        Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at the
+        operating point ``(x_s, u_s, d_s)``.
+
+        The sampling interval ``Ts`` is not required here; pass it to
+        :meth:`ContinuousDiscreteLinearisedSDE.discretize` when you need a
+        discrete-time model.
 
         Parameters
         ----------
         x_s : (nx,) operating-point state.
         u_s : (nu,) operating-point input.
         d_s : (nd,) operating-point disturbance.
-        dt  : sampling interval (seconds).
         p   : parameter vector; defaults to ``self.params``.
         t   : evaluation time (default 0.0).
 
@@ -332,12 +365,12 @@ class ContinuousDiscreteSDE(ABC):
         """
         from ._concrete import _ConcreteContinuousDiscreteLinearisedSDE
 
-        lin = self.linearise(x_s, u_s, d_s, p=p, t=t)
+        lin = self.linearisation(x_s, u_s, d_s, p=p, t=t)
         return _ConcreteContinuousDiscreteLinearisedSDE(
             A=lin.A, B=lin.B, E=lin.E, G=lin.G,
             Cm=lin.Cm, Dm=lin.Dm, Fm=lin.Fm,
             Cz=lin.Cz, Dz=lin.Dz, Fz=lin.Fz,
-            Rm=lin.Rm, dt=dt,
+            Rm=lin.Rm,
             x_s=lin.x_s, u_s=lin.u_s, d_s=lin.d_s,
             z_s=lin.z_s, ym_s=lin.ym_s,
         )

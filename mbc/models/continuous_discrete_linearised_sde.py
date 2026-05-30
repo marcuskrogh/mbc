@@ -70,28 +70,30 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
 
     # ── Discretisation ────────────────────────────────────────────────────
 
-    def discretized_model(self, d: np.ndarray | None = None) -> "DiscreteLinearisedSDE":
+    def discretize(self, Ts: float, d: np.ndarray | None = None) -> "DiscreteLinearisedSDE":
         """
         Return a :class:`DiscreteLinearisedSDE` obtained by ZOH-discretising
-        this linearised continuous-discrete system.
+        this linearised system at sampling interval ``Ts``.
 
         The steady-state operating point ``(x_s, u_s, d_s, z_s, ym_s)`` is
-        carried over to the returned model so the caller can recover absolute
-        values from deviation-variable Kalman-filter estimates.
+        carried over so the caller can recover absolute values from
+        deviation-variable estimates.
 
         Parameters
         ----------
-        d : (nd,) ndarray, optional  — passed to :meth:`discretize` for
-            LPV scheduling (ignored for LTI models).
+        Ts : sampling interval (seconds).
+        d  : (nd,) ndarray, optional — disturbance for LPV scheduling
+             (ignored for LTI models).
 
         Returns
         -------
         DiscreteLinearisedSDE
         """
+        from .._utils import _zoh_full, _van_loan
         from ._concrete import _ConcreteDiscreteLinearisedSDE
 
-        Ad, Bd, Ed = self.discretize(d)
-        Qd = self.discretize_noise()
+        Ad, Bd, Ed = _zoh_full(self.A, self.B, self.E, Ts)
+        Qd = _van_loan(self.A, self.G, np.eye(self.nw), Ts)
         return _ConcreteDiscreteLinearisedSDE(
             Ad=Ad, Bd=Bd, Ed=Ed,
             Cm=self.Cm, Qd=Qd, Rm=self.Rm,

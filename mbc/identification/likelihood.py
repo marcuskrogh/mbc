@@ -140,7 +140,8 @@ def ped_neg_log_likelihood(
 
         # Discretise at the previous disturbance
         try:
-            A_raw, B_raw, E_raw = model.discretize(np.asarray(d_prev, dtype=float))
+            _dm = model.discretize(np.asarray(d_prev, dtype=float))
+            A_raw, B_raw, E_raw = _dm.Ad, _dm.Bd, _dm.Ed
         except Exception:
             return _INVALID_LIKELIHOOD
 

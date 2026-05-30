@@ -114,7 +114,7 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
 
     @property
     @abstractmethod
-    def dt(self) -> float:
+    def Ts(self) -> float:
         """Sampling interval (seconds)."""
 
     # ── Concrete implementations of ContinuousDiscreteSDE abstracts ───────
@@ -268,15 +268,15 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
 
     # ── Concrete discretisation methods ───────────────────────────────────
 
-    def discretize(self, d: np.ndarray | None = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def discretize(self, d: np.ndarray | None = None) -> "DiscreteLinearSDE":
         """
-        ZOH-discretised matrices (Ad, Bd, Ed) as numpy arrays.
+        Return a :class:`DiscreteLinearSDE` obtained by ZOH-discretising this
+        system at sampling interval ``Ts``.
 
-        Uses the augmented-matrix method so that no matrix inverse is
-        required:
-
-            expm([[A, B, E], [0, 0, 0], [0, 0, 0]] · dt)[:nx, :]
-            = [Ad | Bd | Ed]
+        Uses the augmented matrix exponential (ZOH) for ``(Ad, Bd, Ed)`` and
+        the Van Loan (1978) method for the process-noise covariance ``Qd``.
+        The output and measurement matrices ``Cz``, ``Dz``, ``Fz``, ``Cm``,
+        ``Dm``, ``Fm`` carry over unchanged, as they apply at sample times.
 
         The ``d`` argument is accepted so that LPV sub-classes may override
         this method to schedule matrices on the current disturbance; the
@@ -288,37 +288,12 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
 
         Returns
         -------
-        Ad : (nx, nx) ndarray — discrete state-transition matrix.
-        Bd : (nx, nu) ndarray — discrete input matrix.
-        Ed : (nx, nd) ndarray — discrete disturbance matrix.
-        """
-        from .._utils import _zoh_full
-
-        return _zoh_full(self.A, self.B, self.E, self.dt)
-
-    def discretized_model(self, d: np.ndarray | None = None) -> "DiscreteLinearSDE":
-        """
-        Return a :class:`DiscreteLinearSDE` obtained by ZOH-discretising this
-        continuous-discrete system.
-
-        The discrete matrices are computed via :meth:`discretize` (augmented
-        matrix exponential) and the process-noise covariance via
-        :meth:`discretize_noise` (Van Loan method).  The output and
-        measurement matrices ``Cz``, ``Dz``, ``Fz``, ``Cm``, ``Dm``, ``Fm``
-        carry over unchanged, as they apply at sample times.
-
-        Parameters
-        ----------
-        d : (nd,) ndarray, optional  — passed to :meth:`discretize` for
-            LPV scheduling (ignored for LTI models).
-
-        Returns
-        -------
         DiscreteLinearSDE
         """
+        from .._utils import _zoh_full
         from ._concrete import _ConcreteDiscreteLinearSDE
 
-        Ad, Bd, Ed = self.discretize(d)
+        Ad, Bd, Ed = _zoh_full(self.A, self.B, self.E, self.Ts)
         Qd = self.discretize_noise()
         return _ConcreteDiscreteLinearSDE(
             Ad=Ad, Bd=Bd, Ed=Ed,
@@ -346,7 +321,7 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
 
         # dw ~ N(0, I dt), so the noise intensity is G G^T.
         # Computed via the Van Loan (1978) augmented matrix method.
-        return _van_loan(self.A, self.G, np.eye(self.nw), self.dt)
+        return _van_loan(self.A, self.G, np.eye(self.nw), self.Ts)
 
     # ── Parameter-identification interface (non-abstract, overridable) ────
 

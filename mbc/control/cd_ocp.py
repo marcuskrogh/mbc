@@ -91,7 +91,7 @@ class _CDModelAdapter:
         # repeated computation and any thread-safety concerns with lazy init.
         from .._utils import _zoh_full
         self._Ad_np, self._Bd_np, self._Ed_np = _zoh_full(
-            model.A, model.B, model.E, model.dt
+            model.A, model.B, model.E, model.Ts
         )
 
     def _ensure_discretized(self) -> None:
@@ -286,7 +286,7 @@ class CDTrackingOptimalControlProblem:
         Backend-agnostic scaling controls:
         ``objective_scale``, ``variable_scale``, ``constraint_scale``.
     dt : float or None, optional
-        Sampling interval ``T_s``.  ``None`` → ``model.dt`` (if any) else 1.0.
+        Sampling interval ``T_s``.  ``None`` → ``model.Ts`` (if any) else 1.0.
     """
 
     def __init__(

@@ -93,14 +93,16 @@ class _ScalarModel:
         """Finite-difference Jacobians ∂A_d/∂θ_i, ∂B_d/∂θ_i, ∂E_d/∂θ_i."""
         d_arr = np.asarray(d_np, dtype=float)
         theta0 = self.params
-        A0, B0, E0 = self.discretize(d_arr)
+        _dm0 = self.discretize(d_arr)
+        A0, B0, E0 = _dm0.Ad, _dm0.Bd, _dm0.Ed
 
         dA, dB, dE = [], [], []
         for i in range(len(theta0)):
             theta_h = theta0.copy()
             theta_h[i] += h
             m_h = self.with_params(theta_h)
-            Ah, Bh, Eh = m_h.discretize(d_arr)
+            _dmh = m_h.discretize(d_arr)
+            Ah, Bh, Eh = _dmh.Ad, _dmh.Bd, _dmh.Ed
             dA.append((np.asarray(Ah, dtype=float) - A0) / h)
             dB.append((np.asarray(Bh, dtype=float) - B0) / h)
             dE.append((np.asarray(Eh, dtype=float) - E0) / h)

@@ -283,7 +283,7 @@ class EconomicOptimalControlProblem:
         Backend-agnostic scaling controls:
         ``objective_scale``, ``variable_scale``, ``constraint_scale``.
     dt : float or None, optional
-        Sampling interval ``T_s``.  ``None`` → ``model.dt`` if available,
+        Sampling interval ``T_s``.  ``None`` → ``model.Ts`` if available,
         else ``1.0``.
     """
 

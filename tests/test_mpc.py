@@ -519,7 +519,7 @@ class TestCDMPCController:
         ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
 
         from mbc._utils import _zoh_full
-        Ad, Bd, _ = _zoh_full(model.A, model.B, model.E, model.dt)
+        Ad, Bd, _ = _zoh_full(model.A, model.B, model.E, model.Ts)
         x = np.array([0.0])
         x_ref = model.x_ref
         N_steps = 30
@@ -1392,9 +1392,9 @@ class TestCDLinearizationUtilities:
             p=np.array([]),
             t=0.0,
         )
-        disc = discretize_cd_linearization(lin, dt=model.dt)
+        disc = discretize_cd_linearization(lin, dt=model.Ts)
         from mbc._utils import _zoh_full
-        Ad_ref, Bd_ref, Ed_ref = _zoh_full(model.A, model.B, model.E, model.dt)
+        Ad_ref, Bd_ref, Ed_ref = _zoh_full(model.A, model.B, model.E, model.Ts)
         np.testing.assert_allclose(disc["Ad"], Ad_ref, atol=1e-10, rtol=1e-10)
         np.testing.assert_allclose(disc["Bd"], Bd_ref, atol=1e-10, rtol=1e-10)
         np.testing.assert_allclose(disc["Ed"], Ed_ref, atol=1e-10, rtol=1e-10)

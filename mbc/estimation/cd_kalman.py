@@ -89,9 +89,9 @@ class CDKalmanFilter:
         self._GGT: np.ndarray = G @ G.T
 
         # ODE integration parameters
-        self._dt: float = model.dt
+        self._dt: float = model.Ts
         self._n_steps: int = int(n_steps)
-        self._h: float = model.dt / n_steps
+        self._h: float = model.Ts / n_steps
 
         # State estimate and covariance
         self._x_np: np.ndarray = (

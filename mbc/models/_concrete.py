@@ -219,12 +219,12 @@ class _ConcreteContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearisedSDE):
         G: np.ndarray,
         Cm: np.ndarray,
         Rm: np.ndarray,
-        dt: float,
         x_s: np.ndarray,
         u_s: np.ndarray,
         d_s: np.ndarray,
         z_s: np.ndarray,
         ym_s: np.ndarray,
+        Ts: float | None = None,
         Cz: np.ndarray | None = None,
         Dz: np.ndarray | None = None,
         Fz: np.ndarray | None = None,
@@ -237,7 +237,7 @@ class _ConcreteContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearisedSDE):
         self._G = np.asarray(G, dtype=float)
         self._Cm = np.asarray(Cm, dtype=float)
         self._Rm = np.asarray(Rm, dtype=float)
-        self._dt = float(dt)
+        self._Ts: float | None = float(Ts) if Ts is not None else None
         self._x_s = np.asarray(x_s, dtype=float)
         self._u_s = np.asarray(u_s, dtype=float)
         self._d_s = np.asarray(d_s, dtype=float)
@@ -277,7 +277,12 @@ class _ConcreteContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearisedSDE):
     def Rm(self) -> np.ndarray: return self._Rm
 
     @property
-    def dt(self) -> float: return self._dt
+    def Ts(self) -> float:
+        if self._Ts is None:
+            raise AttributeError(
+                "Ts is not set on this linearised model; pass Ts to discretize(Ts)."
+            )
+        return self._Ts
 
     @property
     def x_s(self) -> np.ndarray: return self._x_s
