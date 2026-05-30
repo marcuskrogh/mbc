@@ -35,6 +35,7 @@ model-based control, estimation, identification, and simulation.
       Optimal control algorithms:
 
       * ``DiscreteLinearOCP``             – receding-horizon QP for discrete-time linear systems.
+      * ``DiscreteLinearisedOCP``         – QP for linearised discrete-time systems with SS coordinate shifting.
       * ``ContinuousLinearOCP``           – receding-horizon QP for linear continuous-discrete systems.
       * ``ContinuousOCP``                 – economic/tracking NLP for nonlinear CD systems.
       * ``ContinuousLinearisedOCP``       – QP for linearised CD systems with SS coordinate shifting.
@@ -105,6 +106,7 @@ from .estimation import (
 from .control import (
     OCP,
     DiscreteLinearOCP,
+    DiscreteLinearisedOCP,
     ContinuousLinearOCP,
     ContinuousOCP,
     ContinuousLinearisedOCP,
@@ -164,6 +166,7 @@ __all__ = [
     "OCP",
     # Control — new canonical names
     "DiscreteLinearOCP",
+    "DiscreteLinearisedOCP",
     "ContinuousLinearOCP",
     "ContinuousOCP",
     "ContinuousLinearisedOCP",

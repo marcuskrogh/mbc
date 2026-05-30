@@ -2,6 +2,7 @@
 
 from ._base import OCP
 from .discrete_linear_ocp import DiscreteLinearOCP, _shift_warm_start
+from .discrete_linearised_ocp import DiscreteLinearisedOCP
 from .continuous_linear_ocp import ContinuousLinearOCP
 from .continuous_ocp import ContinuousOCP
 from .continuous_linearised_ocp import ContinuousLinearisedOCP
@@ -42,6 +43,7 @@ __all__ = [
     "OCP",
     # New canonical names
     "DiscreteLinearOCP",
+    "DiscreteLinearisedOCP",
     "ContinuousLinearOCP",
     "ContinuousOCP",
     "ContinuousLinearisedOCP",
