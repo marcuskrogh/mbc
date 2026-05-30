@@ -16,7 +16,7 @@ Plant model (ControlToolbox notation, discrete-time specialisation)
     ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
 
 The OCP optimises the *output* ``z[k] = Cz x[k] + …``.  When the plant has
-``Cz = Cm`` (the default of :class:`~mbc.models.LinearDiscreteModel`) the
+``Cz = Cm`` (the default of :class:`~mbc.models.DiscreteLinearSDE`) the
 output and measurement coincide and the OCP tracks the measured channel
 directly.
 
@@ -89,7 +89,7 @@ from .._utils import _any_to_np1d, _any_to_np2d
 from .qp_solver import QPProblem, QPSolverBackend, make_qp_backend
 
 if TYPE_CHECKING:
-    from ..models import LinearDiscreteModel
+    from ..models import DiscreteLinearSDE
 
 
 # ── First-difference operator ────────────────────────────────────────────
@@ -150,13 +150,13 @@ class OptimalControlProblem:
 
     The OCP tracks the **output** ``z[k] = Cz x[k]`` against a constant
     reference ``z_ref``.  When ``Cz = Cm`` (the default of
-    :class:`~mbc.models.LinearDiscreteModel`) the output and the
+    :class:`~mbc.models.DiscreteLinearSDE`) the output and the
     measurement coincide and the OCP tracks the measured channel
     directly.
 
     Parameters
     ----------
-    model : LinearDiscreteModel
+    model : DiscreteLinearSDE
         Plant model providing ``Ad``, ``Bd``, ``Ed``, ``Cz``, ``u_bounds``.
     N : int
         Prediction horizon (number of control intervals).
@@ -192,7 +192,7 @@ class OptimalControlProblem:
 
     def __init__(
         self,
-        model: "LinearDiscreteModel",
+        model: "DiscreteLinearSDE",
         N: int,
         Q: Any,
         R: Any,

@@ -36,7 +36,7 @@ from mbc.identification import (
 
 class _ScalarModel:
     """
-    Minimal model conforming to the LinearDiscreteModel duck-type interface.
+    Minimal model conforming to the DiscreteLinearSDE duck-type interface.
 
     The model implements the single-state recursion:
 

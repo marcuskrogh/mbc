@@ -38,13 +38,13 @@ import pytest
 
 from mbc.estimation import KalmanFilter, ContinuousDiscreteEKF
 from mbc.estimation.delayed import DelayedObservationFilter
-from mbc.models import LinearDiscreteModel, ContinuousDiscreteSDE
+from mbc.models import DiscreteLinearSDE, ContinuousDiscreteSDE
 
 
 # ── Simple 2-state linear model ───────────────────────────────────────────────
 
 
-class _TwoStateModel(LinearDiscreteModel):
+class _TwoStateModel(DiscreteLinearSDE):
     """
     Two-state linear system with two observable outputs (Cm = I₂).
 

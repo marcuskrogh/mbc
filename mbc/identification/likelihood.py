@@ -16,7 +16,7 @@ where:
 
 The model is provided via a *factory* callable
 ``model_factory(θ) → model`` that returns any object exposing the
-``LinearDiscreteModel`` interface (``nx``, ``nu``, ``nd``,
+``DiscreteLinearSDE`` interface (``nx``, ``nu``, ``nd``,
 ``discretize(d_cvx)``, ``predict_offset(d_np)``).  The ``d`` argument
 passed to ``discretize`` is the recorded disturbance from the history; LTI
 model implementations may ignore it.

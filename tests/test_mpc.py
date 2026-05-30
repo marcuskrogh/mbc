@@ -39,7 +39,7 @@ def matrix(data, size=None, tc=None):
     return arr.reshape(rows, cols)
 
 from mbc.models import (
-    LinearDiscreteModel,
+    DiscreteLinearSDE,
     ContinuousDiscreteLinearSDE,
     ContinuousDiscreteSDE,
     ContinuousDiscreteSDAE,
@@ -64,7 +64,7 @@ from mbc.control import (
 # ── Concrete model fixtures ───────────────────────────────────────────────────
 
 
-class DoubleIntegrator(LinearDiscreteModel):
+class DoubleIntegrator(DiscreteLinearSDE):
     """
     Discrete-time double integrator (position + velocity), dt=1.
 
@@ -316,7 +316,7 @@ class TestMPCController:
 
     def _make_ctrl(self, N=10):
         model = DoubleIntegrator()
-        # Qd, Rm read directly from the model (LinearDiscreteModel
+        # Qd, Rm read directly from the model (DiscreteLinearSDE
         # provides them as abstract properties).
         kf = KalmanFilter(model)
         Q_ocp = matrix(np.eye(1))
@@ -355,7 +355,7 @@ class TestMPCController:
     def test_closed_loop_drives_toward_reference(self):
         """Running MPC for many steps should bring the output near x_ref[0]."""
         # Use a stable scalar model for reliable closed-loop behavior
-        class ScalarLinearDiscrete(LinearDiscreteModel):
+        class ScalarLinearDiscrete(DiscreteLinearSDE):
             """Stable scalar system: x[k+1] = 0.8 x[k] + 0.2 u[k], y = x."""
             @property
             def nx(self): return 1

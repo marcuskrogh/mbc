@@ -11,7 +11,7 @@ encapsulated in the *model_factory* callable and the optional
 
   * Choosing the parametrisation of *θ* (e.g. log-space for positive params).
   * Providing an appropriate *model_factory(θ) → model* that returns any
-    object compatible with the ``LinearDiscreteModel`` interface.
+    object compatible with the ``DiscreteLinearSDE`` interface.
   * Supplying *bounds* to keep the search within a physically meaningful
     region.
   * Converting the raw measurement / input / disturbance history into the

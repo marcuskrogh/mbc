@@ -32,10 +32,10 @@ import numpy as np
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from mbc.control import OptimalControlProblem
-from mbc.models import LinearDiscreteModel
+from mbc.models import DiscreteLinearSDE
 
 
-class _MassChain(LinearDiscreteModel):
+class _MassChain(DiscreteLinearSDE):
     """Discrete-time chain of ``m`` masses — a non-trivial multivariable plant."""
 
     def __init__(self, m: int = 4) -> None:

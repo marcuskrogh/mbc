@@ -1,7 +1,7 @@
 """
-Linear discrete-time model interface.
+Discrete linear SDE model interface.
 
-``LinearDiscreteModel`` — abstract base for linear discrete-time systems:
+``DiscreteLinearSDE`` — abstract base for linear discrete-time stochastic systems:
 
     x[k+1] = Ad x[k] + Bd u[k] + Ed d[k] + Gd w[k],   w[k] ~ N(0, Qd)
     z[k]   = Cz x[k] + Dz u[k] + Fz d[k]
@@ -19,7 +19,7 @@ from typing import Tuple
 import numpy as np
 
 
-class LinearDiscreteModel(ABC):
+class DiscreteLinearSDE(ABC):
     """
     Abstract interface for a linear discrete-time stochastic system
     (ControlToolbox notation, discrete-time specialisation):
@@ -228,7 +228,7 @@ class LinearDiscreteModel(ABC):
         """
         return np.array([], dtype=float)
 
-    def with_params(self, theta: np.ndarray) -> "LinearDiscreteModel":
+    def with_params(self, theta: np.ndarray) -> "DiscreteLinearSDE":
         """
         Return a **new** model instance constructed from parameter vector *θ*.
 
@@ -241,7 +241,7 @@ class LinearDiscreteModel(ABC):
 
         Returns
         -------
-        LinearDiscreteModel
+        DiscreteLinearSDE
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not implement with_params."

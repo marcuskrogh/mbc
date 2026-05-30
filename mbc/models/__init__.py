@@ -11,7 +11,7 @@ Notation follows the ControlToolbox conventions:
 
 Linear discrete-time interface
 -------------------------------
-``LinearDiscreteModel`` — abstract base for linear discrete-time systems:
+``DiscreteLinearSDE`` — abstract base for linear discrete-time systems:
 
     x[k+1] = Ad x[k] + Bd u[k] + Ed d[k] + Gd w[k],   w[k] ~ N(0, Qd)
     z[k]   = Cz x[k] + Dz u[k] + Fz d[k]
@@ -47,13 +47,13 @@ stochastic differential-algebraic systems (ControlToolbox §SDAE):
     ym(tk)  = hm(x, y, u, d, p, tk) + v(tk),                            v(tk) ~ N(0, Rm)
 """
 
-from .linear_discrete import LinearDiscreteModel
+from .discrete_linear_sde import DiscreteLinearSDE
 from .continuous_discrete_sde import ContinuousDiscreteSDE
 from .continuous_discrete_linear_sde import ContinuousDiscreteLinearSDE
 from .continuous_discrete_sdae import ContinuousDiscreteSDAE
 
 __all__ = [
-    "LinearDiscreteModel",
+    "DiscreteLinearSDE",
     "ContinuousDiscreteSDE",
     "ContinuousDiscreteLinearSDE",
     "ContinuousDiscreteSDAE",

@@ -48,7 +48,7 @@ import numpy as np
 from .._utils import _any_to_np1d, _any_to_np2d
 
 if TYPE_CHECKING:
-    from ..models import LinearDiscreteModel
+    from ..models import DiscreteLinearSDE
 
 
 class KalmanFilter:
@@ -56,14 +56,14 @@ class KalmanFilter:
     Discrete-time Kalman filter with Joseph-stabilised covariance update.
 
     The filter reads ``Qd``, ``Rm`` and ``Gd`` directly from the supplied
-    ``LinearDiscreteModel``; the constructor only takes the initial state
+    ``DiscreteLinearSDE``; the constructor only takes the initial state
     estimate and covariance.  This matches the continuous-discrete EKF
     interface (:class:`~mbc.estimation.ContinuousDiscreteEKF`) and removes
     redundant tuning parameters.
 
     Parameters
     ----------
-    model : LinearDiscreteModel
+    model : DiscreteLinearSDE
         Plant model providing ``Ad``, ``Bd``, ``Ed``, ``Gd``, ``Cm``,
         ``Qd``, ``Rm`` and ``predict_offset``.
     x0 : (nx,) ndarray, optional
@@ -74,7 +74,7 @@ class KalmanFilter:
 
     def __init__(
         self,
-        model: "LinearDiscreteModel",
+        model: "DiscreteLinearSDE",
         x0: np.ndarray | None = None,
         P0: np.ndarray | None = None,
     ) -> None:

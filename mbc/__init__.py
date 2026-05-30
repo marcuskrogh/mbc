@@ -7,7 +7,7 @@ model-based control, estimation, identification, and simulation.
   mbc.models
       Abstract model interfaces:
 
-      * ``LinearDiscreteModel``              – linear discrete-time system (ZOH).
+      * ``DiscreteLinearSDE``              – linear discrete-time system (ZOH).
       * ``ContinuousDiscreteSDE``            – nonlinear SDE (Ph.D. Ch. 5).
       * ``ContinuousDiscreteLinearSDE``      – linear continuous-discrete SDE
                                                (M.Sc. Ch. 5).
@@ -75,7 +75,7 @@ model-based control, estimation, identification, and simulation.
 """
 
 from .models import (
-    LinearDiscreteModel,
+    DiscreteLinearSDE,
     ContinuousDiscreteLinearSDE,
     ContinuousDiscreteSDE,
     ContinuousDiscreteSDAE,
@@ -111,7 +111,7 @@ from .monte_carlo import MonteCarloSimulation, MonteCarloResult
 
 __all__ = [
     # Models
-    "LinearDiscreteModel",
+    "DiscreteLinearSDE",
     "ContinuousDiscreteLinearSDE",
     "ContinuousDiscreteSDE",
     "ContinuousDiscreteSDAE",
