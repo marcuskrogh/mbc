@@ -10,10 +10,11 @@ each particle is propagated independently through the full SDE via
 Euler-Maruyama.  The measurement update replaces the Kalman correction
 with **likelihood-weighted systematic resampling**.
 
-Time update — per-particle Euler-Maruyama
-------------------------------------------
+Time update — per-particle SDE integration
+-------------------------------------------
 Identical to :class:`ContinuousDiscreteEnKF` — each particle is propagated
-through the SDE with independent Wiener increments.
+through the SDE with independent Wiener increments using the configured
+:class:`IntegrationScheme`.
 
 Measurement update — likelihood-weighted systematic resampling
 ---------------------------------------------------------------
@@ -36,8 +37,8 @@ import numpy as np
 
 from ..models import ContinuousDiscreteSDE
 from .._utils import _cholesky_psd
-from ._base import ContinuousDiscreteEstimator, EstimatorParams
-from ._ensemble import _ensemble_measurements, _propagate_em_ensemble
+from ._base import ContinuousDiscreteEstimator, EstimatorParams, IntegrationScheme
+from ._ensemble import _EESubstep, _IESubstep, _ensemble_measurements, _propagate_ensemble
 
 
 # ── Parameter structure ───────────────────────────────────────────────────────
@@ -53,13 +54,26 @@ class ContinuousDiscretePFParams(EstimatorParams):
     N : int
         Number of particles N_p.  Default: 500.
     n_steps : int
-        Euler-Maruyama sub-steps per measurement interval.  Default: 10.
+        Integration sub-steps per measurement interval.  Default: 10.
+    scheme : IntegrationScheme
+        Integration scheme applied to each particle.
+        :attr:`~IntegrationScheme.EULER` (default) is explicit;
+        :attr:`~IntegrationScheme.IMPLICIT_EULER` handles stiff drift.
     seed : int or None
         Random seed for reproducibility.  Default: None.
+    newton_tol : float
+        Newton convergence tolerance for the implicit sub-step drift solve.
+        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 1e-10.
+    newton_max_iter : int
+        Maximum Newton iterations per implicit sub-step.
+        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 50.
     """
     N: int = 500
     n_steps: int = 10
+    scheme: IntegrationScheme = IntegrationScheme.EULER
     seed: int | None = None
+    newton_tol: float = 1e-10
+    newton_max_iter: int = 50
 
 
 # ── Estimator ─────────────────────────────────────────────────────────────────
@@ -93,6 +107,10 @@ class ContinuousDiscretePF(ContinuousDiscreteEstimator):
     ) -> None:
         if params is None:
             params = ContinuousDiscretePFParams()
+        if not isinstance(params.scheme, IntegrationScheme):
+            raise TypeError(
+                f"scheme must be an IntegrationScheme member, got {params.scheme!r}."
+            )
 
         self._model = model
         self._Ts = float(model.Ts)
@@ -100,6 +118,11 @@ class ContinuousDiscretePF(ContinuousDiscreteEstimator):
         self._n_steps = int(params.n_steps)
         self._h_sub = self._Ts / self._n_steps
         self._rng = np.random.default_rng(params.seed)
+
+        if params.scheme is IntegrationScheme.EULER:
+            self._substep = _EESubstep(model)
+        else:
+            self._substep = _IESubstep(model, params.newton_tol, params.newton_max_iter)
 
         nx = len(x0)
         self._nx = nx
@@ -163,8 +186,8 @@ class ContinuousDiscretePF(ContinuousDiscreteEstimator):
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Time update: propagate each particle through the SDE via
-        Euler-Maruyama.
+        Time update: propagate each particle through the SDE using
+        the configured integration scheme.
 
         Parameters
         ----------
@@ -178,9 +201,10 @@ class ContinuousDiscretePF(ContinuousDiscreteEstimator):
         x_pred : (nx,) sample mean after propagation.
         P_pred : (nx, nx) Bessel-corrected sample covariance.
         """
-        self._X = _propagate_em_ensemble(
-            self._model, self._X, u, d, p, t,
+        self._X = _propagate_ensemble(
+            self._substep, self._X, u, d, p, t,
             h=self._h_sub, n_steps=self._n_steps, rng=self._rng,
+            nw=self._model.nw,
         )
         return self.x_hat, self.P
 

@@ -16,18 +16,19 @@ The mean evolves as the expectation of the SDE (diffusion contributes zero mean)
     dx̂_k/dt(t) = f(x̂_k(t), u, d, p, t),    x̂_k(t_k) = x̂_{k|k}.
 
 Both mean and covariance are integrated with ``n_steps`` sub-steps of size
-``h = Ts / n_steps``.  Two schemes are available:
+``h = Ts / n_steps``.  Two schemes are available, selected via
+:class:`~mbc.estimation.IntegrationScheme`:
 
-Explicit Euler  (``scheme="euler"``, default)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Explicit Euler  (``IntegrationScheme.EULER``, default)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
     A_j     = ∂f/∂x (x̂_j, u, d, p, t_j)
     σ_j     = sigma (x̂_j, u, d, p, t_j)
     x̂_{j+1} = x̂_j + h f(x̂_j, u, d, p, t_j)
     P_{j+1} = P_j + h (A_j P_j + P_j A_jᵀ + σ_j σ_jᵀ)
     P_{j+1} ← ½(P_{j+1} + P_{j+1}ᵀ)                     (symmetrise)
 
-Implicit Euler  (``scheme="implicit-euler"``)
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Implicit Euler  (``IntegrationScheme.IMPLICIT_EULER``)
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 L-stable; suitable for stiff drift dynamics.
 
   1. Newton solve:  x_{j+1} − x_j − h f(x_{j+1}, u, d, p, t_{j+1}) = 0
@@ -55,9 +56,95 @@ import numpy as np
 
 from ..models import ContinuousDiscreteSDE
 from .._utils import _newton_solve
-from ._base import ContinuousDiscreteEstimator, EstimatorParams
+from ._base import ContinuousDiscreteEstimator, EstimatorParams, IntegrationScheme
 
-_VALID_SCHEMES = ("euler", "implicit-euler")
+
+# ── Moment-propagation step kernels ───────────────────────────────────────────
+
+
+class _EulerMomentStep:
+    """
+    Explicit Euler sub-step for the EKF moment ODE ``(x̂, P)``.
+
+    Evaluates ``f``, ``dfdx``, ``sigma`` at the current sub-step and
+    advances both state mean and covariance by one forward Euler step.
+    """
+
+    def __init__(self, model: ContinuousDiscreteSDE) -> None:
+        self._m = model
+
+    def __call__(
+        self,
+        x: np.ndarray,
+        P: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None,
+        t: float,
+        h: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        A = self._m.dfdx(x, u, d, p, t)
+        S = self._m.sigma(x, u, d, p, t)
+        x_next = x + h * self._m.f(x, u, d, p, t)
+        P_dot = A @ P + P @ A.T + S @ S.T
+        P_next = P + h * P_dot
+        P_next = (P_next + P_next.T) * 0.5
+        return x_next, P_next
+
+
+class _ImplicitEulerMomentStep:
+    """
+    Implicit-Euler sub-step for the EKF moment ODE ``(x̂, P)``.
+
+    The state mean is advanced by an implicit Newton solve; the resulting
+    sensitivity ``Φ = (I − h A_{n+1})⁻¹`` is used to propagate the
+    covariance, guaranteeing positive-definiteness.
+    """
+
+    def __init__(
+        self,
+        model: ContinuousDiscreteSDE,
+        newton_tol: float,
+        newton_max_iter: int,
+    ) -> None:
+        self._m = model
+        self._tol = newton_tol
+        self._mi = newton_max_iter
+
+    def __call__(
+        self,
+        x: np.ndarray,
+        P: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None,
+        t: float,
+        h: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        nx = x.shape[0]
+        I_nx = np.eye(nx)
+        t1 = t + h
+
+        # Implicit drift solve
+        S_n = self._m.sigma(x, u, d, p, t)
+
+        def residual(xk: np.ndarray) -> np.ndarray:
+            return xk - x - h * self._m.f(xk, u, d, p, t1)
+
+        def jacobian(xk: np.ndarray) -> np.ndarray:
+            return I_nx - h * self._m.dfdx(xk, u, d, p, t1)
+
+        x_next = _newton_solve(residual, jacobian, x.copy(), self._tol, self._mi)
+
+        # Sensitivity matrix Φ = (I − h A_{n+1})⁻¹
+        M = jacobian(x_next)
+        Phi = np.linalg.solve(M, I_nx)
+
+        # Covariance: P_{n+1} = Φ (P_n + h σ_n σ_nᵀ) Φᵀ
+        tau = P + h * S_n @ S_n.T
+        P_next = Phi @ tau @ Phi.T
+        P_next = (P_next + P_next.T) * 0.5
+        return x_next, P_next
 
 
 # ── Parameter structure ───────────────────────────────────────────────────────
@@ -72,18 +159,19 @@ class ContinuousDiscreteEKFParams(EstimatorParams):
     ----------
     n_steps : int
         Number of integration sub-steps per sampling interval.  Default: 10.
-    scheme : {"euler", "implicit-euler"}
-        Propagation scheme.  ``"euler"`` is explicit and cheap; use
-        ``"implicit-euler"`` for stiff drift dynamics.  Default: ``"euler"``.
+    scheme : IntegrationScheme
+        Propagation scheme.  :attr:`~IntegrationScheme.EULER` is explicit and
+        cheap; use :attr:`~IntegrationScheme.IMPLICIT_EULER` for stiff drift
+        dynamics.  Default: ``IntegrationScheme.EULER``.
     newton_tol : float
         Convergence tolerance for the implicit-Euler Newton solver.
-        Ignored when ``scheme="euler"``.  Default: 1e-10.
+        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 1e-10.
     newton_max_iter : int
         Maximum Newton iterations per implicit sub-step.
-        Ignored when ``scheme="euler"``.  Default: 50.
+        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 50.
     """
     n_steps: int = 10
-    scheme: str = "euler"
+    scheme: IntegrationScheme = IntegrationScheme.EULER
     newton_tol: float = 1e-10
     newton_max_iter: int = 50
 
@@ -124,9 +212,9 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
             raise ValueError(
                 f"n_steps must be a positive integer, got {params.n_steps!r}."
             )
-        if params.scheme not in _VALID_SCHEMES:
-            raise ValueError(
-                f"scheme must be one of {_VALID_SCHEMES!r}, got {params.scheme!r}."
+        if not isinstance(params.scheme, IntegrationScheme):
+            raise TypeError(
+                f"scheme must be an IntegrationScheme member, got {params.scheme!r}."
             )
 
         self._model = model
@@ -135,9 +223,13 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
         self._Ts: float = float(model.Ts)
         self._n_steps: int = int(params.n_steps)
         self._h: float = self._Ts / self._n_steps
-        self._scheme: str = params.scheme
-        self._newton_tol: float = params.newton_tol
-        self._newton_max_iter: int = params.newton_max_iter
+
+        if params.scheme is IntegrationScheme.EULER:
+            self._moment_step = _EulerMomentStep(model)
+        else:
+            self._moment_step = _ImplicitEulerMomentStep(
+                model, params.newton_tol, params.newton_max_iter
+            )
 
     # ── Public properties ─────────────────────────────────────────────────
 
@@ -162,7 +254,7 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Time update: integrate the mean ODE and covariance from ``t`` to
-        ``t + Ts`` using the configured ``scheme``.
+        ``t + Ts`` using the configured scheme.
 
         Parameters
         ----------
@@ -176,81 +268,13 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
         x_pred : (nx,) predicted state estimate.
         P_pred : (nx, nx) predicted covariance.
         """
-        if self._scheme == "euler":
-            return self._predict_euler(u, d, p, t)
-        return self._predict_implicit_euler(u, d, p, t)
-
-    def _predict_euler(
-        self,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray | None,
-        t: float,
-    ) -> tuple[np.ndarray, np.ndarray]:
         x = self._x.copy()
         P = self._P.copy()
         h = self._h
-        model = self._model
-
         t_j = t
         for _ in range(self._n_steps):
-            A_j = model.dfdx(x, u, d, p, t_j)
-            sigma_j = model.sigma(x, u, d, p, t_j)
-            f_j = model.f(x, u, d, p, t_j)
-
-            P_dot = A_j @ P + P @ A_j.T + sigma_j @ sigma_j.T
-            x = x + h * f_j
-            P = P + h * P_dot
-            P = (P + P.T) * 0.5
+            x, P = self._moment_step(x, P, u, d, p, t_j, h)
             t_j += h
-
-        self._x = x
-        self._P = P
-        return x.copy(), P.copy()
-
-    def _predict_implicit_euler(
-        self,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray | None,
-        t: float,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        x = self._x.copy()
-        P = self._P.copy()
-        h = self._h
-        model = self._model
-        nx = x.shape[0]
-        I_nx = np.eye(nx)
-
-        t_n = t
-        for _ in range(self._n_steps):
-            t_next = t_n + h
-            x_n = x.copy()
-            sigma_n = model.sigma(x_n, u, d, p, t_n)
-
-            x_rhs = x_n
-
-            def residual(xk: np.ndarray) -> np.ndarray:
-                return xk - x_rhs - h * model.f(xk, u, d, p, t_next)
-
-            def jacobian(xk: np.ndarray) -> np.ndarray:
-                return I_nx - h * model.dfdx(xk, u, d, p, t_next)
-
-            x = _newton_solve(
-                residual, jacobian, x_n,
-                tol=self._newton_tol,
-                max_iter=self._newton_max_iter,
-            )
-
-            M = jacobian(x)
-            Phi = np.linalg.solve(M, I_nx)
-
-            tau = P + h * sigma_n @ sigma_n.T
-            P = Phi @ tau @ Phi.T
-            P = (P + P.T) * 0.5
-
-            t_n = t_next
-
         self._x = x
         self._P = P
         return x.copy(), P.copy()

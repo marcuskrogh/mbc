@@ -1,6 +1,7 @@
 """State estimation sub-package for mbc."""
 
 from ._base import (
+    IntegrationScheme,
     EstimatorParams,
     DiscreteEstimator,
     ContinuousDiscreteEstimator,
@@ -23,6 +24,8 @@ from .continuous_discrete_dae_ekf import (
 from .delayed_observation_filter import DelayedObservationFilter
 
 __all__ = [
+    # Integration scheme
+    "IntegrationScheme",
     # Abstract bases
     "EstimatorParams",
     "DiscreteEstimator",

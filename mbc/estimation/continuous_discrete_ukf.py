@@ -20,14 +20,21 @@ Deterministic state set (2 nx + 1 points, captures state covariance)
     χ^{(i)}      = x̂_{k|k} + √c̄ (√P)_i,   i = 1, …, nx
     χ^{(nx+i)}   = x̂_{k|k} − √c̄ (√P)_i,   i = 1, …, nx
 
+These points are propagated through the *drift ODE only* (zero diffusion);
+the diffusion enters only through the stochastic noise sigma set.
+
 Stochastic noise sigma set (2 nω points, all placed at the mean) with
 deterministic Wiener increments that produce total increment √(c̄ Ts) e_i:
 
-    Δω^{(2nx+i)}    = +√(c̄ Ts) e_i / n_steps,   i = 1, …, nω   (per sub-step)
-    Δω^{(2nx+nω+i)} = −√(c̄ Ts) e_i / n_steps,   i = 1, …, nω
+    dω^{(2nx+i)}    = +√(c̄ Ts) e_i / n_steps,   i = 1, …, nω   (per sub-step)
+    dω^{(2nx+nω+i)} = −√(c̄ Ts) e_i / n_steps,   i = 1, …, nω
 
-The state set is propagated via the drift ODE (explicit Euler, sub-step h);
-the noise set is propagated via the full SDE with its structured increments.
+Both sigma-point sets are propagated via the same :class:`IntegrationScheme`:
+
+``EULER``         — Explicit Euler-Maruyama (EE).  Drift explicit at current
+                    sub-step; diffusion explicit.  Default.
+``IMPLICIT_EULER`` — Implicit drift (Newton at next sub-step); diffusion
+                    explicit.  For stiff drift dynamics.
 
 Predicted mean and covariance are the Wm/Wc-weighted statistics over all
 2 n̄ + 1 sigma points.
@@ -54,7 +61,8 @@ import numpy as np
 
 from ..models import ContinuousDiscreteSDE
 from .._utils import _cholesky_psd
-from ._base import ContinuousDiscreteEstimator, EstimatorParams
+from ._base import ContinuousDiscreteEstimator, EstimatorParams, IntegrationScheme
+from ._ensemble import _EESubstep, _IESubstep
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -82,8 +90,11 @@ class ContinuousDiscreteUKFParams(EstimatorParams):
     Parameters
     ----------
     n_steps : int
-        Number of explicit-Euler integration sub-steps per measurement
-        interval.  Default: 10.
+        Number of integration sub-steps per measurement interval.  Default: 10.
+    scheme : IntegrationScheme
+        Integration scheme applied to all sigma points.
+        :attr:`~IntegrationScheme.EULER` (default) is explicit;
+        :attr:`~IntegrationScheme.IMPLICIT_EULER` handles stiff drift.
     alpha : float
         Sigma-point spread parameter α ∈ ]0, 1].  Default: 1.0.
     beta : float
@@ -91,11 +102,20 @@ class ContinuousDiscreteUKFParams(EstimatorParams):
         Default: 2.0.
     kappa : float
         Secondary spread parameter κ ≥ 0.  Default: 0.0.
+    newton_tol : float
+        Newton convergence tolerance for the implicit sub-step drift solve.
+        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 1e-10.
+    newton_max_iter : int
+        Maximum Newton iterations per implicit sub-step.
+        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 50.
     """
     n_steps: int = 10
+    scheme: IntegrationScheme = IntegrationScheme.EULER
     alpha: float = 1.0
     beta: float = 2.0
     kappa: float = 0.0
+    newton_tol: float = 1e-10
+    newton_max_iter: int = 50
 
 
 # ── Estimator ─────────────────────────────────────────────────────────────────
@@ -116,8 +136,7 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
     P0 : (nx, nx) ndarray
         Initial state covariance P_{0|0}.
     params : ContinuousDiscreteUKFParams, optional
-        Algorithm parameter struct.  Pass to control integration steps and
-        unscented-transform tuning scalars.
+        Algorithm parameter struct.
     """
 
     def __init__(
@@ -129,6 +148,10 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
     ) -> None:
         if params is None:
             params = ContinuousDiscreteUKFParams()
+        if not isinstance(params.scheme, IntegrationScheme):
+            raise TypeError(
+                f"scheme must be an IntegrationScheme member, got {params.scheme!r}."
+            )
 
         self._model = model
         self._x = np.array(x0, dtype=float)
@@ -162,6 +185,12 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
         self._lam_x = lam_x
         self._Wm_x = Wm_x
         self._Wc_x = Wc_x
+
+        # SDE sub-step kernel shared by both sigma-point sets
+        if params.scheme is IntegrationScheme.EULER:
+            self._substep = _EESubstep(model)
+        else:
+            self._substep = _IESubstep(model, params.newton_tol, params.newton_max_iter)
 
     # ── Public properties ─────────────────────────────────────────────────
 
@@ -204,6 +233,8 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
         nw = self._nw
         n_bar = self._n_bar
         h = self._h_sub
+        substep = self._substep
+        zeros_nw = np.zeros(nw)
 
         # Deterministic state sigma points (2 nx + 1)
         L = _cholesky_psd(self._P)
@@ -214,7 +245,7 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
             det_sigma[i + 1]      = self._x + sqrt_c * L[:, i]
             det_sigma[nx + i + 1] = self._x - sqrt_c * L[:, i]
 
-        # Stochastic noise sigma set (2 nw points, all placed at mean)
+        # Stochastic noise sigma set (2 nw points, all at mean x̂)
         # Total Wiener increment √(c̄ Ts) e_i split deterministically over n_steps.
         stoch_sigma = np.tile(self._x, (2 * nw, 1))
         I_nw = np.eye(nw)
@@ -222,18 +253,18 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
         per_step_neg = -per_step_pos
         stoch_d_omega = np.concatenate([per_step_pos, per_step_neg], axis=0)  # (2nw, nw)
 
-        # Propagate
+        # Propagate all sigma points through n_steps sub-steps
         t_j = t
         for _ in range(self._n_steps):
+            # Deterministic set: drift only (zero diffusion)
             for i in range(2 * nx + 1):
-                f_i = model.f(det_sigma[i], u, d, p, t_j)
-                det_sigma[i] = det_sigma[i] + h * f_i
+                det_sigma[i] = substep(det_sigma[i], u, d, p, t_j, h, zeros_nw)
 
+            # Stochastic set: full SDE with deterministic structured increments
             for i in range(2 * nw):
-                xi = stoch_sigma[i]
-                f_i = model.f(xi, u, d, p, t_j)
-                sigma_i = model.sigma(xi, u, d, p, t_j)
-                stoch_sigma[i] = xi + h * f_i + sigma_i @ stoch_d_omega[i]
+                stoch_sigma[i] = substep(
+                    stoch_sigma[i], u, d, p, t_j, h, stoch_d_omega[i]
+                )
 
             t_j += h
 

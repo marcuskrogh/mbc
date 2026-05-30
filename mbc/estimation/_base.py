@@ -29,8 +29,37 @@ ContinuousDiscreteDAEEstimator (ContinuousDiscreteEstimator, ABC)
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from enum import Enum
 
 import numpy as np
+
+
+# ── Integration scheme enum ───────────────────────────────────────────────────
+
+
+class IntegrationScheme(Enum):
+    """
+    Numerical integration scheme for continuous-discrete state estimators.
+
+    All schemes use a fixed sub-step size ``h = Ts / n_steps``.
+
+    ``EULER``
+        Explicit Euler / Euler-Maruyama.  For particle-based estimators
+        (UKF, EnKF, PF) the drift and diffusion are both evaluated at the
+        *current* sub-step (explicit-explicit, EE).  For the EKF the moment
+        ODE ``(dx̂/dt, dP/dt)`` is integrated with a forward Euler step.
+        First-order accurate.  Recommended for non-stiff dynamics.
+
+    ``IMPLICIT_EULER``
+        Implicit-Explicit Euler.  The drift is evaluated at the *next*
+        sub-step and solved via Newton iteration; the diffusion remains
+        explicit.  For the EKF the state mean is advanced implicitly and
+        the covariance update uses the resulting sensitivity matrix
+        ``Φ = (I − h A)⁻¹``, which guarantees positive-definiteness.
+        Recommended for stiff drift dynamics.
+    """
+    EULER = "euler"
+    IMPLICIT_EULER = "implicit_euler"
 
 
 # ── Abstract parameter structure ──────────────────────────────────────────────

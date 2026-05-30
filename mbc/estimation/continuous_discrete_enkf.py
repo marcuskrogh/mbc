@@ -8,14 +8,15 @@ The CD-EnKF approximates the state distribution by a randomly sampled
 ensemble of N_p members.  Each member is propagated independently through
 the full stochastic dynamics.
 
-Time update — per-member Euler-Maruyama
-----------------------------------------
+Time update — per-member SDE integration
+-----------------------------------------
 For each i = 1, …, N_p:
 
     dx̂_k^{(i)}(t) = f(x̂_k^{(i)}, u, d, p, t) dt
                   + sigma(x̂_k^{(i)}, u, d, p, t) dω_k^{(i)}(t)
 
-with independent Wiener increments per member (``n_steps`` sub-steps).
+with independent Wiener increments per member (``n_steps`` sub-steps of the
+configured :class:`IntegrationScheme`).
 
 Predicted statistics (Bessel-corrected):
 
@@ -42,8 +43,8 @@ import numpy as np
 
 from ..models import ContinuousDiscreteSDE
 from .._utils import _cholesky_psd
-from ._base import ContinuousDiscreteEstimator, EstimatorParams
-from ._ensemble import _ensemble_measurements, _propagate_em_ensemble
+from ._base import ContinuousDiscreteEstimator, EstimatorParams, IntegrationScheme
+from ._ensemble import _EESubstep, _IESubstep, _ensemble_measurements, _propagate_ensemble
 
 
 # ── Parameter structure ───────────────────────────────────────────────────────
@@ -59,13 +60,26 @@ class ContinuousDiscreteEnKFParams(EstimatorParams):
     N : int
         Ensemble size N_p.  Default: 100.
     n_steps : int
-        Euler-Maruyama sub-steps per measurement interval.  Default: 10.
+        Integration sub-steps per measurement interval.  Default: 10.
+    scheme : IntegrationScheme
+        Integration scheme applied to each ensemble member.
+        :attr:`~IntegrationScheme.EULER` (default) is explicit;
+        :attr:`~IntegrationScheme.IMPLICIT_EULER` handles stiff drift.
     seed : int or None
         Random seed for reproducibility.  Default: None.
+    newton_tol : float
+        Newton convergence tolerance for the implicit sub-step drift solve.
+        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 1e-10.
+    newton_max_iter : int
+        Maximum Newton iterations per implicit sub-step.
+        Ignored when ``scheme=IntegrationScheme.EULER``.  Default: 50.
     """
     N: int = 100
     n_steps: int = 10
+    scheme: IntegrationScheme = IntegrationScheme.EULER
     seed: int | None = None
+    newton_tol: float = 1e-10
+    newton_max_iter: int = 50
 
 
 # ── Estimator ─────────────────────────────────────────────────────────────────
@@ -99,6 +113,10 @@ class ContinuousDiscreteEnKF(ContinuousDiscreteEstimator):
     ) -> None:
         if params is None:
             params = ContinuousDiscreteEnKFParams()
+        if not isinstance(params.scheme, IntegrationScheme):
+            raise TypeError(
+                f"scheme must be an IntegrationScheme member, got {params.scheme!r}."
+            )
 
         self._model = model
         self._Ts = float(model.Ts)
@@ -106,6 +124,11 @@ class ContinuousDiscreteEnKF(ContinuousDiscreteEstimator):
         self._n_steps = int(params.n_steps)
         self._h_sub = self._Ts / self._n_steps
         self._rng = np.random.default_rng(params.seed)
+
+        if params.scheme is IntegrationScheme.EULER:
+            self._substep = _EESubstep(model)
+        else:
+            self._substep = _IESubstep(model, params.newton_tol, params.newton_max_iter)
 
         nx = len(x0)
         self._nx = nx
@@ -143,7 +166,7 @@ class ContinuousDiscreteEnKF(ContinuousDiscreteEstimator):
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Time update: propagate each ensemble member through the SDE
-        via Euler-Maruyama.
+        using the configured integration scheme.
 
         Parameters
         ----------
@@ -157,9 +180,10 @@ class ContinuousDiscreteEnKF(ContinuousDiscreteEstimator):
         x_pred : (nx,) ensemble mean after propagation.
         P_pred : (nx, nx) Bessel-corrected ensemble covariance.
         """
-        self._X = _propagate_em_ensemble(
-            self._model, self._X, u, d, p, t,
+        self._X = _propagate_ensemble(
+            self._substep, self._X, u, d, p, t,
             h=self._h_sub, n_steps=self._n_steps, rng=self._rng,
+            nw=self._model.nw,
         )
         return self.x_hat, self.P
 

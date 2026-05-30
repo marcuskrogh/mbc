@@ -87,6 +87,7 @@ from .models import (
     ContinuousDiscreteSDAE,
 )
 from .estimation import (
+    IntegrationScheme,
     EstimatorParams,
     DiscreteEstimator,
     ContinuousDiscreteEstimator,
@@ -135,6 +136,8 @@ __all__ = [
     "ContinuousDiscreteLinearSDE",
     "ContinuousDiscreteLinearisedSDE",
     "ContinuousDiscreteSDAE",
+    # Estimation — integration scheme
+    "IntegrationScheme",
     # Estimation — abstract bases
     "EstimatorParams",
     "DiscreteEstimator",
