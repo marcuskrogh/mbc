@@ -55,7 +55,7 @@ The sub-step dynamics residual is
 
 — the same form used by :class:`mbc.simulation.SDAESimulator`, allowing
 Jacobian reuse between simulation and optimisation.  For SDE plant models
-(``ContinuousDiscreteModel``) the algebraic block ``g`` is absent.
+(``ContinuousDiscreteSDE``) the algebraic block ``g`` is absent.
 
 Continuous outputs ``z_{k,n} = g^m(x_{k,n}, y_{k,n}, θ)`` are evaluated as a
 post-processing step from the optimal trajectory and used for the tracking
@@ -84,7 +84,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..models import ContinuousDiscreteDAEModel, ContinuousDiscreteModel
+from ..models import ContinuousDiscreteSDAE, ContinuousDiscreteSDE
 from .nlp_solver import (
     NLPConstraint,
     NLPProblem,
@@ -217,14 +217,14 @@ class EconomicOptimalControlProblem:
 
     Plant model
     -----------
-    Either a :class:`~mbc.models.ContinuousDiscreteModel` (SDE — no algebraic
-    state) or a :class:`~mbc.models.ContinuousDiscreteDAEModel` (SDAE — with
+    Either a :class:`~mbc.models.ContinuousDiscreteSDE` (SDE — no algebraic
+    state) or a :class:`~mbc.models.ContinuousDiscreteSDAE` (SDAE — with
     algebraic constraint ``g(x, y, …) = 0``).  The OCP detects the model type
     and dispatches signatures of ``f``, ``g``, ``g^m``, etc. accordingly.
 
     Parameters
     ----------
-    model : ContinuousDiscreteModel or ContinuousDiscreteDAEModel
+    model : ContinuousDiscreteSDE or ContinuousDiscreteSDAE
         Plant model providing ``f``, ``g`` (SDAE only), ``gm``, ``hm``, and
         their Jacobians (only used by the NLP solver if it needs gradients).
     N : int
@@ -283,13 +283,13 @@ class EconomicOptimalControlProblem:
         Backend-agnostic scaling controls:
         ``objective_scale``, ``variable_scale``, ``constraint_scale``.
     dt : float or None, optional
-        Sampling interval ``T_s``.  ``None`` → ``model.dt`` if available,
+        Sampling interval ``T_s``.  ``None`` → ``model.Ts`` if available,
         else ``1.0``.
     """
 
     def __init__(
         self,
-        model: ContinuousDiscreteModel,
+        model: ContinuousDiscreteSDE,
         N: int,
         *,
         lagrange: Callable[..., float] | None = None,
@@ -321,7 +321,7 @@ class EconomicOptimalControlProblem:
         self._model = model
         self._N = int(N)
         self._n_steps = int(n_steps)
-        self._is_dae = isinstance(model, ContinuousDiscreteDAEModel)
+        self._is_dae = isinstance(model, ContinuousDiscreteSDAE)
         self._nx = int(model.nx)
         self._nu = int(model.nu)
         self._nd = int(model.nd)

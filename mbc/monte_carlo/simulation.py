@@ -25,7 +25,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from ..models import ContinuousDiscreteModel
+from ..models import ContinuousDiscreteSDE
 from ..simulation.sde import SDESimulator
 from ..simulation.sdae import SDAESimulator
 
@@ -59,7 +59,7 @@ class MonteCarloSimulation:
 
     Parameters
     ----------
-    model : ContinuousDiscreteModel
+    model : ContinuousDiscreteSDE
         Plant model (used for generating noisy observations).
     simulator : SDESimulator or SDAESimulator
         Numerical integrator for the plant dynamics.
@@ -80,7 +80,7 @@ class MonteCarloSimulation:
 
     def __init__(
         self,
-        model: ContinuousDiscreteModel,
+        model: ContinuousDiscreteSDE,
         simulator: SDESimulator | SDAESimulator,
         controller,
         estimator=None,

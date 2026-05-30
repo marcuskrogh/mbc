@@ -85,7 +85,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..models import ContinuousDiscreteModel
+from ..models import ContinuousDiscreteSDE
 from .._utils import _newton_solve
 
 _VALID_SCHEMES = ("euler", "implicit-euler")
@@ -109,7 +109,7 @@ class ContinuousDiscreteEKF:
 
     Parameters
     ----------
-    model : ContinuousDiscreteModel
+    model : ContinuousDiscreteSDE
         Nonlinear continuous-discrete SDE system providing ``f``, ``sigma``,
         ``hm``, ``Rm``, and Jacobians ``dfdx`` and ``dhmdx``.
     x0 : (nx,) ndarray
@@ -133,7 +133,7 @@ class ContinuousDiscreteEKF:
 
     def __init__(
         self,
-        model: ContinuousDiscreteModel,
+        model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
         dt: float,

@@ -39,10 +39,10 @@ def matrix(data, size=None, tc=None):
     return arr.reshape(rows, cols)
 
 from mbc.models import (
-    LinearDiscreteModel,
-    LinearContinuousDiscreteModel,
-    ContinuousDiscreteModel,
-    ContinuousDiscreteDAEModel,
+    DiscreteLinearSDE,
+    ContinuousDiscreteLinearSDE,
+    ContinuousDiscreteSDE,
+    ContinuousDiscreteSDAE,
 )
 from mbc.estimation import KalmanFilter, CDKalmanFilter, ContinuousDiscreteEKF
 from mbc.control import (
@@ -64,7 +64,7 @@ from mbc.control import (
 # ── Concrete model fixtures ───────────────────────────────────────────────────
 
 
-class DoubleIntegrator(LinearDiscreteModel):
+class DoubleIntegrator(DiscreteLinearSDE):
     """
     Discrete-time double integrator (position + velocity), dt=1.
 
@@ -103,6 +103,9 @@ class DoubleIntegrator(LinearDiscreteModel):
     def Rm(self): return np.array([[0.01]])
 
     @property
+    def Ts(self): return 1.0
+
+    @property
     def x(self): return list(self._x)
 
     @x.setter
@@ -115,7 +118,7 @@ class DoubleIntegrator(LinearDiscreteModel):
     def u_bounds(self): return np.array([-5.0]), np.array([5.0])
 
 
-class SimpleLinearCD(LinearContinuousDiscreteModel):
+class SimpleLinearCD(ContinuousDiscreteLinearSDE):
     """
     First-order lag:  dx/dt = -x + u,  y = x,  dt = 1.0.
     """
@@ -154,6 +157,9 @@ class SimpleLinearCD(LinearContinuousDiscreteModel):
     def dt(self): return 1.0
 
     @property
+    def Ts(self): return 1.0
+
+    @property
     def x(self): return list(self._x)
 
     @x.setter
@@ -166,7 +172,7 @@ class SimpleLinearCD(LinearContinuousDiscreteModel):
     def u_bounds(self): return np.array([-5.0]), np.array([5.0])
 
 
-class ScalarNonlinear(ContinuousDiscreteModel):
+class ScalarNonlinear(ContinuousDiscreteSDE):
     """
     Scalar nonlinear system:  dx/dt = -x + u,  y = x,  z = x.
     Same as linear but implemented nonlinearly to test the NLP path.
@@ -316,7 +322,7 @@ class TestMPCController:
 
     def _make_ctrl(self, N=10):
         model = DoubleIntegrator()
-        # Qd, Rm read directly from the model (LinearDiscreteModel
+        # Qd, Rm read directly from the model (DiscreteLinearSDE
         # provides them as abstract properties).
         kf = KalmanFilter(model)
         Q_ocp = matrix(np.eye(1))
@@ -355,7 +361,7 @@ class TestMPCController:
     def test_closed_loop_drives_toward_reference(self):
         """Running MPC for many steps should bring the output near x_ref[0]."""
         # Use a stable scalar model for reliable closed-loop behavior
-        class ScalarLinearDiscrete(LinearDiscreteModel):
+        class ScalarLinearDiscrete(DiscreteLinearSDE):
             """Stable scalar system: x[k+1] = 0.8 x[k] + 0.2 u[k], y = x."""
             @property
             def nx(self): return 1
@@ -519,7 +525,7 @@ class TestCDMPCController:
         ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
 
         from mbc._utils import _zoh_full
-        Ad, Bd, _ = _zoh_full(model.A, model.B, model.E, model.dt)
+        Ad, Bd, _ = _zoh_full(model.A, model.B, model.E, model.Ts)
         x = np.array([0.0])
         x_ref = model.x_ref
         N_steps = 30
@@ -886,7 +892,7 @@ class TestEconomicOptimalControlProblem:
 # ── Tests: EconomicOptimalControlProblem on SDAE plant ──────────────────────
 
 
-class _IsomerisationReactor(ContinuousDiscreteDAEModel):
+class _IsomerisationReactor(ContinuousDiscreteSDAE):
     """
     Minimal SDAE plant for testing the EOCP's SDAE code path.
 
@@ -1289,7 +1295,7 @@ class TestAnalyticalJacobians:
 # ── Tests: CDLinearizedMPCController and linearisation utilities ─────────────────
 
 
-class _ScalarBoundedNonlinear(ContinuousDiscreteModel):
+class _ScalarBoundedNonlinear(ContinuousDiscreteSDE):
     """Scalar nonlinear model with bounded input for linearised-MPC tests."""
 
     @property
@@ -1392,9 +1398,9 @@ class TestCDLinearizationUtilities:
             p=np.array([]),
             t=0.0,
         )
-        disc = discretize_cd_linearization(lin, dt=model.dt)
+        disc = discretize_cd_linearization(lin, dt=model.Ts)
         from mbc._utils import _zoh_full
-        Ad_ref, Bd_ref, Ed_ref = _zoh_full(model.A, model.B, model.E, model.dt)
+        Ad_ref, Bd_ref, Ed_ref = _zoh_full(model.A, model.B, model.E, model.Ts)
         np.testing.assert_allclose(disc["Ad"], Ad_ref, atol=1e-10, rtol=1e-10)
         np.testing.assert_allclose(disc["Bd"], Bd_ref, atol=1e-10, rtol=1e-10)
         np.testing.assert_allclose(disc["Ed"], Ed_ref, atol=1e-10, rtol=1e-10)

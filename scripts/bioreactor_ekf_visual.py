@@ -39,13 +39,13 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.ticker as ticker
 
-from mbc.models import ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDE
 from mbc.estimation.ekf import ContinuousDiscreteEKF
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
 
-class MonodBioreactor(ContinuousDiscreteModel):
+class MonodBioreactor(ContinuousDiscreteSDE):
     """
     Fed-batch bioreactor with Monod growth kinetics.
 
@@ -64,7 +64,7 @@ class MonodBioreactor(ContinuousDiscreteModel):
     _Qc   = np.diag([1e-4, 1e-4])     # continuous process-noise covariance
     _R    = np.array([[0.01]])         # measurement noise variance  (g/L)²
 
-    # ── ContinuousDiscreteModel abstract interface ────────────────────────
+    # ── ContinuousDiscreteSDE abstract interface ────────────────────────
 
     @property
     def nx(self) -> int: return 2
@@ -113,7 +113,7 @@ def simulate_em(
     rng: np.random.Generator,
 ) -> np.ndarray:
     """
-    Euler-Maruyama simulation of a ContinuousDiscreteModel.
+    Euler-Maruyama simulation of a ContinuousDiscreteSDE.
 
     Returns
     -------

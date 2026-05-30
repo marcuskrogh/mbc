@@ -34,7 +34,7 @@ from .cd_ocp import CDOptimalControlProblem
 from .ocp import _shift_warm_start
 
 if TYPE_CHECKING:
-    from ..models import LinearContinuousDiscreteModel
+    from ..models import ContinuousDiscreteLinearSDE
 
 
 class CDMPCController:
@@ -49,7 +49,7 @@ class CDMPCController:
 
     Parameters
     ----------
-    model     : LinearContinuousDiscreteModel
+    model     : ContinuousDiscreteLinearSDE
         Plant model providing ``nu``, ``nd``, ``x_ref``, ``discretize``,
         and ``discretize_noise``.
     estimator : CDKalmanFilter
@@ -60,7 +60,7 @@ class CDMPCController:
 
     def __init__(
         self,
-        model: "LinearContinuousDiscreteModel",
+        model: "ContinuousDiscreteLinearSDE",
         estimator: CDKalmanFilter,
         ocp: CDOptimalControlProblem,
         warm_start: bool = False,

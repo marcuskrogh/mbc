@@ -80,7 +80,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..models import ContinuousDiscreteDAEModel
+from ..models import ContinuousDiscreteSDAE
 from .._utils import _newton_solve
 
 
@@ -91,7 +91,7 @@ class ContinuousDiscreteDAEEKF:
 
     Parameters
     ----------
-    model : ContinuousDiscreteDAEModel
+    model : ContinuousDiscreteSDAE
         Nonlinear SDAE system.  Must implement ``f``, ``sigma``, ``g``,
         ``hm``, ``Rm`` plus Jacobians ``dfdx``, ``dfdy``, ``dgdx``, ``dgdy``,
         ``dhmdx`` and (when ``hm`` depends on y) ``dhmdy``.
@@ -116,7 +116,7 @@ class ContinuousDiscreteDAEEKF:
 
     def __init__(
         self,
-        model: ContinuousDiscreteDAEModel,
+        model: ContinuousDiscreteSDAE,
         x0: np.ndarray,
         y0: np.ndarray,
         P0: np.ndarray,

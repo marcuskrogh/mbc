@@ -16,10 +16,8 @@ where:
 
 The model is provided via a *factory* callable
 ``model_factory(θ) → model`` that returns any object exposing the
-``LinearDiscreteModel`` interface (``nx``, ``nu``, ``nd``,
-``discretize(d_cvx)``, ``predict_offset(d_np)``).  The ``d`` argument
-passed to ``discretize`` is the recorded disturbance from the history; LTI
-model implementations may ignore it.
+``DiscreteLinearSDE`` interface (``nx``, ``nu``, ``nd``,
+``discretize()``, ``predict_offset(d_np)``).
 
 History format (linear PED)
 ---------------------------
@@ -71,7 +69,7 @@ def ped_neg_log_likelihood(
     ----------
     model_factory : callable  θ → model
         Returns a model object exposing ``nx``, ``nu``, ``nd``,
-        ``discretize(d_cvx) → (A_cvx, B_cvx, E_cvx)``, and optionally
+        ``discretize() → DiscreteLinearSDE``, and optionally
         ``predict_offset(d_np) → np.ndarray``.
         May raise any exception for invalid θ; the sentinel ``_INVALID_LIKELIHOOD``
         is returned in that case.
@@ -140,7 +138,8 @@ def ped_neg_log_likelihood(
 
         # Discretise at the previous disturbance
         try:
-            A_raw, B_raw, E_raw = model.discretize(np.asarray(d_prev, dtype=float))
+            _dm = model.discretize()
+            A_raw, B_raw, E_raw = _dm.Ad, _dm.Bd, _dm.Ed
         except Exception:
             return _INVALID_LIKELIHOOD
 
@@ -276,7 +275,7 @@ def cd_ped_neg_log_likelihood(
     Parameters
     ----------
     model_factory : callable  θ → model
-        Returns a :class:`~mbc.models.ContinuousDiscreteModel` (or any object
+        Returns a :class:`~mbc.models.ContinuousDiscreteSDE` (or any object
         exposing ``f``, ``sigma``, ``hm``, ``dfdx``, ``dhmdx``, ``Rm``, and
         ``params``).  ``model.params`` is used as the parameter vector ``p``
         passed to all model function calls.  May raise any exception for

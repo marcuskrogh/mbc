@@ -1,7 +1,7 @@
 """
 Continuous-discrete SDE model interface.
 
-``ContinuousDiscreteModel`` — abstract base for continuous-discrete
+``ContinuousDiscreteSDE`` — abstract base for continuous-discrete
 stochastic systems (ControlToolbox §SDE):
 
     dx(t)   = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
@@ -18,7 +18,7 @@ import numpy as np
 from .._utils import _fd_jacobian
 
 
-class ContinuousDiscreteModel(ABC):
+class ContinuousDiscreteSDE(ABC):
     """
     Abstract interface for a continuous-discrete stochastic system
     (ControlToolbox §SDE).
@@ -212,6 +212,131 @@ class ContinuousDiscreteModel(ABC):
     def dgmdu(self, x, u, d, p, t) -> np.ndarray:
         """Jacobian ∂gm/∂u at (x, u, d, p, t)  →  (nz, nu) ndarray."""
         return _fd_jacobian(lambda v: self.gm(x, v, d, p, t), u)
+
+    def dgmdd(self, x, u, d, p, t) -> np.ndarray:
+        """Jacobian ∂gm/∂d at (x, u, d, p, t)  →  (nz, nd) ndarray."""
+        return _fd_jacobian(lambda v: self.gm(x, u, v, p, t), d)
+
+    # ── Linearisation ─────────────────────────────────────────────────────
+
+    def _steady_state(
+        self,
+        u_s: np.ndarray,
+        d_s: np.ndarray,
+        p: np.ndarray,
+        t: float,
+        x0: np.ndarray | None = None,
+        tol: float = 1e-12,
+        max_iter: int = 100,
+    ) -> np.ndarray:
+        """
+        Find the steady-state x_s satisfying f(x_s, u_s, d_s, p, t) = 0
+        via Newton iteration.
+
+        Parameters
+        ----------
+        u_s      : (nu,) steady-state input.
+        d_s      : (nd,) steady-state disturbance.
+        p        : parameter vector.
+        t        : evaluation time.
+        x0       : (nx,) initial guess; defaults to zeros.
+        tol      : convergence tolerance on ‖f(x)‖.
+        max_iter : maximum Newton iterations.
+
+        Returns
+        -------
+        x_s : (nx,) steady-state state (best estimate if not converged).
+        """
+        x = np.zeros(self.nx) if x0 is None else np.asarray(x0, dtype=float).copy()
+        for _ in range(max_iter):
+            fx = self.f(x, u_s, d_s, p, t)
+            if np.linalg.norm(fx) < tol:
+                return x
+            x = x - np.linalg.solve(self.dfdx(x, u_s, d_s, p, t), fx)
+        return x
+
+    def linearise(
+        self,
+        u_s: np.ndarray,
+        d_s: np.ndarray,
+        p: np.ndarray | None = None,
+        t: float = 0.0,
+        x0: np.ndarray | None = None,
+    ) -> "ContinuousDiscreteLinearisedSDE":
+        """
+        Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at the
+        steady-state operating point determined by ``(u_s, d_s)``.
+
+        The steady-state state ``x_s`` satisfying ``f(x_s, u_s, d_s, p, t) = 0``
+        is found via Newton iteration.  All Jacobians are evaluated at the
+        resulting operating point via the registered analytic or
+        finite-difference methods.  The diffusion matrix ``G`` is ``sigma``
+        evaluated at the operating point.
+
+        If ``self.Ts`` is defined on the model it is carried over to the
+        returned linearised model, so that :meth:`ContinuousDiscreteLinearisedSDE.discretize`
+        can be called without arguments:
+
+            dm = sde.linearise(u_s, d_s).discretize()
+
+        Parameters
+        ----------
+        u_s : (nu,) steady-state input.
+        d_s : (nd,) steady-state disturbance.
+        p   : parameter vector; defaults to ``self.params``.
+        t   : evaluation time (default 0.0).
+        x0  : (nx,) initial guess for Newton iteration; defaults to zeros.
+
+        Returns
+        -------
+        ContinuousDiscreteLinearisedSDE
+        """
+        from ._concrete import _ConcreteContinuousDiscreteLinearisedSDE
+
+        if p is None:
+            p = self.params
+        u_s = np.asarray(u_s, dtype=float)
+        d_s = np.asarray(d_s, dtype=float)
+        x_s = self._steady_state(u_s, d_s, p, t, x0)
+        try:
+            Ts: float | None = self.Ts
+        except AttributeError:
+            Ts = None
+        return _ConcreteContinuousDiscreteLinearisedSDE(
+            A=self.dfdx(x_s, u_s, d_s, p, t),
+            B=self.dfdu(x_s, u_s, d_s, p, t),
+            E=self.dfdd(x_s, u_s, d_s, p, t),
+            G=self.sigma(x_s, u_s, d_s, p, t),
+            Cm=self.dhmdx(x_s, u_s, d_s, p, t),
+            Dm=self.dhmdu(x_s, u_s, d_s, p, t),
+            Fm=self.dhmdd(x_s, u_s, d_s, p, t),
+            Cz=self.dgmdx(x_s, u_s, d_s, p, t),
+            Dz=self.dgmdu(x_s, u_s, d_s, p, t),
+            Fz=self.dgmdd(x_s, u_s, d_s, p, t),
+            Rm=self.Rm,
+            x_s=x_s,
+            u_s=u_s,
+            d_s=d_s,
+            z_s=self.gm(x_s, u_s, d_s, p, t),
+            ym_s=self.hm(x_s, u_s, d_s, p, t),
+            Ts=Ts,
+        )
+
+    # ── Sampling interval (non-abstract, overridable) ─────────────────────
+
+    @property
+    def Ts(self) -> float:
+        """
+        Sampling interval (seconds).
+
+        Default: raises :class:`AttributeError`.  Subclasses that have a
+        fixed sampling interval should override this property.  When defined,
+        ``linearise()`` carries it over to the returned linearised model.
+        """
+        raise AttributeError(
+            f"{type(self).__name__} does not define Ts. "
+            "Override this property to specify the sampling interval."
+        )
 
     # ── Parameters ────────────────────────────────────────────────────────
 

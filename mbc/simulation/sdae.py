@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..models import ContinuousDiscreteDAEModel
+from ..models import ContinuousDiscreteSDAE
 from .._utils import _newton_solve
 
 
@@ -56,7 +56,7 @@ class SDAESimulator:
 
     Parameters
     ----------
-    model : ContinuousDiscreteDAEModel
+    model : ContinuousDiscreteSDAE
         The nonlinear SDAE system to simulate.
     dt : float
         Measurement sampling interval (seconds).
@@ -72,7 +72,7 @@ class SDAESimulator:
 
     def __init__(
         self,
-        model: ContinuousDiscreteDAEModel,
+        model: ContinuousDiscreteSDAE,
         dt: float,
         n_steps: int = 10,
         newton_tol: float = 1e-10,

@@ -46,7 +46,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..models import ContinuousDiscreteModel
+from ..models import ContinuousDiscreteSDE
 from .._utils import _newton_solve
 
 
@@ -57,7 +57,7 @@ class SDESimulator:
 
     Parameters
     ----------
-    model : ContinuousDiscreteModel
+    model : ContinuousDiscreteSDE
         The nonlinear SDE system to simulate.
     dt : float
         Measurement sampling interval (seconds).  This defines the
@@ -78,7 +78,7 @@ class SDESimulator:
 
     def __init__(
         self,
-        model: ContinuousDiscreteModel,
+        model: ContinuousDiscreteSDE,
         dt: float,
         n_steps: int = 10,
         scheme: str = "EE",

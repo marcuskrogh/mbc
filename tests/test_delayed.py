@@ -38,13 +38,13 @@ import pytest
 
 from mbc.estimation import KalmanFilter, ContinuousDiscreteEKF
 from mbc.estimation.delayed import DelayedObservationFilter
-from mbc.models import LinearDiscreteModel, ContinuousDiscreteModel
+from mbc.models import DiscreteLinearSDE, ContinuousDiscreteSDE
 
 
 # ── Simple 2-state linear model ───────────────────────────────────────────────
 
 
-class _TwoStateModel(LinearDiscreteModel):
+class _TwoStateModel(DiscreteLinearSDE):
     """
     Two-state linear system with two observable outputs (Cm = I₂).
 
@@ -79,6 +79,8 @@ class _TwoStateModel(LinearDiscreteModel):
     def Qd(self) -> np.ndarray: return 0.01 * np.eye(2)
     @property
     def Rm(self) -> np.ndarray: return 0.1 * np.eye(2)
+    @property
+    def Ts(self) -> float: return 1.0
 
     @property
     def x(self) -> list: return list(self._x)
@@ -97,7 +99,7 @@ class _TwoStateModel(LinearDiscreteModel):
 # ── Simple 2-output CD model (VdV-like CSTR) ─────────────────────────────────
 
 
-class _TwoOutputCSTR(ContinuousDiscreteModel):
+class _TwoOutputCSTR(ContinuousDiscreteSDE):
     """
     Two-state CD model with both states observable (hm(x) = x).
 

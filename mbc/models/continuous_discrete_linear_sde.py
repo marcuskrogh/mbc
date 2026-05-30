@@ -1,7 +1,7 @@
 """
-Linear continuous-discrete model interface.
+Linear continuous-discrete SDE model interface.
 
-``LinearContinuousDiscreteModel`` — extends ``ContinuousDiscreteModel`` for
+``ContinuousDiscreteLinearSDE`` — extends ``ContinuousDiscreteSDE`` for
 linear systems where the drift, diffusion, output, and observation functions
 take the specific forms:
 
@@ -14,18 +14,17 @@ take the specific forms:
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Tuple
 
 import numpy as np
 
-from .continuous_discrete import ContinuousDiscreteModel
+from .continuous_discrete_sde import ContinuousDiscreteSDE
 
 
-class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
+class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
     """
     Abstract interface for a linear continuous-discrete stochastic system.
 
-    Extends :class:`ContinuousDiscreteModel` with the specific linear forms:
+    Extends :class:`ContinuousDiscreteSDE` with the specific linear forms:
 
         dx(t)  = (A x(t) + B u(t) + E d(t)) dt + G dw(t),  dw(t) ~ N(0, I dt)
         z(t)   = Cz x(t) + Dz u(t) + Fz d(t)
@@ -56,13 +55,13 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         Dz   – output input D               Dz ∈ ℝⁿᶻˣⁿᵘ   (default: 0)
         Fz   – output disturbance D         Fz ∈ ℝⁿᶻˣⁿᵈ   (default: 0)
         Rm   – measurement noise cov.       Rm ∈ ℝⁿʸᵐˣⁿʸᵐ
-        dt   – sampling interval
+        Ts   – sampling interval
 
     ZOH discretisation (``discretize``)
     -------------------------------------
     Computed via the augmented-matrix method (no matrix inverse required):
 
-        [Ad | Bd | Ed] = expm([[A, B, E], [0, 0, 0], [0, 0, 0]] · dt)[:nx, :]
+        [Ad | Bd | Ed] = expm([[A, B, E], [0, 0, 0], [0, 0, 0]] · Ts)[:nx, :]
 
     Discrete process noise (``discretize_noise``)
     -----------------------------------------------
@@ -71,7 +70,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         Qd = ∫₀^{dt} expm(A τ) G Gᵀ expm(A τ)ᵀ dτ
     """
 
-    # ── Abstract dimensions (inherited from ContinuousDiscreteModel) ──────
+    # ── Abstract dimensions (inherited from ContinuousDiscreteSDE) ────────
     #   nx, nu, nd are abstract in the parent and must be implemented by
     #   concrete subclasses.  nym and nw are provided as concrete derivations
     #   from Cm and G below.
@@ -110,35 +109,22 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
     def Rm(self) -> np.ndarray:
         """Measurement noise covariance Rm ∈ ℝⁿʸᵐˣⁿʸᵐ (numpy ndarray)."""
 
-    # ── Abstract sampling interval ────────────────────────────────────────
+    # ── Sampling interval (non-abstract, overridable) ─────────────────────
 
     @property
-    @abstractmethod
-    def dt(self) -> float:
-        """Sampling interval (seconds)."""
+    def Ts(self) -> float:
+        """
+        Sampling interval (seconds).
 
-    # ── Abstract control-interface properties ────────────────────────────
+        Default: raises :class:`AttributeError`.  Subclasses and factory-
+        returned instances should override this property.
+        """
+        raise AttributeError(
+            f"{type(self).__name__} does not define Ts. "
+            "Override this property to specify the sampling interval."
+        )
 
-    @property
-    @abstractmethod
-    def x(self) -> list[float]:
-        """Current state x as a plain list of floats."""
-
-    @x.setter
-    @abstractmethod
-    def x(self, val: list[float]) -> None: ...
-
-    @property
-    @abstractmethod
-    def x_ref(self) -> np.ndarray:
-        """Reference / setpoint x_ref ∈ ℝⁿˣ (numpy 1-D array, length nx)."""
-
-    @property
-    @abstractmethod
-    def u_bounds(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Box constraint on inputs (u_min, u_max), each a (nu,) ndarray."""
-
-    # ── Concrete implementations of ContinuousDiscreteModel abstracts ─────
+    # ── Concrete implementations of ContinuousDiscreteSDE abstracts ───────
 
     @property
     def nym(self) -> int:
@@ -289,34 +275,32 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
 
     # ── Concrete discretisation methods ───────────────────────────────────
 
-    def discretize(self, d: np.ndarray | None = None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def discretize(self) -> "DiscreteLinearSDE":
         """
-        ZOH-discretised matrices (Ad, Bd, Ed) as numpy arrays.
+        Return a :class:`DiscreteLinearSDE` obtained by ZOH-discretising this
+        system at sampling interval ``Ts``.
 
-        Uses the augmented-matrix method so that no matrix inverse is
-        required:
-
-            expm([[A, B, E], [0, 0, 0], [0, 0, 0]] · dt)[:nx, :]
-            = [Ad | Bd | Ed]
-
-        The ``d`` argument is accepted for interface compatibility with
-        ``OptimalControlProblem`` (LPV sub-classes may override this method
-        to schedule matrices on the current disturbance); the default LTI
-        implementation ignores it.
-
-        Parameters
-        ----------
-        d : (nd,) ndarray, optional  — current disturbance (ignored for LTI).
+        Uses the augmented matrix exponential (ZOH) for ``(Ad, Bd, Ed)`` and
+        the Van Loan (1978) method for the process-noise covariance ``Qd``.
+        The output and measurement matrices ``Cz``, ``Dz``, ``Fz``, ``Cm``,
+        ``Dm``, ``Fm`` carry over unchanged, as they apply at sample times.
 
         Returns
         -------
-        Ad : (nx, nx) ndarray — discrete state-transition matrix.
-        Bd : (nx, nu) ndarray — discrete input matrix.
-        Ed : (nx, nd) ndarray — discrete disturbance matrix.
+        DiscreteLinearSDE
         """
         from .._utils import _zoh_full
+        from ._concrete import _ConcreteDiscreteLinearSDE
 
-        return _zoh_full(self.A, self.B, self.E, self.dt)
+        Ad, Bd, Ed = _zoh_full(self.A, self.B, self.E, self.Ts)
+        Qd = self.discretize_noise()
+        return _ConcreteDiscreteLinearSDE(
+            Ad=Ad, Bd=Bd, Ed=Ed,
+            Cm=self.Cm, Qd=Qd, Rm=self.Rm,
+            Ts=self.Ts,
+            Cz=self.Cz, Dz=self.Dz, Fz=self.Fz,
+            Dm=self.Dm, Fm=self.Fm,
+        )
 
     def discretize_noise(self) -> np.ndarray:
         """
@@ -324,7 +308,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
 
         Computes
 
-            Qd = ∫₀^{dt} expm(A τ) G Gᵀ expm(A τ)ᵀ dτ
+            Qd = ∫₀^{Ts} expm(A τ) G Gᵀ expm(A τ)ᵀ dτ
 
         using the augmented 2nx×2nx matrix method.  The result is symmetric
         positive semi-definite by construction.
@@ -335,9 +319,7 @@ class LinearContinuousDiscreteModel(ContinuousDiscreteModel):
         """
         from .._utils import _van_loan
 
-        # dw ~ N(0, I dt), so the noise intensity is G G^T.
-        # Computed via the Van Loan (1978) augmented matrix method.
-        return _van_loan(self.A, self.G, np.eye(self.nw), self.dt)
+        return _van_loan(self.A, self.G, np.eye(self.nw), self.Ts)
 
     # ── Parameter-identification interface (non-abstract, overridable) ────
 

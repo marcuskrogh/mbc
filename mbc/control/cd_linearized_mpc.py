@@ -14,11 +14,11 @@ from typing import Any
 import numpy as np
 
 from .._utils import _fd_jacobian, _zoh_full, _van_loan
-from ..models import LinearDiscreteModel, ContinuousDiscreteModel
+from ..models import DiscreteLinearSDE, ContinuousDiscreteSDE
 from .ocp import OptimalControlProblem
 
 
-class _DeviationLinearDiscreteModel(LinearDiscreteModel):
+class _DeviationDiscreteLinearSDE(DiscreteLinearSDE):
     """Mutable linear-discrete model in deviation coordinates."""
 
     def __init__(
@@ -149,7 +149,7 @@ class _DeviationLinearDiscreteModel(LinearDiscreteModel):
 
 
 def linearize_cd_model(
-    model: ContinuousDiscreteModel,
+    model: ContinuousDiscreteSDE,
     x_ss: np.ndarray,
     u_ss: np.ndarray,
     d_ss: np.ndarray,
@@ -236,7 +236,7 @@ class CDLinearizedMPCController:
 
     def __init__(
         self,
-        model: ContinuousDiscreteModel,
+        model: ContinuousDiscreteSDE,
         estimator: Any,
         N: int,
         Q: Any,
@@ -261,7 +261,7 @@ class CDLinearizedMPCController:
             else np.asarray(x_ref, dtype=float).reshape(model.nx)
         )
 
-        self._lin_model = _DeviationLinearDiscreteModel(
+        self._lin_model = _DeviationDiscreteLinearSDE(
             nx=model.nx,
             nu=model.nu,
             nd=model.nd,

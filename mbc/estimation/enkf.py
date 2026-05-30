@@ -52,7 +52,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from ..models import ContinuousDiscreteModel
+from ..models import ContinuousDiscreteSDE
 from .._utils import _cholesky_psd
 from ._ensemble import _ensemble_measurements, _propagate_em_ensemble
 
@@ -64,7 +64,7 @@ class ContinuousDiscreteEnKF:
 
     Parameters
     ----------
-    model : ContinuousDiscreteModel
+    model : ContinuousDiscreteSDE
         Nonlinear continuous-discrete SDE system.
     x0 : (nx,) ndarray
         Initial state estimate (ensemble mean).
@@ -82,7 +82,7 @@ class ContinuousDiscreteEnKF:
 
     def __init__(
         self,
-        model: ContinuousDiscreteModel,
+        model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
         dt: float,

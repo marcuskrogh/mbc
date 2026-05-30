@@ -36,7 +36,7 @@ def _propagate_em_ensemble(
 
     Parameters
     ----------
-    model   : ContinuousDiscreteModel
+    model   : ContinuousDiscreteSDE
     X       : (nx, N) ensemble at time ``t``.
     u, d, p : ZOH input, disturbance, parameter vector over ``[t, t + h n_steps]``.
     t       : current time.
@@ -80,7 +80,7 @@ def _ensemble_measurements(
 
     Parameters
     ----------
-    model   : ContinuousDiscreteModel
+    model   : ContinuousDiscreteSDE
     X       : (nx, N) ensemble.
     u, d, p : input, disturbance, parameter vectors.
     t       : evaluation time (default 0.0).
