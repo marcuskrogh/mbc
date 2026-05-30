@@ -110,12 +110,20 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
     def Rm(self) -> np.ndarray:
         """Measurement noise covariance Rm ∈ ℝⁿʸᵐˣⁿʸᵐ (numpy ndarray)."""
 
-    # ── Abstract sampling interval ────────────────────────────────────────
+    # ── Sampling interval (non-abstract, overridable) ─────────────────────
 
     @property
-    @abstractmethod
     def Ts(self) -> float:
-        """Sampling interval (seconds)."""
+        """
+        Sampling interval (seconds).
+
+        Default: raises :class:`AttributeError`.  Subclasses and factory-
+        returned instances should override this property.
+        """
+        raise AttributeError(
+            f"{type(self).__name__} does not define Ts. "
+            "Override this property to specify the sampling interval."
+        )
 
     # ── Concrete implementations of ContinuousDiscreteSDE abstracts ───────
 
@@ -298,6 +306,7 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
         return _ConcreteDiscreteLinearSDE(
             Ad=Ad, Bd=Bd, Ed=Ed,
             Cm=self.Cm, Qd=Qd, Rm=self.Rm,
+            Ts=self.Ts,
             Cz=self.Cz, Dz=self.Dz, Fz=self.Fz,
             Dm=self.Dm, Fm=self.Fm,
         )

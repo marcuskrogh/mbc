@@ -61,11 +61,13 @@ class _ScalarModel:
         return 1
 
     def discretize(self, d=None):
-        """Return 1×1 numpy matrices A, B, E."""
-        A = np.array([[self._a]])
-        B = np.array([[self._b]])
-        E = np.array([[self._e]])
-        return A, B, E
+        """Return a model-like object with Ad, Bd, Ed attributes."""
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            Ad=np.array([[self._a]]),
+            Bd=np.array([[self._b]]),
+            Ed=np.array([[self._e]]),
+        )
 
     def predict_offset(self, d_np: np.ndarray) -> np.ndarray:
         return np.zeros(1)

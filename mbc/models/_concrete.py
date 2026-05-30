@@ -3,8 +3,8 @@ Private concrete data classes returned by model factory methods.
 
 These classes are not part of the public API.  They are thin matrix-stores
 that implement every abstract property required by their parent abstractions,
-so that ``linearise_model`` and ``discretized_model`` can return fully
-usable model instances without requiring the user to define a subclass.
+so that ``linearise`` and ``discretize`` can return fully usable model
+instances without requiring the user to define a subclass.
 """
 
 from __future__ import annotations
@@ -28,6 +28,7 @@ class _ConcreteDiscreteLinearSDE(DiscreteLinearSDE):
         Cm: np.ndarray,
         Qd: np.ndarray,
         Rm: np.ndarray,
+        Ts: float,
         Cz: np.ndarray | None = None,
         Dz: np.ndarray | None = None,
         Fz: np.ndarray | None = None,
@@ -41,6 +42,7 @@ class _ConcreteDiscreteLinearSDE(DiscreteLinearSDE):
         self._Cm = np.asarray(Cm, dtype=float)
         self._Qd = np.asarray(Qd, dtype=float)
         self._Rm = np.asarray(Rm, dtype=float)
+        self._Ts = float(Ts)
         self._Cz = np.asarray(Cz, dtype=float) if Cz is not None else None
         self._Dz = np.asarray(Dz, dtype=float) if Dz is not None else None
         self._Fz = np.asarray(Fz, dtype=float) if Fz is not None else None
@@ -56,6 +58,9 @@ class _ConcreteDiscreteLinearSDE(DiscreteLinearSDE):
 
     @property
     def nd(self) -> int: return self._Ed.shape[1]
+
+    @property
+    def Ts(self) -> float: return self._Ts
 
     @property
     def Ad(self) -> np.ndarray: return self._Ad
@@ -110,9 +115,10 @@ class _ConcreteDiscreteLinearisedSDE(DiscreteLinearisedSDE):
         Cm: np.ndarray,
         Qd: np.ndarray,
         Rm: np.ndarray,
-        x_s: np.ndarray,
+        Ts: float,
         u_s: np.ndarray,
         d_s: np.ndarray,
+        x_s: np.ndarray,
         z_s: np.ndarray,
         ym_s: np.ndarray,
         Cz: np.ndarray | None = None,
@@ -128,9 +134,10 @@ class _ConcreteDiscreteLinearisedSDE(DiscreteLinearisedSDE):
         self._Cm = np.asarray(Cm, dtype=float)
         self._Qd = np.asarray(Qd, dtype=float)
         self._Rm = np.asarray(Rm, dtype=float)
-        self._x_s = np.asarray(x_s, dtype=float)
+        self._Ts = float(Ts)
         self._u_s = np.asarray(u_s, dtype=float)
         self._d_s = np.asarray(d_s, dtype=float)
+        self._x_s = np.asarray(x_s, dtype=float)
         self._z_s = np.asarray(z_s, dtype=float)
         self._ym_s = np.asarray(ym_s, dtype=float)
         self._Cz = np.asarray(Cz, dtype=float) if Cz is not None else None
@@ -148,6 +155,9 @@ class _ConcreteDiscreteLinearisedSDE(DiscreteLinearisedSDE):
 
     @property
     def nd(self) -> int: return self._Ed.shape[1]
+
+    @property
+    def Ts(self) -> float: return self._Ts
 
     @property
     def Ad(self) -> np.ndarray: return self._Ad
@@ -168,13 +178,13 @@ class _ConcreteDiscreteLinearisedSDE(DiscreteLinearisedSDE):
     def Rm(self) -> np.ndarray: return self._Rm
 
     @property
-    def x_s(self) -> np.ndarray: return self._x_s
-
-    @property
     def u_s(self) -> np.ndarray: return self._u_s
 
     @property
     def d_s(self) -> np.ndarray: return self._d_s
+
+    @property
+    def x_s(self) -> np.ndarray: return self._x_s
 
     @property
     def z_s(self) -> np.ndarray: return self._z_s
@@ -285,13 +295,13 @@ class _ConcreteContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearisedSDE):
         return self._Ts
 
     @property
-    def x_s(self) -> np.ndarray: return self._x_s
-
-    @property
     def u_s(self) -> np.ndarray: return self._u_s
 
     @property
     def d_s(self) -> np.ndarray: return self._d_s
+
+    @property
+    def x_s(self) -> np.ndarray: return self._x_s
 
     @property
     def z_s(self) -> np.ndarray: return self._z_s

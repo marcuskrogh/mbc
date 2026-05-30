@@ -103,6 +103,9 @@ class DoubleIntegrator(DiscreteLinearSDE):
     def Rm(self): return np.array([[0.01]])
 
     @property
+    def Ts(self): return 1.0
+
+    @property
     def x(self): return list(self._x)
 
     @x.setter
@@ -152,6 +155,9 @@ class SimpleLinearCD(ContinuousDiscreteLinearSDE):
 
     @property
     def dt(self): return 1.0
+
+    @property
+    def Ts(self): return 1.0
 
     @property
     def x(self): return list(self._x)

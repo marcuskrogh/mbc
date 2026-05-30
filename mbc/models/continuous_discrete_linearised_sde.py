@@ -35,18 +35,17 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
 
     where ``δx = x − x_s``, ``δu = u − u_s``, ``δd = d − d_s``.
 
-    Subclasses must implement the steady-state properties ``x_s``, ``u_s``,
-    ``d_s``, ``z_s``, and ``ym_s``.  The helpers ``x_abs``, ``u_abs``,
-    ``d_abs``, ``z_abs``, and ``ym_abs`` convert deviation-variable results
-    back to absolute values.
+    Subclasses must implement ``u_s`` and ``d_s``.  The steady-state state
+    ``x_s`` is derived as the solution to ``A x_s + B u_s + E d_s = 0``:
+
+        x_s = −A⁻¹ (B u_s + E d_s)
+
+    and ``z_s``, ``ym_s`` follow from the output equations.  Subclasses may
+    override ``x_s``, ``z_s``, or ``ym_s`` to supply precomputed values (e.g.
+    from a nonlinear solver).
     """
 
     # ── Abstract steady-state operating point ─────────────────────────────
-
-    @property
-    @abstractmethod
-    def x_s(self) -> np.ndarray:
-        """Steady-state state x_s ∈ ℝⁿˣ."""
 
     @property
     @abstractmethod
@@ -58,15 +57,22 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
     def d_s(self) -> np.ndarray:
         """Steady-state disturbance d_s ∈ ℝⁿᵈ."""
 
-    @property
-    @abstractmethod
-    def z_s(self) -> np.ndarray:
-        """Steady-state output z_s ∈ ℝⁿᶻ."""
+    # ── Derived steady-state quantities ───────────────────────────────────
 
     @property
-    @abstractmethod
+    def x_s(self) -> np.ndarray:
+        """Steady-state state x_s = −A⁻¹ (B u_s + E d_s)."""
+        return np.linalg.solve(self.A, -(self.B @ self.u_s + self.E @ self.d_s))
+
+    @property
+    def z_s(self) -> np.ndarray:
+        """Steady-state output z_s = Cz x_s + Dz u_s + Fz d_s."""
+        return self.Cz @ self.x_s + self.Dz @ self.u_s + self.Fz @ self.d_s
+
+    @property
     def ym_s(self) -> np.ndarray:
-        """Steady-state measurement ym_s ∈ ℝⁿʸᵐ."""
+        """Steady-state measurement ym_s = Cm x_s + Dm u_s + Fm d_s."""
+        return self.Cm @ self.x_s + self.Dm @ self.u_s + self.Fm @ self.d_s
 
     # ── Discretisation ────────────────────────────────────────────────────
 
@@ -99,8 +105,9 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
             Cm=self.Cm, Qd=Qd, Rm=self.Rm,
             Cz=self.Cz, Dz=self.Dz, Fz=self.Fz,
             Dm=self.Dm, Fm=self.Fm,
-            x_s=self.x_s, u_s=self.u_s, d_s=self.d_s,
-            z_s=self.z_s, ym_s=self.ym_s,
+            Ts=Ts,
+            u_s=self.u_s, d_s=self.d_s,
+            x_s=self.x_s, z_s=self.z_s, ym_s=self.ym_s,
         )
 
     # ── Absolute-value getters ────────────────────────────────────────────

@@ -219,21 +219,59 @@ class ContinuousDiscreteSDE(ABC):
 
     # ── Linearisation ─────────────────────────────────────────────────────
 
+    def _steady_state(
+        self,
+        u_s: np.ndarray,
+        d_s: np.ndarray,
+        p: np.ndarray,
+        t: float,
+        x0: np.ndarray | None = None,
+        tol: float = 1e-12,
+        max_iter: int = 100,
+    ) -> np.ndarray:
+        """
+        Find the steady-state x_s satisfying f(x_s, u_s, d_s, p, t) = 0
+        via Newton iteration.
+
+        Parameters
+        ----------
+        u_s      : (nu,) steady-state input.
+        d_s      : (nd,) steady-state disturbance.
+        p        : parameter vector.
+        t        : evaluation time.
+        x0       : (nx,) initial guess; defaults to zeros.
+        tol      : convergence tolerance on ‖f(x)‖.
+        max_iter : maximum Newton iterations.
+
+        Returns
+        -------
+        x_s : (nx,) steady-state state (best estimate if not converged).
+        """
+        x = np.zeros(self.nx) if x0 is None else np.asarray(x0, dtype=float).copy()
+        for _ in range(max_iter):
+            fx = self.f(x, u_s, d_s, p, t)
+            if np.linalg.norm(fx) < tol:
+                return x
+            x = x - np.linalg.solve(self.dfdx(x, u_s, d_s, p, t), fx)
+        return x
+
     def linearise(
         self,
-        x_s: np.ndarray,
         u_s: np.ndarray,
         d_s: np.ndarray,
         p: np.ndarray | None = None,
         t: float = 0.0,
+        x0: np.ndarray | None = None,
     ) -> "ContinuousDiscreteLinearisedSDE":
         """
         Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at the
-        operating point ``(x_s, u_s, d_s)``.
+        steady-state operating point determined by ``(u_s, d_s)``.
 
-        All Jacobians are evaluated via the registered analytic or
-        finite-difference methods.  The diffusion matrix ``G`` is
-        ``sigma`` evaluated at the operating point.
+        The steady-state state ``x_s`` satisfying ``f(x_s, u_s, d_s, p, t) = 0``
+        is found via Newton iteration.  All Jacobians are evaluated at the
+        resulting operating point via the registered analytic or
+        finite-difference methods.  The diffusion matrix ``G`` is ``sigma``
+        evaluated at the operating point.
 
         The sampling interval ``Ts`` is not required here; pass it to
         :meth:`ContinuousDiscreteLinearisedSDE.discretize` when converting
@@ -241,11 +279,11 @@ class ContinuousDiscreteSDE(ABC):
 
         Parameters
         ----------
-        x_s : (nx,) operating-point state.
-        u_s : (nu,) operating-point input.
-        d_s : (nd,) operating-point disturbance.
+        u_s : (nu,) steady-state input.
+        d_s : (nd,) steady-state disturbance.
         p   : parameter vector; defaults to ``self.params``.
         t   : evaluation time (default 0.0).
+        x0  : (nx,) initial guess for Newton iteration; defaults to zeros.
 
         Returns
         -------
@@ -255,6 +293,9 @@ class ContinuousDiscreteSDE(ABC):
 
         if p is None:
             p = self.params
+        u_s = np.asarray(u_s, dtype=float)
+        d_s = np.asarray(d_s, dtype=float)
+        x_s = self._steady_state(u_s, d_s, p, t, x0)
         return _ConcreteContinuousDiscreteLinearisedSDE(
             A=self.dfdx(x_s, u_s, d_s, p, t),
             B=self.dfdu(x_s, u_s, d_s, p, t),
@@ -267,9 +308,9 @@ class ContinuousDiscreteSDE(ABC):
             Dz=self.dgmdu(x_s, u_s, d_s, p, t),
             Fz=self.dgmdd(x_s, u_s, d_s, p, t),
             Rm=self.Rm,
-            x_s=np.asarray(x_s),
-            u_s=np.asarray(u_s),
-            d_s=np.asarray(d_s),
+            x_s=x_s,
+            u_s=u_s,
+            d_s=d_s,
             z_s=self.gm(x_s, u_s, d_s, p, t),
             ym_s=self.hm(x_s, u_s, d_s, p, t),
         )

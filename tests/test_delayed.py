@@ -79,6 +79,8 @@ class _TwoStateModel(DiscreteLinearSDE):
     def Qd(self) -> np.ndarray: return 0.01 * np.eye(2)
     @property
     def Rm(self) -> np.ndarray: return 0.1 * np.eye(2)
+    @property
+    def Ts(self) -> float: return 1.0
 
     @property
     def x(self) -> list: return list(self._x)
