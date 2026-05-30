@@ -4,17 +4,17 @@ Tests for MPC controllers and Optimal Control Problems.
 Covers the following classes:
 
 Linear (discrete-time):
-  - OptimalControlProblem     (mbc.control)
-  - MPCController             (mbc.control)
+  - DiscreteLinearOCP  (mbc.control)     [OptimalControlProblem = alias]
+  - MPCController      (mbc.control)
 
 Linear continuous-discrete:
-  - CDOptimalControlProblem   (mbc.control)
-  - CDMPCController           (mbc.control)
+  - ContinuousLinearOCP  (mbc.control)  [CDOptimalControlProblem = alias]
+  - CDMPCController      (mbc.control)
 
 Nonlinear continuous-discrete:
   - CDTrackingOptimalControlProblem (mbc.control)
-  - EconomicOptimalControlProblem   (mbc.control)
-  - CDNMPCController                (mbc.control)
+  - ContinuousOCP       (mbc.control)   [EconomicOptimalControlProblem = alias]
+  - CDNMPCController    (mbc.control)
 """
 
 from __future__ import annotations
@@ -46,12 +46,12 @@ from mbc.models import (
 )
 from mbc.estimation import DiscreteLinearKF, ContinuousDiscreteLinearKF, ContinuousDiscreteLinearKFParams, ContinuousDiscreteEKF, ContinuousDiscreteEKFParams
 from mbc.control import (
-    OptimalControlProblem,
+    DiscreteLinearOCP,
+    ContinuousLinearOCP,
+    ContinuousOCP,
     MPCController,
-    CDOptimalControlProblem,
     CDMPCController,
     CDTrackingOptimalControlProblem,
-    EconomicOptimalControlProblem,
     CDNMPCController,
     CDLinearizedMPCController,
     linearize_cd_model,
@@ -59,6 +59,11 @@ from mbc.control import (
     NLPScalingPolicy,
     ScipyNLPBackend,
 )
+
+# Backward-compatible aliases used in this test file
+OptimalControlProblem = DiscreteLinearOCP
+CDOptimalControlProblem = ContinuousLinearOCP
+EconomicOptimalControlProblem = ContinuousOCP
 
 
 # ── Concrete model fixtures ───────────────────────────────────────────────────

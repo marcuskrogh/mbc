@@ -5,10 +5,9 @@ approximation in nonlinear CD systems.
 Jacobian benchmarks
 -------------------
 These tests verify that the analytical constraint and objective Jacobians
-added to ``EconomicOptimalControlProblem`` and
-``CDTrackingOptimalControlProblem`` produce a measurable reduction in the
-number of NLP function evaluations (``nfev``) compared to the numerical
-finite-difference baseline.
+added to ``ContinuousOCP`` and ``CDTrackingOptimalControlProblem`` produce a
+measurable reduction in the number of NLP function evaluations (``nfev``)
+compared to the numerical finite-difference baseline.
 
 The key insight: scipy's SLSQP must estimate the constraint Jacobian by
 finite differences when ``jac`` is not provided.  Each FD column requires
@@ -18,12 +17,12 @@ eliminate this overhead entirely.
 
 Background
 ----------
-The analytical Jacobians were introduced in:
+The analytical Jacobians are available in:
 
-* ``EconomicOptimalControlProblem._equality_constraint_jac``   — dynamics
-* ``EconomicOptimalControlProblem._inequality_constraint_jac`` — ROM/soft constraints
-* ``EconomicOptimalControlProblem._objective_jac``             — tracking + penalties
-* ``CDTrackingOptimalControlProblem``                          — lagrange + mayer Jacs
+* ``ContinuousOCP._equality_constraint_jac``   — dynamics
+* ``ContinuousOCP._inequality_constraint_jac`` — ROM/soft constraints
+* ``ContinuousOCP._objective_jac``             — tracking + penalties
+* ``CDTrackingOptimalControlProblem``           — R_stage + P_terminal Jacs
 
 All tests compare ``nfev`` between two modes:
 
@@ -62,8 +61,11 @@ import pytest
 
 from mbc.control import (
     CDTrackingOptimalControlProblem,
-    EconomicOptimalControlProblem,
+    ContinuousOCP,
 )
+
+# Backward-compatible alias used in this test file
+EconomicOptimalControlProblem = ContinuousOCP
 from mbc.control.nlp_solver import (
     IpoptNLPBackend,
     NLPConstraint,

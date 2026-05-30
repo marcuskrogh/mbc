@@ -1,6 +1,10 @@
 """Optimal control sub-package for mbc."""
 
-from .ocp import OptimalControlProblem
+from ._base import OCP
+from .discrete_linear_ocp import DiscreteLinearOCP, _shift_warm_start
+from .continuous_linear_ocp import ContinuousLinearOCP
+from .continuous_ocp import ContinuousOCP
+from .continuous_linearised_ocp import ContinuousLinearisedOCP
 from .mpc import MPCController
 from .cd_ocp import CDOptimalControlProblem, CDTrackingOptimalControlProblem
 from .cd_mpc import CDMPCController
@@ -30,27 +34,43 @@ from .qp_solver import (
     make_qp_backend,
 )
 
+# Backward-compatible alias
+OptimalControlProblem = DiscreteLinearOCP
+
 __all__ = [
+    # Abstract base
+    "OCP",
+    # New canonical names
+    "DiscreteLinearOCP",
+    "ContinuousLinearOCP",
+    "ContinuousOCP",
+    "ContinuousLinearisedOCP",
+    # Backward-compatible aliases
     "OptimalControlProblem",
-    "MPCController",
     "CDOptimalControlProblem",
     "CDTrackingOptimalControlProblem",
+    "EconomicOptimalControlProblem",
+    # MPC controllers
+    "MPCController",
     "CDMPCController",
     "CDLinearizedMPCController",
     "linearize_cd_model",
     "discretize_cd_linearization",
-    "EconomicOptimalControlProblem",
     "CDNMPCController",
+    # NLP solver
     "NLPConstraint",
     "NLPProblem",
     "NLPScalingPolicy",
     "NLPSolverBackend",
     "ScipyNLPBackend",
     "IpoptNLPBackend",
+    # QP solver
     "QPProblem",
     "QPResult",
     "QPSolverBackend",
     "HighsQPBackend",
     "OSQPBackend",
     "make_qp_backend",
+    # Helpers
+    "_shift_warm_start",
 ]
