@@ -262,7 +262,6 @@ class ContinuousDiscreteSDE(ABC):
         p: np.ndarray | None = None,
         t: float = 0.0,
         x0: np.ndarray | None = None,
-        Ts: float | None = None,
     ) -> "ContinuousDiscreteLinearisedSDE":
         """
         Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at the
@@ -274,11 +273,11 @@ class ContinuousDiscreteSDE(ABC):
         finite-difference methods.  The diffusion matrix ``G`` is ``sigma``
         evaluated at the operating point.
 
-        Passing ``Ts`` stores the sampling interval on the returned model so
-        that :meth:`ContinuousDiscreteLinearisedSDE.discretize` can be called
-        without arguments, matching the parent's ``discretize(d=None)`` call:
+        If ``self.Ts`` is defined on the model it is carried over to the
+        returned linearised model, so that :meth:`ContinuousDiscreteLinearisedSDE.discretize`
+        can be called without arguments:
 
-            dm = model.linearise(u_s, d_s, Ts=0.1).discretize()
+            dm = sde.linearise(u_s, d_s).discretize()
 
         Parameters
         ----------
@@ -287,8 +286,6 @@ class ContinuousDiscreteSDE(ABC):
         p   : parameter vector; defaults to ``self.params``.
         t   : evaluation time (default 0.0).
         x0  : (nx,) initial guess for Newton iteration; defaults to zeros.
-        Ts  : sampling interval (seconds), optional.  When given it is stored
-              on the returned model and used by ``discretize()``.
 
         Returns
         -------
@@ -301,6 +298,10 @@ class ContinuousDiscreteSDE(ABC):
         u_s = np.asarray(u_s, dtype=float)
         d_s = np.asarray(d_s, dtype=float)
         x_s = self._steady_state(u_s, d_s, p, t, x0)
+        try:
+            Ts: float | None = self.Ts
+        except AttributeError:
+            Ts = None
         return _ConcreteContinuousDiscreteLinearisedSDE(
             A=self.dfdx(x_s, u_s, d_s, p, t),
             B=self.dfdu(x_s, u_s, d_s, p, t),
@@ -319,6 +320,22 @@ class ContinuousDiscreteSDE(ABC):
             z_s=self.gm(x_s, u_s, d_s, p, t),
             ym_s=self.hm(x_s, u_s, d_s, p, t),
             Ts=Ts,
+        )
+
+    # ── Sampling interval (non-abstract, overridable) ─────────────────────
+
+    @property
+    def Ts(self) -> float:
+        """
+        Sampling interval (seconds).
+
+        Default: raises :class:`AttributeError`.  Subclasses that have a
+        fixed sampling interval should override this property.  When defined,
+        ``linearise()`` carries it over to the returned linearised model.
+        """
+        raise AttributeError(
+            f"{type(self).__name__} does not define Ts. "
+            "Override this property to specify the sampling interval."
         )
 
     # ── Parameters ────────────────────────────────────────────────────────
