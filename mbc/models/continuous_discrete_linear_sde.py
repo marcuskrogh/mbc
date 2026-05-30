@@ -14,7 +14,7 @@ take the specific forms:
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Tuple
+from typing import Tuple  # used in discretize return type annotation
 
 import numpy as np
 
@@ -116,27 +116,6 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
     @abstractmethod
     def dt(self) -> float:
         """Sampling interval (seconds)."""
-
-    # ── Abstract control-interface properties ────────────────────────────
-
-    @property
-    @abstractmethod
-    def x(self) -> list[float]:
-        """Current state x as a plain list of floats."""
-
-    @x.setter
-    @abstractmethod
-    def x(self, val: list[float]) -> None: ...
-
-    @property
-    @abstractmethod
-    def x_ref(self) -> np.ndarray:
-        """Reference / setpoint x_ref ∈ ℝⁿˣ (numpy 1-D array, length nx)."""
-
-    @property
-    @abstractmethod
-    def u_bounds(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Box constraint on inputs (u_min, u_max), each a (nu,) ndarray."""
 
     # ── Concrete implementations of ContinuousDiscreteSDE abstracts ───────
 
@@ -299,10 +278,9 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
             expm([[A, B, E], [0, 0, 0], [0, 0, 0]] · dt)[:nx, :]
             = [Ad | Bd | Ed]
 
-        The ``d`` argument is accepted for interface compatibility with
-        ``OptimalControlProblem`` (LPV sub-classes may override this method
-        to schedule matrices on the current disturbance); the default LTI
-        implementation ignores it.
+        The ``d`` argument is accepted so that LPV sub-classes may override
+        this method to schedule matrices on the current disturbance; the
+        default LTI implementation ignores it.
 
         Parameters
         ----------

@@ -14,7 +14,6 @@ Discrete linear SDE model interface.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Tuple
 
 import numpy as np
 
@@ -100,28 +99,6 @@ class DiscreteLinearSDE(ABC):
     def Rm(self) -> np.ndarray:
         """Measurement noise covariance Rm ∈ ℝⁿʸᵐˣⁿʸᵐ (numpy ndarray)."""
 
-    # ── Abstract control-interface properties ────────────────────────────
-
-    @property
-    @abstractmethod
-    def x(self) -> list[float]:
-        """Current state x as a plain list of floats."""
-
-    @x.setter
-    @abstractmethod
-    def x(self, val: list[float]) -> None:
-        ...
-
-    @property
-    @abstractmethod
-    def x_ref(self) -> np.ndarray:
-        """Reference / setpoint x_ref ∈ ℝⁿˣ (numpy 1-D array, length nx)."""
-
-    @property
-    @abstractmethod
-    def u_bounds(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Box constraint on inputs (u_min, u_max), each a (nu,) ndarray."""
-
     # ── Derived (non-abstract, overridable) ──────────────────────────────
 
     @property
@@ -196,7 +173,7 @@ class DiscreteLinearSDE(ABC):
         """Process-noise dimension nw = Gd.shape[1]."""
         return self.Gd.shape[1]
 
-    # ── Parameter-identification interface (non-abstract, overridable) ────
+    # ── Overridable hooks ─────────────────────────────────────────────────
 
     def predict_offset(self, d_np: np.ndarray) -> np.ndarray:
         """
@@ -204,9 +181,8 @@ class DiscreteLinearSDE(ABC):
 
             x_pred = Ad x + Bd u + Ed d + predict_offset(d)
 
-        The default implementation returns a zero vector.  Subclasses that
-        model a known constant disturbance or an estimated bias term should
-        override this method.
+        Default: zero vector.  Subclasses may override to add a known
+        bias or affine term without modifying the system matrices.
 
         Parameters
         ----------
@@ -217,6 +193,8 @@ class DiscreteLinearSDE(ABC):
         offset : (nx,) ndarray
         """
         return np.zeros(self.nx)
+
+    # ── Parameter-identification interface (non-abstract, overridable) ────
 
     @property
     def params(self) -> np.ndarray:

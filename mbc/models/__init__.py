@@ -18,9 +18,8 @@ Discrete-time interfaces
     ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
 
 ``DiscreteLinearisedSDE`` — extends ``DiscreteLinearSDE`` with a steady-state
-operating point and deviation-variable formulation:
-
-    δx[k+1] = Ad δx[k] + Bd δu[k] + Ed δd[k] + Gd w[k],   δx = x − x_s
+operating point and helpers to convert deviation-variable results to absolute
+values (``x_abs``, ``u_abs``, ``d_abs``, ``z_abs``, ``ym_abs``).
 
 Continuous-discrete SDE interfaces
 ------------------------------------
@@ -41,9 +40,9 @@ take the specific forms:
     hm(x, u, d, p, t)    = Cm x + Dm u + Fm d
 
 ``ContinuousDiscreteLinearisedSDE`` — extends ``ContinuousDiscreteLinearSDE``
-with a steady-state operating point and deviation-variable formulation:
-
-    dδx(t) = (A δx + B δu + E δd) dt + G dw(t),   δx = x − x_s
+with a steady-state operating point and helpers to convert deviation-variable
+results to absolute values (``x_abs``, ``u_abs``, ``d_abs``, ``z_abs``,
+``ym_abs``).
 
 ``ContinuousDiscreteSDAE`` — standalone abstract base for continuous-discrete
 stochastic differential-algebraic systems (ControlToolbox §SDAE):
