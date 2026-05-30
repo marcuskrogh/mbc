@@ -68,6 +68,39 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
     def ym_s(self) -> np.ndarray:
         """Steady-state measurement ym_s ∈ ℝⁿʸᵐ."""
 
+    # ── Discretisation ────────────────────────────────────────────────────
+
+    def discretized_model(self, d: np.ndarray | None = None) -> "DiscreteLinearisedSDE":
+        """
+        Return a :class:`DiscreteLinearisedSDE` obtained by ZOH-discretising
+        this linearised continuous-discrete system.
+
+        The steady-state operating point ``(x_s, u_s, d_s, z_s, ym_s)`` is
+        carried over to the returned model so the caller can recover absolute
+        values from deviation-variable Kalman-filter estimates.
+
+        Parameters
+        ----------
+        d : (nd,) ndarray, optional  — passed to :meth:`discretize` for
+            LPV scheduling (ignored for LTI models).
+
+        Returns
+        -------
+        DiscreteLinearisedSDE
+        """
+        from ._concrete import _ConcreteDiscreteLinearisedSDE
+
+        Ad, Bd, Ed = self.discretize(d)
+        Qd = self.discretize_noise()
+        return _ConcreteDiscreteLinearisedSDE(
+            Ad=Ad, Bd=Bd, Ed=Ed,
+            Cm=self.Cm, Qd=Qd, Rm=self.Rm,
+            Cz=self.Cz, Dz=self.Dz, Fz=self.Fz,
+            Dm=self.Dm, Fm=self.Fm,
+            x_s=self.x_s, u_s=self.u_s, d_s=self.d_s,
+            z_s=self.z_s, ym_s=self.ym_s,
+        )
+
     # ── Absolute-value getters ────────────────────────────────────────────
 
     def x_abs(self, dx: np.ndarray) -> np.ndarray:

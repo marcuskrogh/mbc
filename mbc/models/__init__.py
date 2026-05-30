@@ -55,7 +55,7 @@ stochastic differential-algebraic systems (ControlToolbox §SDAE):
 
 from .discrete_linear_sde import DiscreteLinearSDE
 from .discrete_linearised_sde import DiscreteLinearisedSDE
-from .continuous_discrete_sde import ContinuousDiscreteSDE
+from .continuous_discrete_sde import ContinuousDiscreteSDE, Linearisation
 from .continuous_discrete_linear_sde import ContinuousDiscreteLinearSDE
 from .continuous_discrete_linearised_sde import ContinuousDiscreteLinearisedSDE
 from .continuous_discrete_sdae import ContinuousDiscreteSDAE
@@ -64,6 +64,7 @@ __all__ = [
     "DiscreteLinearSDE",
     "DiscreteLinearisedSDE",
     "ContinuousDiscreteSDE",
+    "Linearisation",
     "ContinuousDiscreteLinearSDE",
     "ContinuousDiscreteLinearisedSDE",
     "ContinuousDiscreteSDAE",

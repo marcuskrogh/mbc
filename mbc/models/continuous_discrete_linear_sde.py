@@ -296,6 +296,37 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
 
         return _zoh_full(self.A, self.B, self.E, self.dt)
 
+    def discretized_model(self, d: np.ndarray | None = None) -> "DiscreteLinearSDE":
+        """
+        Return a :class:`DiscreteLinearSDE` obtained by ZOH-discretising this
+        continuous-discrete system.
+
+        The discrete matrices are computed via :meth:`discretize` (augmented
+        matrix exponential) and the process-noise covariance via
+        :meth:`discretize_noise` (Van Loan method).  The output and
+        measurement matrices ``Cz``, ``Dz``, ``Fz``, ``Cm``, ``Dm``, ``Fm``
+        carry over unchanged, as they apply at sample times.
+
+        Parameters
+        ----------
+        d : (nd,) ndarray, optional  — passed to :meth:`discretize` for
+            LPV scheduling (ignored for LTI models).
+
+        Returns
+        -------
+        DiscreteLinearSDE
+        """
+        from ._concrete import _ConcreteDiscreteLinearSDE
+
+        Ad, Bd, Ed = self.discretize(d)
+        Qd = self.discretize_noise()
+        return _ConcreteDiscreteLinearSDE(
+            Ad=Ad, Bd=Bd, Ed=Ed,
+            Cm=self.Cm, Qd=Qd, Rm=self.Rm,
+            Cz=self.Cz, Dz=self.Dz, Fz=self.Fz,
+            Dm=self.Dm, Fm=self.Fm,
+        )
+
     def discretize_noise(self) -> np.ndarray:
         """
         Exact discrete process-noise covariance Qd via Van Loan (1978).

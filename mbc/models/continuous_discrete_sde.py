@@ -12,10 +12,45 @@ stochastic systems (ControlToolbox §SDE):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import NamedTuple
 
 import numpy as np
 
 from .._utils import _fd_jacobian
+
+
+class Linearisation(NamedTuple):
+    """
+    System matrices of a linearisation evaluated at a steady-state operating
+    point ``(x_s, u_s, d_s)``.
+
+    The linearised dynamics are:
+
+        dδx(t) = (A δx + B δu + E δd) dt + G dw(t),  dw(t) ~ N(0, I dt)
+        δz(t)  = Cz δx + Dz δu + Fz δd
+        δym(tk)= Cm δx + Dm δu + Fm δd + v(tk),       v(tk) ~ N(0, Rm)
+
+    where δx = x − x_s, δu = u − u_s, δd = d − d_s.
+
+    The operating-point outputs ``z_s`` and ``ym_s`` are included so the
+    caller can reconstruct absolute outputs without re-evaluating the model.
+    """
+    A: np.ndarray
+    B: np.ndarray
+    E: np.ndarray
+    G: np.ndarray
+    Cm: np.ndarray
+    Dm: np.ndarray
+    Fm: np.ndarray
+    Cz: np.ndarray
+    Dz: np.ndarray
+    Fz: np.ndarray
+    Rm: np.ndarray
+    x_s: np.ndarray
+    u_s: np.ndarray
+    d_s: np.ndarray
+    z_s: np.ndarray
+    ym_s: np.ndarray
 
 
 class ContinuousDiscreteSDE(ABC):
@@ -212,6 +247,100 @@ class ContinuousDiscreteSDE(ABC):
     def dgmdu(self, x, u, d, p, t) -> np.ndarray:
         """Jacobian ∂gm/∂u at (x, u, d, p, t)  →  (nz, nu) ndarray."""
         return _fd_jacobian(lambda v: self.gm(x, v, d, p, t), u)
+
+    def dgmdd(self, x, u, d, p, t) -> np.ndarray:
+        """Jacobian ∂gm/∂d at (x, u, d, p, t)  →  (nz, nd) ndarray."""
+        return _fd_jacobian(lambda v: self.gm(x, u, v, p, t), d)
+
+    # ── Linearisation factory methods ─────────────────────────────────────
+
+    def linearise(
+        self,
+        x_s: np.ndarray,
+        u_s: np.ndarray,
+        d_s: np.ndarray,
+        p: np.ndarray | None = None,
+        t: float = 0.0,
+    ) -> "Linearisation":
+        """
+        Linearise the system at the operating point ``(x_s, u_s, d_s)``.
+
+        All Jacobians are evaluated via the registered analytic or
+        finite-difference methods.  The diffusion matrix ``G`` is the
+        value of ``sigma`` at the operating point.
+
+        Parameters
+        ----------
+        x_s : (nx,) operating-point state.
+        u_s : (nu,) operating-point input.
+        d_s : (nd,) operating-point disturbance.
+        p   : parameter vector; defaults to ``self.params``.
+        t   : evaluation time (default 0.0).
+
+        Returns
+        -------
+        Linearisation
+            Named tuple containing the system matrices and operating-point
+            output values (see :class:`Linearisation`).
+        """
+        if p is None:
+            p = self.params
+        return Linearisation(
+            A=self.dfdx(x_s, u_s, d_s, p, t),
+            B=self.dfdu(x_s, u_s, d_s, p, t),
+            E=self.dfdd(x_s, u_s, d_s, p, t),
+            G=self.sigma(x_s, u_s, d_s, p, t),
+            Cm=self.dhmdx(x_s, u_s, d_s, p, t),
+            Dm=self.dhmdu(x_s, u_s, d_s, p, t),
+            Fm=self.dhmdd(x_s, u_s, d_s, p, t),
+            Cz=self.dgmdx(x_s, u_s, d_s, p, t),
+            Dz=self.dgmdu(x_s, u_s, d_s, p, t),
+            Fz=self.dgmdd(x_s, u_s, d_s, p, t),
+            Rm=self.Rm,
+            x_s=np.asarray(x_s),
+            u_s=np.asarray(u_s),
+            d_s=np.asarray(d_s),
+            z_s=self.gm(x_s, u_s, d_s, p, t),
+            ym_s=self.hm(x_s, u_s, d_s, p, t),
+        )
+
+    def linearised_model(
+        self,
+        x_s: np.ndarray,
+        u_s: np.ndarray,
+        d_s: np.ndarray,
+        dt: float,
+        p: np.ndarray | None = None,
+        t: float = 0.0,
+    ) -> "ContinuousDiscreteLinearisedSDE":
+        """
+        Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at
+        the operating point ``(x_s, u_s, d_s)`` with sampling interval ``dt``.
+
+        Parameters
+        ----------
+        x_s : (nx,) operating-point state.
+        u_s : (nu,) operating-point input.
+        d_s : (nd,) operating-point disturbance.
+        dt  : sampling interval (seconds).
+        p   : parameter vector; defaults to ``self.params``.
+        t   : evaluation time (default 0.0).
+
+        Returns
+        -------
+        ContinuousDiscreteLinearisedSDE
+        """
+        from ._concrete import _ConcreteContinuousDiscreteLinearisedSDE
+
+        lin = self.linearise(x_s, u_s, d_s, p=p, t=t)
+        return _ConcreteContinuousDiscreteLinearisedSDE(
+            A=lin.A, B=lin.B, E=lin.E, G=lin.G,
+            Cm=lin.Cm, Dm=lin.Dm, Fm=lin.Fm,
+            Cz=lin.Cz, Dz=lin.Dz, Fz=lin.Fz,
+            Rm=lin.Rm, dt=dt,
+            x_s=lin.x_s, u_s=lin.u_s, d_s=lin.d_s,
+            z_s=lin.z_s, ym_s=lin.ym_s,
+        )
 
     # ── Parameters ────────────────────────────────────────────────────────
 
