@@ -51,7 +51,7 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
     interval is given.  Pass ``Ts`` explicitly when the model does not have
     a preset sampling interval (e.g. factory-returned linearisations):
 
-        dm = model.linearise(u_s, d_s).discretize(Ts=0.1)
+        dm = model.linearise(u_s, d_s, Ts=0.1).discretize()
 
     Coordinate transforms
     ---------------------
@@ -91,25 +91,20 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
 
     # ── Discretisation ────────────────────────────────────────────────────
 
-    def discretize(
-        self,
-        Ts: float | None = None,
-        d: np.ndarray | None = None,
-    ) -> "DiscreteLinearisedSDE":
+    def discretize(self, d: np.ndarray | None = None) -> "DiscreteLinearisedSDE":
         """
         Return a :class:`DiscreteLinearisedSDE` obtained by ZOH-discretising
-        this linearised system.
+        this linearised system at ``self.Ts``.
 
+        Identical signature to :meth:`ContinuousDiscreteLinearSDE.discretize`.
         The steady-state operating point ``(x_s, u_s, d_s, z_s, ym_s)`` is
-        carried over so the returned discrete model can convert deviation-
-        variable estimates and inputs back to absolute values.
+        carried over so the returned discrete model supports the full
+        coordinate-transform interface (``*_dev`` / ``*_abs``).
 
         Parameters
         ----------
-        Ts : sampling interval (seconds).  Defaults to ``self.Ts`` when not
-             given; raises :class:`AttributeError` if neither is available.
-        d  : (nd,) ndarray, optional — disturbance for LPV scheduling
-             (ignored for LTI models).
+        d : (nd,) ndarray, optional — disturbance for LPV scheduling
+            (ignored for LTI models).
 
         Returns
         -------
@@ -118,8 +113,7 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
         from .._utils import _zoh_full, _van_loan
         from ._concrete import _ConcreteDiscreteLinearisedSDE
 
-        if Ts is None:
-            Ts = self.Ts  # raises AttributeError with a clear message if not set
+        Ts = self.Ts  # raises AttributeError with a clear message if not set
         Ad, Bd, Ed = _zoh_full(self.A, self.B, self.E, Ts)
         Qd = _van_loan(self.A, self.G, np.eye(self.nw), Ts)
         return _ConcreteDiscreteLinearisedSDE(

@@ -262,6 +262,7 @@ class ContinuousDiscreteSDE(ABC):
         p: np.ndarray | None = None,
         t: float = 0.0,
         x0: np.ndarray | None = None,
+        Ts: float | None = None,
     ) -> "ContinuousDiscreteLinearisedSDE":
         """
         Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at the
@@ -273,9 +274,11 @@ class ContinuousDiscreteSDE(ABC):
         finite-difference methods.  The diffusion matrix ``G`` is ``sigma``
         evaluated at the operating point.
 
-        The sampling interval ``Ts`` is not required here; pass it to
-        :meth:`ContinuousDiscreteLinearisedSDE.discretize` when converting
-        to a discrete-time model.
+        Passing ``Ts`` stores the sampling interval on the returned model so
+        that :meth:`ContinuousDiscreteLinearisedSDE.discretize` can be called
+        without arguments, matching the parent's ``discretize(d=None)`` call:
+
+            dm = model.linearise(u_s, d_s, Ts=0.1).discretize()
 
         Parameters
         ----------
@@ -284,6 +287,8 @@ class ContinuousDiscreteSDE(ABC):
         p   : parameter vector; defaults to ``self.params``.
         t   : evaluation time (default 0.0).
         x0  : (nx,) initial guess for Newton iteration; defaults to zeros.
+        Ts  : sampling interval (seconds), optional.  When given it is stored
+              on the returned model and used by ``discretize()``.
 
         Returns
         -------
@@ -313,6 +318,7 @@ class ContinuousDiscreteSDE(ABC):
             d_s=d_s,
             z_s=self.gm(x_s, u_s, d_s, p, t),
             ym_s=self.hm(x_s, u_s, d_s, p, t),
+            Ts=Ts,
         )
 
     # ── Parameters ────────────────────────────────────────────────────────
