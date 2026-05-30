@@ -16,14 +16,14 @@ over an interval ``[t_k, t_{k+1}]`` of length ``dt`` partitioned into
     d_{k,n} = d_k                       (zero-order hold)
     Δω_{k,n} = z_{k,n} √Δt,  z_{k,n} ~ N(0, I)
 
-**Explicit-Explicit Euler-Maruyama (EE)** — both drift and diffusion
-evaluated at the current sub-step:
+**Explicit Euler-Maruyama** (``IntegrationScheme.EXPLICIT_EULER``) — both
+drift and diffusion evaluated at the current sub-step:
 
     x_{k,n+1} = x_{k,n} + f(x_{k,n}, u_k, d_k, p, t_{k,n}) Δt
                        + sigma(x_{k,n}, u_k, d_k, p, t_{k,n}) Δω_{k,n}
 
-**Implicit-Explicit (IE)** — drift evaluated at the *next* sub-step
-(implicit), diffusion evaluated explicitly:
+**Implicit-Explicit** (``IntegrationScheme.IMPLICIT_EULER``) — drift
+evaluated at the *next* sub-step (implicit), diffusion evaluated explicitly:
 
     x_{k,n+1} = x_{k,n} + f(x_{k,n+1}, u_k, d_k, p, t_{k,n+1}) Δt
                        + sigma(x_{k,n}, u_k, d_k, p, t_{k,n}) Δω_{k,n}
@@ -38,8 +38,8 @@ with Jacobian
 
     ∂R/∂x = I − (∂f/∂x)(x_{k,n+1}, …) Δt.
 
-Use the EE scheme when the drift dynamics are non-stiff and the IE
-scheme when stiff.
+Use the explicit scheme when the drift dynamics are non-stiff and the
+implicit scheme when stiff.
 """
 
 from __future__ import annotations
@@ -47,6 +47,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..models import ContinuousDiscreteSDE
+from ..estimation._base import IntegrationScheme
 from .._utils import _newton_solve
 
 
@@ -65,15 +66,17 @@ class SDESimulator:
     n_steps : int, optional
         Number of integration sub-steps per measurement interval.
         Default: 10.
-    scheme : {"EE", "IE"}, optional
-        Integration scheme.  ``"EE"`` = explicit-explicit Euler-Maruyama
-        (default), ``"IE"`` = implicit-explicit (implicit drift).
+    scheme : IntegrationScheme, optional
+        Integration scheme.  :attr:`~IntegrationScheme.EXPLICIT_EULER`
+        (default) is explicit Euler-Maruyama;
+        :attr:`~IntegrationScheme.IMPLICIT_EULER` uses an implicit drift
+        solve and is suitable for stiff dynamics.
     seed : int or None, optional
         Random seed for reproducibility.
     newton_tol : float, optional
-        Newton tolerance for the IE drift solve.  Default: 1e-12.
+        Newton tolerance for the implicit drift solve.  Default: 1e-12.
     newton_max_iter : int, optional
-        Maximum Newton iterations for the IE drift solve.  Default: 50.
+        Maximum Newton iterations for the implicit drift solve.  Default: 50.
     """
 
     def __init__(
@@ -81,13 +84,15 @@ class SDESimulator:
         model: ContinuousDiscreteSDE,
         dt: float,
         n_steps: int = 10,
-        scheme: str = "EE",
+        scheme: IntegrationScheme = IntegrationScheme.EXPLICIT_EULER,
         seed: int | None = None,
         newton_tol: float = 1e-12,
         newton_max_iter: int = 50,
     ) -> None:
-        if scheme not in ("EE", "IE"):
-            raise ValueError(f"Unknown scheme '{scheme}'; choose 'EE' or 'IE'.")
+        if not isinstance(scheme, IntegrationScheme):
+            raise TypeError(
+                f"scheme must be an IntegrationScheme member, got {scheme!r}."
+            )
         self._model = model
         self._dt = dt
         self._n_steps = n_steps
@@ -136,10 +141,10 @@ class SDESimulator:
             z = self._rng.standard_normal(nw)
             noise = sigma_val @ z * sqrt_h
 
-            if self._scheme == "EE":
+            if self._scheme is IntegrationScheme.EXPLICIT_EULER:
                 f_val = self._model.f(x_cur, u, d, p, t_cur)
                 x_cur = x_cur + f_val * h + noise
-            else:  # IE
+            else:  # IMPLICIT_EULER
                 rhs = x_cur + noise
                 t_next = t_cur + h
 
