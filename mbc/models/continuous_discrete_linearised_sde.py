@@ -2,8 +2,8 @@
 Linearised continuous-discrete SDE model interface.
 
 ``ContinuousDiscreteLinearisedSDE`` — extends ``ContinuousDiscreteLinearSDE``
-with an explicit steady-state operating point and helpers to convert
-deviation-variable results back to absolute values:
+with an explicit steady-state operating point and helpers to convert between
+absolute and deviation variables:
 
     dδx(t) = (A δx(t) + B δu(t) + E δd(t)) dt + G dw(t),  dw(t) ~ N(0, I dt)
     δz(t)  = Cz δx(t) + Dz δu(t) + Fz δd(t)
@@ -43,6 +43,21 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
     and ``z_s``, ``ym_s`` follow from the output equations.  Subclasses may
     override ``x_s``, ``z_s``, or ``ym_s`` to supply precomputed values (e.g.
     from a nonlinear solver).
+
+    Discretisation
+    --------------
+    ``discretize(Ts=None, d=None)`` matches the signature of the parent's
+    ``discretize(d=None)``: both use ``self.Ts`` when no explicit sampling
+    interval is given.  Pass ``Ts`` explicitly when the model does not have
+    a preset sampling interval (e.g. factory-returned linearisations):
+
+        dm = model.linearise(u_s, d_s).discretize(Ts=0.1)
+
+    Coordinate transforms
+    ---------------------
+    Mirrors :class:`DiscreteLinearisedSDE`: the ``*_dev`` and ``*_abs``
+    helpers shift by the operating point and allow the same closed-loop
+    code to work with both linearised and non-linearised models.
     """
 
     # ── Abstract steady-state operating point ─────────────────────────────
@@ -76,18 +91,23 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
 
     # ── Discretisation ────────────────────────────────────────────────────
 
-    def discretize(self, Ts: float, d: np.ndarray | None = None) -> "DiscreteLinearisedSDE":
+    def discretize(
+        self,
+        Ts: float | None = None,
+        d: np.ndarray | None = None,
+    ) -> "DiscreteLinearisedSDE":
         """
         Return a :class:`DiscreteLinearisedSDE` obtained by ZOH-discretising
-        this linearised system at sampling interval ``Ts``.
+        this linearised system.
 
         The steady-state operating point ``(x_s, u_s, d_s, z_s, ym_s)`` is
-        carried over so the caller can recover absolute values from
-        deviation-variable estimates.
+        carried over so the returned discrete model can convert deviation-
+        variable estimates and inputs back to absolute values.
 
         Parameters
         ----------
-        Ts : sampling interval (seconds).
+        Ts : sampling interval (seconds).  Defaults to ``self.Ts`` when not
+             given; raises :class:`AttributeError` if neither is available.
         d  : (nd,) ndarray, optional — disturbance for LPV scheduling
              (ignored for LTI models).
 
@@ -98,6 +118,8 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
         from .._utils import _zoh_full, _van_loan
         from ._concrete import _ConcreteDiscreteLinearisedSDE
 
+        if Ts is None:
+            Ts = self.Ts  # raises AttributeError with a clear message if not set
         Ad, Bd, Ed = _zoh_full(self.A, self.B, self.E, Ts)
         Qd = _van_loan(self.A, self.G, np.eye(self.nw), Ts)
         return _ConcreteDiscreteLinearisedSDE(
@@ -110,7 +132,29 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
             x_s=self.x_s, z_s=self.z_s, ym_s=self.ym_s,
         )
 
-    # ── Absolute-value getters ────────────────────────────────────────────
+    # ── Coordinate transforms: absolute → deviation ───────────────────────
+
+    def x_dev(self, x: np.ndarray) -> np.ndarray:
+        """Deviation state δx = x − x_s."""
+        return x - self.x_s
+
+    def u_dev(self, u: np.ndarray) -> np.ndarray:
+        """Deviation input δu = u − u_s."""
+        return u - self.u_s
+
+    def d_dev(self, d: np.ndarray) -> np.ndarray:
+        """Deviation disturbance δd = d − d_s."""
+        return d - self.d_s
+
+    def z_dev(self, z: np.ndarray) -> np.ndarray:
+        """Deviation output δz = z − z_s."""
+        return z - self.z_s
+
+    def ym_dev(self, ym: np.ndarray) -> np.ndarray:
+        """Deviation measurement δym = ym − ym_s."""
+        return ym - self.ym_s
+
+    # ── Coordinate transforms: deviation → absolute ───────────────────────
 
     def x_abs(self, dx: np.ndarray) -> np.ndarray:
         """Absolute state x = δx + x_s."""

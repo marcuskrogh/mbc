@@ -2,8 +2,8 @@
 Linearised discrete-time SDE model interface.
 
 ``DiscreteLinearisedSDE`` — extends ``DiscreteLinearSDE`` with an explicit
-steady-state operating point and helpers to convert deviation-variable results
-back to absolute values:
+steady-state operating point and helpers to convert between absolute and
+deviation variables:
 
     δx[k+1] = Ad δx[k] + Bd δu[k] + Ed δd[k] + Gd w[k],   w[k] ~ N(0, Qd)
     δz[k]   = Cz δx[k] + Dz δu[k] + Fz δd[k]
@@ -43,6 +43,18 @@ class DiscreteLinearisedSDE(DiscreteLinearSDE):
     and ``z_s``, ``ym_s`` follow from the output equations.  Subclasses may
     override ``x_s``, ``z_s``, or ``ym_s`` to supply precomputed values (e.g.
     from a nonlinear solver).
+
+    Coordinate transforms
+    ---------------------
+    The ``*_dev`` and ``*_abs`` helpers make the closed-loop workflow uniform
+    across :class:`DiscreteLinearSDE` and :class:`DiscreteLinearisedSDE`:
+
+        δym = model.ym_dev(ym)   # absolute measurement → deviation
+        # ... Kalman filter / MPC in deviation space ...
+        u   = model.u_abs(δu)    # optimal deviation input → absolute
+
+    For a non-linearised :class:`DiscreteLinearSDE` these methods are
+    identity operations, so the same code works without modification.
     """
 
     # ── Abstract steady-state operating point ─────────────────────────────
@@ -77,7 +89,29 @@ class DiscreteLinearisedSDE(DiscreteLinearSDE):
         """Steady-state measurement ym_s = Cm x_s + Dm u_s + Fm d_s."""
         return self.Cm @ self.x_s + self.Dm @ self.u_s + self.Fm @ self.d_s
 
-    # ── Absolute-value getters ────────────────────────────────────────────
+    # ── Coordinate transforms: absolute → deviation ───────────────────────
+
+    def x_dev(self, x: np.ndarray) -> np.ndarray:
+        """Deviation state δx = x − x_s."""
+        return x - self.x_s
+
+    def u_dev(self, u: np.ndarray) -> np.ndarray:
+        """Deviation input δu = u − u_s."""
+        return u - self.u_s
+
+    def d_dev(self, d: np.ndarray) -> np.ndarray:
+        """Deviation disturbance δd = d − d_s."""
+        return d - self.d_s
+
+    def z_dev(self, z: np.ndarray) -> np.ndarray:
+        """Deviation output δz = z − z_s."""
+        return z - self.z_s
+
+    def ym_dev(self, ym: np.ndarray) -> np.ndarray:
+        """Deviation measurement δym = ym − ym_s."""
+        return ym - self.ym_s
+
+    # ── Coordinate transforms: deviation → absolute ───────────────────────
 
     def x_abs(self, dx: np.ndarray) -> np.ndarray:
         """Absolute state x = δx + x_s."""

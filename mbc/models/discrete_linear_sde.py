@@ -173,6 +173,57 @@ class DiscreteLinearSDE(ABC):
         """Process-noise dimension nw = Gd.shape[1]."""
         return self.Gd.shape[1]
 
+    # ── Coordinate-transform helpers ─────────────────────────────────────
+    #
+    # For a non-linearised model absolute values and deviation variables are
+    # the same thing, so all transforms are the identity.  DiscreteLinearisedSDE
+    # overrides these to shift by the operating point.  Code that uses these
+    # methods therefore works transparently with both model types:
+    #
+    #   δym = model.ym_dev(ym)       # absolute → deviation (pre-filter)
+    #   δu  = controller.solve(δx̂)
+    #   u   = model.u_abs(δu)        # deviation → absolute (post-controller)
+
+    def x_dev(self, x: np.ndarray) -> np.ndarray:
+        """Deviation state δx = x − x_s  (identity: returns x unchanged)."""
+        return x
+
+    def u_dev(self, u: np.ndarray) -> np.ndarray:
+        """Deviation input δu = u − u_s  (identity: returns u unchanged)."""
+        return u
+
+    def d_dev(self, d: np.ndarray) -> np.ndarray:
+        """Deviation disturbance δd = d − d_s  (identity: returns d unchanged)."""
+        return d
+
+    def z_dev(self, z: np.ndarray) -> np.ndarray:
+        """Deviation output δz = z − z_s  (identity: returns z unchanged)."""
+        return z
+
+    def ym_dev(self, ym: np.ndarray) -> np.ndarray:
+        """Deviation measurement δym = ym − ym_s  (identity: returns ym unchanged)."""
+        return ym
+
+    def x_abs(self, dx: np.ndarray) -> np.ndarray:
+        """Absolute state x = δx + x_s  (identity: returns dx unchanged)."""
+        return dx
+
+    def u_abs(self, du: np.ndarray) -> np.ndarray:
+        """Absolute input u = δu + u_s  (identity: returns du unchanged)."""
+        return du
+
+    def d_abs(self, dd: np.ndarray) -> np.ndarray:
+        """Absolute disturbance d = δd + d_s  (identity: returns dd unchanged)."""
+        return dd
+
+    def z_abs(self, dz: np.ndarray) -> np.ndarray:
+        """Absolute output z = δz + z_s  (identity: returns dz unchanged)."""
+        return dz
+
+    def ym_abs(self, dym: np.ndarray) -> np.ndarray:
+        """Absolute measurement ym = δym + ym_s  (identity: returns dym unchanged)."""
+        return dym
+
     # ── Overridable hooks ─────────────────────────────────────────────────
 
     def predict_offset(self, d_np: np.ndarray) -> np.ndarray:
