@@ -109,13 +109,12 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
     Parameters
     ----------
     model : ContinuousDiscreteSDE
-        Nonlinear continuous-discrete SDE system.
+        Nonlinear continuous-discrete SDE system.  Must expose a ``Ts``
+        property giving the measurement sampling interval (seconds).
     x0 : (nx,) ndarray
         Initial state estimate x̂_{0|0}.
     P0 : (nx, nx) ndarray
         Initial state covariance P_{0|0}.
-    Ts : float
-        Measurement sampling interval (seconds).
     params : ContinuousDiscreteUKFParams, optional
         Algorithm parameter struct.  Pass to control integration steps and
         unscented-transform tuning scalars.
@@ -126,7 +125,6 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
         model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
-        Ts: float,
         params: ContinuousDiscreteUKFParams | None = None,
     ) -> None:
         if params is None:
@@ -135,7 +133,7 @@ class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
         self._model = model
         self._x = np.array(x0, dtype=float)
         self._P = np.array(P0, dtype=float)
-        self._Ts = float(Ts)
+        self._Ts = float(model.Ts)
         self._n_steps = int(params.n_steps)
         self._h_sub = self._Ts / self._n_steps
         self._alpha = float(params.alpha)

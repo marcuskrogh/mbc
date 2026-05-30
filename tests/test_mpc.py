@@ -211,6 +211,9 @@ class ScalarNonlinear(ContinuousDiscreteSDE):
     def gm(self, x, u, d, p, t):
         return np.array([x[0]])
 
+    @property
+    def Ts(self): return 1.0
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -938,6 +941,9 @@ class _IsomerisationReactor(ContinuousDiscreteSDAE):
     def hm(self, x, y, u, d, p, t):
         return np.array([y[0]])
 
+    @property
+    def Ts(self): return 1.0
+
 
 class TestEconomicOCPOnSDAE:
     """The EOCP's direct-simultaneous formulation must satisfy g(x, y, p) = 0
@@ -1024,7 +1030,7 @@ class TestCDNMPCController:
         model = ScalarNonlinear()
         x0 = np.array([0.0])
         P0 = np.eye(1)
-        ekf = ContinuousDiscreteEKF(model, x0, P0, Ts=1.0)
+        ekf = ContinuousDiscreteEKF(model, x0, P0)
 
         if ocp_cls == "tracking":
             ocp = CDTrackingOptimalControlProblem(
@@ -1073,7 +1079,7 @@ class TestCDNMPCController:
         model = ScalarNonlinear()
         x0 = np.array([0.0])
         P0 = np.eye(1)
-        ekf = ContinuousDiscreteEKF(model, x0.copy(), P0, Ts=1.0)
+        ekf = ContinuousDiscreteEKF(model, x0.copy(), P0)
         ocp = CDTrackingOptimalControlProblem(
             model, N=10, Q=np.eye(1) * 5.0, R=np.eye(1) * 0.01,
             z_ref=np.array([2.0]),
@@ -1331,6 +1337,9 @@ class _ScalarBoundedNonlinear(ContinuousDiscreteSDE):
     def gm(self, x, u, d, p, t):
         return np.array([x[0]])
 
+    @property
+    def Ts(self): return 1.0
+
 
 class _DummyEstimator2:
     """Estimator stub returning (x_hat, P) with standard step signature."""
@@ -1444,7 +1453,7 @@ class TestCDLinearizedMPCController:
         x0 = np.array([0.0])
         P0 = np.eye(1)
         model = _ScalarBoundedNonlinear()
-        ekf = ContinuousDiscreteEKF(model, x0=x0, P0=P0, Ts=1.0)
+        ekf = ContinuousDiscreteEKF(model, x0=x0, P0=P0)
         Q = matrix(np.eye(1) * 2.0)
         R = matrix(np.eye(1) * 0.1)
         ctrl = CDLinearizedMPCController(
@@ -1471,7 +1480,7 @@ class TestCDLinearizedMPCController:
         model = _ScalarBoundedNonlinear()
         x0 = np.array([0.0])
         P0 = np.eye(1)
-        ekf = ContinuousDiscreteEKF(model, x0=x0.copy(), P0=P0, Ts=1.0, params=ContinuousDiscreteEKFParams(n_steps=8))
+        ekf = ContinuousDiscreteEKF(model, x0=x0.copy(), P0=P0, params=ContinuousDiscreteEKFParams(n_steps=8))
 
         Q = matrix(np.eye(1) * 8.0)
         R = matrix(np.eye(1) * 0.05)

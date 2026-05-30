@@ -73,13 +73,12 @@ class ContinuousDiscretePF(ContinuousDiscreteEstimator):
     Parameters
     ----------
     model : ContinuousDiscreteSDE
-        Nonlinear continuous-discrete SDE system.
+        Nonlinear continuous-discrete SDE system.  Must expose a ``Ts``
+        property giving the measurement sampling interval (seconds).
     x0 : (nx,) ndarray
         Initial particle mean.
     P0 : (nx, nx) ndarray
         Initial covariance (used to draw the initial particle cloud from N(x0, P0)).
-    Ts : float
-        Measurement sampling interval (seconds).
     params : ContinuousDiscretePFParams, optional
         Algorithm parameter struct.  Pass to control particle count,
         integration steps, and random seed.
@@ -90,14 +89,13 @@ class ContinuousDiscretePF(ContinuousDiscreteEstimator):
         model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
-        Ts: float,
         params: ContinuousDiscretePFParams | None = None,
     ) -> None:
         if params is None:
             params = ContinuousDiscretePFParams()
 
         self._model = model
-        self._Ts = float(Ts)
+        self._Ts = float(model.Ts)
         self._N = int(params.N)
         self._n_steps = int(params.n_steps)
         self._h_sub = self._Ts / self._n_steps

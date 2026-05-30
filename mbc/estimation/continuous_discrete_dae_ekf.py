@@ -97,15 +97,14 @@ class ContinuousDiscreteDAEEKF(ContinuousDiscreteDAEEstimator):
     model : ContinuousDiscreteSDAE
         Nonlinear SDAE system.  Must implement ``f``, ``sigma``, ``g``,
         ``hm``, ``Rm`` plus Jacobians ``dfdx``, ``dfdy``, ``dgdx``, ``dgdy``,
-        ``dhmdx``, ``dhmdy``.
+        ``dhmdx``, ``dhmdy``.  Must expose a ``Ts`` property giving the
+        measurement sampling interval (seconds).
     x0 : (nx,) ndarray
         Initial differential state estimate x̂_{0|0}.
     y0 : (ny,) ndarray
         Initial algebraic state guess (projected onto g = 0 by Newton iteration).
     P0 : (nx, nx) ndarray
         Initial state covariance P_{0|0}.
-    Ts : float
-        Measurement sampling interval (seconds).
     params : ContinuousDiscreteDAEEKFParams, optional
         Algorithm parameter struct.
     """
@@ -116,14 +115,13 @@ class ContinuousDiscreteDAEEKF(ContinuousDiscreteDAEEstimator):
         x0: np.ndarray,
         y0: np.ndarray,
         P0: np.ndarray,
-        Ts: float,
         params: ContinuousDiscreteDAEEKFParams | None = None,
     ) -> None:
         if params is None:
             params = ContinuousDiscreteDAEEKFParams()
 
         self._model = model
-        self._Ts = float(Ts)
+        self._Ts = float(model.Ts)
         self._n_steps = int(params.n_steps)
         self._h_sub = self._Ts / self._n_steps
         self._newton_tol = params.newton_tol

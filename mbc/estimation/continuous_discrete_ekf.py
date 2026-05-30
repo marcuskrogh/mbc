@@ -100,13 +100,12 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
     ----------
     model : ContinuousDiscreteSDE
         Nonlinear continuous-discrete SDE system providing ``f``, ``sigma``,
-        ``hm``, ``Rm``, and Jacobians ``dfdx`` and ``dhmdx``.
+        ``hm``, ``Rm``, and Jacobians ``dfdx`` and ``dhmdx``.  Must expose a
+        ``Ts`` property giving the measurement sampling interval (seconds).
     x0 : (nx,) ndarray
         Initial state estimate x̂_{0|0}.
     P0 : (nx, nx) ndarray
         Initial state covariance P_{0|0}.
-    Ts : float
-        Measurement sampling interval (seconds).
     params : ContinuousDiscreteEKFParams, optional
         Algorithm parameter struct.  Pass to control ``n_steps``, ``scheme``,
         and Newton solver settings.
@@ -117,7 +116,6 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
         model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
-        Ts: float,
         params: ContinuousDiscreteEKFParams | None = None,
     ) -> None:
         if params is None:
@@ -134,7 +132,7 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
         self._model = model
         self._x: np.ndarray = np.array(x0, dtype=float)
         self._P: np.ndarray = np.array(P0, dtype=float)
-        self._Ts: float = float(Ts)
+        self._Ts: float = float(model.Ts)
         self._n_steps: int = int(params.n_steps)
         self._h: float = self._Ts / self._n_steps
         self._scheme: str = params.scheme

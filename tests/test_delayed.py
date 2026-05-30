@@ -148,6 +148,9 @@ class _TwoOutputCSTR(ContinuousDiscreteSDE):
     @property
     def nz(self) -> int: return 2
 
+    @property
+    def Ts(self) -> float: return 0.01
+
 
 _VDV_SS = np.array([0.097141, 0.048329])
 _VDV_D_RATE = np.array([0.5])
@@ -189,7 +192,7 @@ def two_output_cstr():
 def two_output_ekf(two_output_cstr):
     x0 = _VDV_SS + np.array([0.05, 0.02])
     P0 = np.diag([0.1, 0.1])
-    return ContinuousDiscreteEKF(two_output_cstr, x0, P0, Ts=0.01, params=ContinuousDiscreteEKFParams(n_steps=10))
+    return ContinuousDiscreteEKF(two_output_cstr, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=10))
 
 
 @pytest.fixture()
@@ -526,11 +529,11 @@ class TestDelayedEKF:
         P0 = np.diag([0.1, 0.1])
 
         ekf_bare = ContinuousDiscreteEKF(
-            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01,
+            two_output_cstr, x0.copy(), P0.copy(),
             params=ContinuousDiscreteEKFParams(n_steps=10),
         )
         ekf_wrap = ContinuousDiscreteEKF(
-            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01,
+            two_output_cstr, x0.copy(), P0.copy(),
             params=ContinuousDiscreteEKFParams(n_steps=10),
         )
         filt = DelayedObservationFilter(ekf_wrap, lag_max=10)
@@ -559,7 +562,7 @@ class TestDelayedEKF:
         P0 = np.diag([0.1, 0.1])
 
         ekf = ContinuousDiscreteEKF(
-            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01,
+            two_output_cstr, x0.copy(), P0.copy(),
             params=ContinuousDiscreteEKFParams(n_steps=10),
         )
         filt = DelayedObservationFilter(ekf, lag_max=10)
@@ -582,7 +585,7 @@ class TestDelayedEKF:
         x0 = _VDV_SS + np.array([0.05, 0.02])
         P0 = np.diag([0.1, 0.1])
         ekf = ContinuousDiscreteEKF(
-            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01,
+            two_output_cstr, x0.copy(), P0.copy(),
             params=ContinuousDiscreteEKFParams(n_steps=10),
         )
         filt = DelayedObservationFilter(ekf, lag_max=10)
