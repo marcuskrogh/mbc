@@ -43,8 +43,7 @@ class DiscreteLinearisedSDE(DiscreteLinearSDE):
     * Scalar conversion helpers (``x_deviation``, ``x_absolute``, etc.).
     * Deviation-variable dynamics (``predict_deviation``, ``output_deviation``,
       ``measurement_deviation``).
-    * Absolute-variable dynamics (``predict_absolute``, ``output_absolute``,
-      ``measurement_absolute``).
+    * Absolute-variable outputs (``output_absolute``, ``measurement_absolute``).
     * An override of ``predict_offset`` so that the existing
       :class:`~mbc.estimation.KalmanFilter` can be driven with absolute
       states and inputs without modification.
@@ -174,34 +173,7 @@ class DiscreteLinearisedSDE(DiscreteLinearSDE):
         """
         return self.Cm @ dx + self.Dm @ du + self.Fm @ dd
 
-    # ── Absolute-variable dynamics ────────────────────────────────────────
-
-    def predict_absolute(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-    ) -> np.ndarray:
-        """
-        One-step prediction returning the absolute next state.
-
-            x[k+1] = x_s + Ad (x[k] − x_s) + Bd (u[k] − u_s) + Ed (d[k] − d_s)
-
-        Parameters
-        ----------
-        x : (nx,) absolute state x[k].
-        u : (nu,) absolute input u[k].
-        d : (nd,) absolute disturbance d[k].
-
-        Returns
-        -------
-        (nx,) absolute next state x[k+1] (noiseless).
-        """
-        return self.x_absolute(
-            self.predict_deviation(
-                self.x_deviation(x), self.u_deviation(u), self.d_deviation(d)
-            )
-        )
+    # ── Absolute-variable outputs ─────────────────────────────────────────
 
     def output_absolute(
         self,

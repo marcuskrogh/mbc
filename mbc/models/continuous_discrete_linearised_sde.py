@@ -40,10 +40,7 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
     The inherited methods ``f``, ``sigma``, ``gm``, ``hm`` from
     :class:`ContinuousDiscreteLinearSDE` are linear and therefore already
     correct for deviation variables directly (pass ``δx, δu, δd`` to obtain
-    the corresponding deviation-variable results).  When the steady-state
-    satisfies the equilibrium condition ``A x_s + B u_s + E d_s = 0`` the
-    inherited ``f`` is also correct for absolute variables; in general, use
-    ``f_absolute`` to evaluate the drift at an absolute operating point.
+    the corresponding deviation-variable results).
 
     The class provides:
 
@@ -51,8 +48,7 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
     * Scalar conversion helpers (``x_deviation``, ``x_absolute``, etc.).
     * Deviation-variable dynamics (``f_deviation``, ``output_deviation``,
       ``measurement_deviation``).
-    * Absolute-variable dynamics (``f_absolute``, ``output_absolute``,
-      ``measurement_absolute``).
+    * Absolute-variable outputs (``output_absolute``, ``measurement_absolute``).
     """
 
     # ── Abstract steady-state operating point ─────────────────────────────
@@ -182,36 +178,7 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
         """
         return self.Cm @ dx + self.Dm @ du + self.Fm @ dd
 
-    # ── Absolute-variable dynamics ────────────────────────────────────────
-
-    def f_absolute(
-        self,
-        x: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-    ) -> np.ndarray:
-        """
-        Drift evaluated at absolute variables.
-
-            f_absolute(x, u, d) = A (x − x_s) + B (u − u_s) + E (d − d_s)
-
-        This is the correct linearised drift for absolute state trajectories
-        regardless of whether the operating point is a true equilibrium.
-        When ``A x_s + B u_s + E d_s = 0`` this equals ``A x + B u + E d``.
-
-        Parameters
-        ----------
-        x : (nx,) absolute state.
-        u : (nu,) absolute input.
-        d : (nd,) absolute disturbance.
-
-        Returns
-        -------
-        (nx,) drift dx/dt.
-        """
-        return self.f_deviation(
-            self.x_deviation(x), self.u_deviation(u), self.d_deviation(d)
-        )
+    # ── Absolute-variable outputs ─────────────────────────────────────────
 
     def output_absolute(
         self,
