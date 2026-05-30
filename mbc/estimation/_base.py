@@ -29,7 +29,7 @@ ContinuousDiscreteDAEEstimator (ContinuousDiscreteEstimator, ABC)
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from enum import Enum, auto
 
 import numpy as np
 
@@ -58,8 +58,8 @@ class IntegrationScheme(Enum):
         ``Φ = (I − h A)⁻¹``, which guarantees positive-definiteness.
         Recommended for stiff drift dynamics.
     """
-    EXPLICIT_EULER = "explicit_euler"
-    IMPLICIT_EULER = "implicit_euler"
+    EXPLICIT_EULER = auto()
+    IMPLICIT_EULER = auto()
 
 
 # ── Abstract parameter structure ──────────────────────────────────────────────
