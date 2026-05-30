@@ -67,7 +67,7 @@ class KalmanFilter:
         Plant model providing ``Ad``, ``Bd``, ``Ed``, ``Gd``, ``Cm``,
         ``Qd``, ``Rm`` and ``predict_offset``.
     x0 : (nx,) ndarray, optional
-        Initial state estimate ``x̂_{0|0}``.  Defaults to ``np.array(model.x)``.
+        Initial state estimate ``x̂_{0|0}``.  Defaults to ``np.zeros(nx)``.
     P0 : (nx, nx) ndarray, optional
         Initial state error covariance ``P_{0|0}``.  Defaults to ``I_{nx}``.
     """
@@ -82,29 +82,29 @@ class KalmanFilter:
         nx = model.nx
 
         # State estimate and covariance
-        self._x_np: np.ndarray = (
+        self._x: np.ndarray = (
             np.asarray(x0, dtype=float).copy() if x0 is not None
-            else np.array(list(model.x), dtype=float)
+            else np.zeros(nx)
         )
-        self._P_np: np.ndarray = (
+        self._P: np.ndarray = (
             _any_to_np2d(P0).copy() if P0 is not None
             else np.eye(nx)
         )
 
         # Last innovation (set after each measurement update)
-        self._last_innovation_np: Optional[np.ndarray] = None
+        self._last_innovation: Optional[np.ndarray] = None
 
     # ── Public properties ────────────────────────────────────────────────────
 
     @property
     def x_hat(self) -> np.ndarray:
         """Current state estimate x̂ ∈ ℝⁿˣ (copy)."""
-        return self._x_np.copy()
+        return self._x.copy()
 
     @property
     def P(self) -> np.ndarray:
         """Current state error covariance P ∈ ℝⁿˣˣⁿˣ (copy)."""
-        return self._P_np.copy()
+        return self._P.copy()
 
     @property
     def last_innovation(self) -> Optional[List[float]]:
@@ -113,9 +113,9 @@ class KalmanFilter:
         Python list, or ``None`` until the first measurement update has
         been performed.
         """
-        if self._last_innovation_np is None:
+        if self._last_innovation is None:
             return None
-        return [float(v) for v in self._last_innovation_np]
+        return [float(v) for v in self._last_innovation]
 
     # ── Filter steps ─────────────────────────────────────────────────────────
 
@@ -153,15 +153,15 @@ class KalmanFilter:
         d_np = _any_to_np1d(d)
 
         x_pred = (
-            Ad @ self._x_np
+            Ad @ self._x
             + Bd @ u_np
             + Ed @ d_np
             + model.predict_offset(d_np)
         )
-        P_pred = Ad @ self._P_np @ Ad.T + Gd @ Qd @ Gd.T
+        P_pred = Ad @ self._P @ Ad.T + Gd @ Qd @ Gd.T
 
-        self._x_np = x_pred
-        self._P_np = P_pred
+        self._x = x_pred
+        self._P = P_pred
         return x_pred.copy(), P_pred.copy()
 
     def update(
@@ -204,13 +204,13 @@ class KalmanFilter:
             active = np.where(np.asarray(mask, dtype=bool))[0]
             if len(active) == 0:
                 # All channels masked — keep prior, no measurement assimilation.
-                return self._x_np.copy(), self._P_np.copy()
+                return self._x.copy(), self._P.copy()
             Cm = Cm[active, :]
             Rm = Rm[np.ix_(active, active)]
             ym_np = ym_np[active]
 
-        x_pred = self._x_np
-        P_pred = self._P_np
+        x_pred = self._x
+        P_pred = self._P
 
         # Innovation and its covariance
         e = ym_np - Cm @ x_pred
@@ -227,9 +227,9 @@ class KalmanFilter:
         P_new = IKC @ P_pred @ IKC.T + K @ Rm @ K.T
         P_new = 0.5 * (P_new + P_new.T)
 
-        self._last_innovation_np = e.copy()
-        self._x_np = x_new
-        self._P_np = P_new
+        self._last_innovation = e.copy()
+        self._x = x_new
+        self._P = P_new
         return x_new.copy(), P_new.copy()
 
     def step(

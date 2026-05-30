@@ -1,7 +1,7 @@
 """State estimation sub-package for mbc."""
 
 from .kalman import KalmanFilter
-from .cd_kalman import CDKalmanFilter
+from .cd_kalman import ContinuousDiscreteKalmanFilter
 from .ekf import ContinuousDiscreteEKF
 from .ukf import ContinuousDiscreteUKF
 from .enkf import ContinuousDiscreteEnKF
@@ -11,7 +11,7 @@ from .delayed import DelayedObservationFilter
 
 __all__ = [
     "KalmanFilter",
-    "CDKalmanFilter",
+    "ContinuousDiscreteKalmanFilter",
     "ContinuousDiscreteEKF",
     "ContinuousDiscreteUKF",
     "ContinuousDiscreteEnKF",

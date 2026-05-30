@@ -23,7 +23,7 @@ model-based control, estimation, identification, and simulation.
       * ``KalmanFilter``                    – discrete-time KF (Joseph form).
         Supports noise-separated covariance (M.Sc. Ch. 5.4) and missing
         observations (M.Sc. Ch. 5.5).
-      * ``CDKalmanFilter``                  – KF for linear continuous-discrete
+      * ``ContinuousDiscreteKalmanFilter``                  – KF for linear continuous-discrete
                                               systems; ZOH + Van Loan Q_d (M.Sc. Ch. 5).
       * ``ContinuousDiscreteEKF``           – CD-EKF (Ph.D. Ch. 7.1).
       * ``ContinuousDiscreteUKF``           – CD-UKF (Ph.D. Ch. 7.2).
@@ -37,7 +37,7 @@ model-based control, estimation, identification, and simulation.
       * ``OptimalControlProblem``         – receding-horizon QP (tracking MPC, discrete).
       * ``MPCController``                 – KalmanFilter + OptimalControlProblem.
       * ``CDOptimalControlProblem``       – receding-horizon QP for linear CD systems.
-      * ``CDMPCController``               – CDKalmanFilter + CDOptimalControlProblem.
+      * ``CDMPCController``               – ContinuousDiscreteKalmanFilter + CDOptimalControlProblem.
       * ``CDTrackingOptimalControlProblem`` – nonlinear tracking OCP for CD systems
                                              (NLP; input/state/output constraints,
                                              ROM penalty + constraints, linear input
@@ -88,7 +88,7 @@ from .models import (
 )
 from .estimation import (
     KalmanFilter,
-    CDKalmanFilter,
+    ContinuousDiscreteKalmanFilter,
     ContinuousDiscreteEKF,
     ContinuousDiscreteUKF,
     ContinuousDiscreteEnKF,
@@ -125,7 +125,7 @@ __all__ = [
     "ContinuousDiscreteSDAE",
     # Estimation
     "KalmanFilter",
-    "CDKalmanFilter",
+    "ContinuousDiscreteKalmanFilter",
     "ContinuousDiscreteEKF",
     "ContinuousDiscreteUKF",
     "ContinuousDiscreteEnKF",

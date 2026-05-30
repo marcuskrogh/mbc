@@ -44,7 +44,7 @@ from mbc.models import (
     ContinuousDiscreteSDE,
     ContinuousDiscreteSDAE,
 )
-from mbc.estimation import KalmanFilter, CDKalmanFilter, ContinuousDiscreteEKF
+from mbc.estimation import KalmanFilter, ContinuousDiscreteKalmanFilter, ContinuousDiscreteEKF
 from mbc.control import (
     OptimalControlProblem,
     MPCController,
@@ -477,11 +477,11 @@ class TestCDOptimalControlProblem:
 
 
 class TestCDMPCController:
-    """Tests for the linear CD-MPC controller (CDKalmanFilter + CDOptOCP)."""
+    """Tests for the linear CD-MPC controller (ContinuousDiscreteKalmanFilter + CDOptOCP)."""
 
     def _make_ctrl(self, N=10):
         model = SimpleLinearCD()
-        kf = CDKalmanFilter(model, n_steps=10)
+        kf = ContinuousDiscreteKalmanFilter(model, n_steps=10)
         Q = matrix(np.eye(1))
         R = matrix(np.eye(1) * 0.1)
         ocp = CDOptimalControlProblem(model, N=N, Q=Q, R=R, y_offset=10.0)
@@ -518,7 +518,7 @@ class TestCDMPCController:
     def test_closed_loop_drives_toward_reference(self):
         """CD-MPC should drive the system output toward x_ref."""
         model = SimpleLinearCD(x0=[0.0])
-        kf = CDKalmanFilter(model, n_steps=10)
+        kf = ContinuousDiscreteKalmanFilter(model, n_steps=10)
         Q = matrix(np.eye(1) * 5.0)
         R = matrix(np.eye(1) * 0.01)
         ocp = CDOptimalControlProblem(model, N=20, Q=Q, R=R, y_offset=10.0)
@@ -1024,7 +1024,7 @@ class TestCDNMPCController:
         model = ScalarNonlinear()
         x0 = np.array([0.0])
         P0 = np.eye(1)
-        ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
+        ekf = ContinuousDiscreteEKF(model, x0, P0, Ts=1.0)
 
         if ocp_cls == "tracking":
             ocp = CDTrackingOptimalControlProblem(
@@ -1073,7 +1073,7 @@ class TestCDNMPCController:
         model = ScalarNonlinear()
         x0 = np.array([0.0])
         P0 = np.eye(1)
-        ekf = ContinuousDiscreteEKF(model, x0.copy(), P0, dt=1.0)
+        ekf = ContinuousDiscreteEKF(model, x0.copy(), P0, Ts=1.0)
         ocp = CDTrackingOptimalControlProblem(
             model, N=10, Q=np.eye(1) * 5.0, R=np.eye(1) * 0.01,
             z_ref=np.array([2.0]),
@@ -1444,7 +1444,7 @@ class TestCDLinearizedMPCController:
         x0 = np.array([0.0])
         P0 = np.eye(1)
         model = _ScalarBoundedNonlinear()
-        ekf = ContinuousDiscreteEKF(model, x0=x0, P0=P0, dt=1.0)
+        ekf = ContinuousDiscreteEKF(model, x0=x0, P0=P0, Ts=1.0)
         Q = matrix(np.eye(1) * 2.0)
         R = matrix(np.eye(1) * 0.1)
         ctrl = CDLinearizedMPCController(
@@ -1471,7 +1471,7 @@ class TestCDLinearizedMPCController:
         model = _ScalarBoundedNonlinear()
         x0 = np.array([0.0])
         P0 = np.eye(1)
-        ekf = ContinuousDiscreteEKF(model, x0=x0.copy(), P0=P0, dt=1.0, n_steps=8)
+        ekf = ContinuousDiscreteEKF(model, x0=x0.copy(), P0=P0, Ts=1.0, n_steps=8)
 
         Q = matrix(np.eye(1) * 8.0)
         R = matrix(np.eye(1) * 0.05)
@@ -1616,7 +1616,7 @@ class TestWarmStartMPC:
     def test_cd_warm_vs_cold_same_inputs(self):
         def run(warm):
             model = SimpleLinearCD()
-            kf = CDKalmanFilter(model, n_steps=10)
+            kf = ContinuousDiscreteKalmanFilter(model, n_steps=10)
             ocp = CDOptimalControlProblem(
                 model, N=10, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0
             )

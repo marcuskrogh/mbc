@@ -116,7 +116,7 @@ class ContinuousDiscreteEKF:
         Initial state estimate x̂_{0|0}.
     P0 : (nx, nx) ndarray
         Initial state covariance P_{0|0}.
-    dt : float
+    Ts : float
         Measurement sampling interval (seconds).
     n_steps : int, optional
         Number of integration sub-steps per measurement interval.
@@ -136,7 +136,7 @@ class ContinuousDiscreteEKF:
         model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
-        dt: float,
+        Ts: float,
         n_steps: int = 10,
         scheme: str = "euler",
         newton_tol: float = 1e-10,
@@ -151,11 +151,11 @@ class ContinuousDiscreteEKF:
                 f"scheme must be one of {_VALID_SCHEMES!r}, got {scheme!r}."
             )
         self._model = model
-        self._x_np: np.ndarray = np.array(x0, dtype=float)
-        self._P_np: np.ndarray = np.array(P0, dtype=float)
-        self._dt = dt
+        self._x: np.ndarray = np.array(x0, dtype=float)
+        self._P: np.ndarray = np.array(P0, dtype=float)
+        self._Ts = Ts
         self._n_steps = n_steps
-        self._h = dt / n_steps
+        self._h = Ts / n_steps
         self._scheme = scheme
         self._newton_tol = newton_tol
         self._newton_max_iter = newton_max_iter
@@ -165,12 +165,12 @@ class ContinuousDiscreteEKF:
     @property
     def x_hat(self) -> np.ndarray:
         """Current state estimate x̂ ∈ ℝⁿˣ (copy)."""
-        return self._x_np.copy()
+        return self._x.copy()
 
     @property
     def P(self) -> np.ndarray:
         """Current state covariance P ∈ ℝⁿˣˣⁿˣ (copy)."""
-        return self._P_np.copy()
+        return self._P.copy()
 
     # ── Filter steps ──────────────────────────────────────────────────────
 
@@ -209,8 +209,8 @@ class ContinuousDiscreteEKF:
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Explicit-Euler time update."""
-        x = self._x_np.copy()
-        P = self._P_np.copy()
+        x = self._x.copy()
+        P = self._P.copy()
         h = self._h
         model = self._model
 
@@ -226,8 +226,8 @@ class ContinuousDiscreteEKF:
             P = (P + P.T) * 0.5  # symmetrise to prevent numerical drift
             t_j += h
 
-        self._x_np = x
-        self._P_np = P
+        self._x = x
+        self._P = P
         return x.copy(), P.copy()
 
     def _predict_implicit_euler(
@@ -246,8 +246,8 @@ class ContinuousDiscreteEKF:
           3. Covariance:    τ = P_n + h σ_n σ_nᵀ
                             P_{n+1} = Φ τ Φᵀ
         """
-        x = self._x_np.copy()
-        P = self._P_np.copy()
+        x = self._x.copy()
+        P = self._P.copy()
         h = self._h
         model = self._model
         nx = x.shape[0]
@@ -289,25 +289,25 @@ class ContinuousDiscreteEKF:
 
             t_n = t_next
 
-        self._x_np = x
-        self._P_np = P
+        self._x = x
+        self._P = P
         return x.copy(), P.copy()
 
     def update(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Measurement update: fuse observation ``y_k`` with the current
+        Measurement update: fuse observation ``ym_k`` with the current
         prior using the Joseph stabilising form.
 
         Parameters
         ----------
-        y : (nym,) ndarray  — observation vector at the measurement time.
+        ym : (nym,) ndarray  — measurement vector at the measurement time.
         u : (nu,) ndarray   — input at measurement time.
         d : (nd,) ndarray   — disturbance at measurement time.
         p : (nparams,) ndarray  — parameter vector.
@@ -320,8 +320,8 @@ class ContinuousDiscreteEKF:
         x_hat : (nx,) corrected state estimate x̂_{k|k}.
         P     : (nx, nx) corrected covariance P_{k|k}.
         """
-        x = self._x_np
-        P = self._P_np
+        x = self._x
+        P = self._P
         nx = x.shape[0]
         R = self._model.Rm
 
@@ -334,10 +334,10 @@ class ContinuousDiscreteEKF:
                 return x.copy(), P.copy()
             C = C[active, :]
             y_hat = y_hat[active]
-            y_sub = y[active]
+            y_sub = ym[active]
             R_sub = R[np.ix_(active, active)]
         else:
-            y_sub = y
+            y_sub = ym
             R_sub = R
 
         # Innovation covariance R_e = C P Cᵀ + R
@@ -356,13 +356,13 @@ class ContinuousDiscreteEKF:
         P_new = IKC @ P @ IKC.T + K @ R_sub @ K.T
         P_new = (P_new + P_new.T) * 0.5
 
-        self._x_np = x_new
-        self._P_np = P_new
+        self._x = x_new
+        self._P = P_new
         return x_new.copy(), P_new.copy()
 
     def step(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -373,11 +373,11 @@ class ContinuousDiscreteEKF:
         Combined time + measurement update.
 
         Propagates the estimate from the previous time to ``t``, then
-        fuses the measurement ``y``.
+        fuses the measurement ``ym``.
 
         Parameters
         ----------
-        y    : (nym,) ndarray  — observation at time t.
+        ym   : (nym,) ndarray  — measurement at time t.
         u    : (nu,) ndarray   — input applied over the previous interval.
         d    : (nd,) ndarray   — disturbance at time t.
         p    : (nparams,) ndarray  — parameter vector.
@@ -390,4 +390,4 @@ class ContinuousDiscreteEKF:
         P     : (nx, nx) corrected covariance.
         """
         self.predict(u, d, p, t)
-        return self.update(y, u, d, p, mask=mask)
+        return self.update(ym, u, d, p, mask=mask)

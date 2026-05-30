@@ -102,7 +102,7 @@ class ContinuousDiscreteDAEEKF:
         constraint g(x0, y0, ...) = 0 by Newton iteration.
     P0 : (nx, nx) ndarray
         Initial state covariance P_{0|0}.
-    dt : float
+    Ts : float
         Measurement sampling interval (seconds).
     n_steps : int, optional
         Implicit-Euler integration sub-steps per measurement interval.
@@ -120,15 +120,15 @@ class ContinuousDiscreteDAEEKF:
         x0: np.ndarray,
         y0: np.ndarray,
         P0: np.ndarray,
-        dt: float,
+        Ts: float,
         n_steps: int = 10,
         newton_tol: float = 1e-10,
         newton_max_iter: int = 50,
     ) -> None:
         self._model = model
-        self._dt = dt
+        self._Ts = Ts
         self._n_steps = n_steps
-        self._h_sub = dt / n_steps
+        self._h_sub = Ts / n_steps
         self._newton_tol = newton_tol
         self._newton_max_iter = newton_max_iter
 
@@ -318,7 +318,7 @@ class ContinuousDiscreteDAEEKF:
 
     def update(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -329,7 +329,7 @@ class ContinuousDiscreteDAEEKF:
 
         Parameters
         ----------
-        y    : (nym,) ndarray  — observation y^m_k.
+        ym   : (nym,) ndarray  — measurement ym_k.
         u    : (nu,) ndarray   — input at measurement time.
         d    : (nd,) ndarray   — disturbance at measurement time.
         p    : (nparams,) ndarray — parameter vector.
@@ -366,12 +366,12 @@ class ContinuousDiscreteDAEEKF:
                 return x.copy(), y_alg.copy(), P.copy()
             C_sub = C[active, :]
             y_hat_sub = y_hat[active]
-            y_obs_sub = y[active]
+            y_obs_sub = ym[active]
             R_sub = R[np.ix_(active, active)]
         else:
             C_sub = C
             y_hat_sub = y_hat
-            y_obs_sub = y
+            y_obs_sub = ym
             R_sub = R
 
         R_e = C_sub @ P @ C_sub.T + R_sub
@@ -396,7 +396,7 @@ class ContinuousDiscreteDAEEKF:
 
     def step(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -405,4 +405,4 @@ class ContinuousDiscreteDAEEKF:
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Combined time + measurement update."""
         self.predict(u, d, p, t)
-        return self.update(y, u, d, p, mask=mask)
+        return self.update(ym, u, d, p, mask=mask)

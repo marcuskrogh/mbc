@@ -96,7 +96,7 @@ class ContinuousDiscreteUKF:
         Initial state estimate x̂_{0|0}.
     P0 : (nx, nx) ndarray
         Initial state covariance P_{0|0}.
-    dt : float
+    Ts : float
         Measurement sampling interval (seconds).
     n_steps : int, optional
         Number of explicit-Euler integration sub-steps per measurement
@@ -115,7 +115,7 @@ class ContinuousDiscreteUKF:
         model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
-        dt: float,
+        Ts: float,
         n_steps: int = 10,
         alpha: float = 1.0,
         beta: float = 2.0,
@@ -124,9 +124,9 @@ class ContinuousDiscreteUKF:
         self._model = model
         self._x = np.array(x0, dtype=float)
         self._P = np.array(P0, dtype=float)
-        self._dt = dt
+        self._Ts = Ts
         self._n_steps = n_steps
-        self._h_sub = dt / n_steps
+        self._h_sub = Ts / n_steps
         self._alpha = float(alpha)
         self._beta = float(beta)
         self._kappa = float(kappa)
@@ -265,7 +265,7 @@ class ContinuousDiscreteUKF:
 
     def update(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -278,7 +278,7 @@ class ContinuousDiscreteUKF:
 
         Parameters
         ----------
-        y    : (nym,) ndarray  — observation.
+        ym   : (nym,) ndarray  — measurement.
         u    : (nu,) ndarray   — input at measurement time.
         d    : (nd,) ndarray   — disturbance at measurement time.
         p    : (nparams,) ndarray — parameter vector.
@@ -312,10 +312,10 @@ class ContinuousDiscreteUKF:
             if len(active) == 0:
                 return self._x.copy(), self._P.copy()
             Z = Z[:, active]
-            y_sub = y[active]
+            y_sub = ym[active]
             R_sub = R[np.ix_(active, active)]
         else:
-            y_sub = y
+            y_sub = ym
             R_sub = R
 
         # Predicted measurement mean
@@ -346,7 +346,7 @@ class ContinuousDiscreteUKF:
 
     def step(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -355,4 +355,4 @@ class ContinuousDiscreteUKF:
     ) -> tuple[np.ndarray, np.ndarray]:
         """Combined time + measurement update."""
         self.predict(u, d, p, t)
-        return self.update(y, u, d, p, mask=mask)
+        return self.update(ym, u, d, p, mask=mask)
