@@ -44,7 +44,7 @@ from mbc.models import (
     ContinuousDiscreteSDE,
     ContinuousDiscreteSDAE,
 )
-from mbc.estimation import KalmanFilter, ContinuousDiscreteKalmanFilter, ContinuousDiscreteEKF
+from mbc.estimation import DiscreteLinearKF, ContinuousDiscreteLinearKF, ContinuousDiscreteLinearKFParams, ContinuousDiscreteEKF, ContinuousDiscreteEKFParams
 from mbc.control import (
     OptimalControlProblem,
     MPCController,
@@ -324,7 +324,7 @@ class TestMPCController:
         model = DoubleIntegrator()
         # Qd, Rm read directly from the model (DiscreteLinearSDE
         # provides them as abstract properties).
-        kf = KalmanFilter(model)
+        kf = DiscreteLinearKF(model)
         Q_ocp = matrix(np.eye(1))
         R_ocp = matrix(np.eye(1) * 0.1)
         ocp = OptimalControlProblem(model, N=N, Q=Q_ocp, R=R_ocp, y_offset=20.0)
@@ -391,7 +391,7 @@ class TestMPCController:
             def u_bounds(self): return np.array([-5.0]), np.array([5.0])
 
         model = ScalarLinearDiscrete()
-        kf = KalmanFilter(model)
+        kf = DiscreteLinearKF(model)
         Q_ocp = matrix(np.eye(1) * 5.0)
         R_ocp = matrix(np.eye(1) * 0.1)
         ocp = OptimalControlProblem(model, N=10, Q=Q_ocp, R=R_ocp, y_offset=20.0)
@@ -477,11 +477,11 @@ class TestCDOptimalControlProblem:
 
 
 class TestCDMPCController:
-    """Tests for the linear CD-MPC controller (ContinuousDiscreteKalmanFilter + CDOptOCP)."""
+    """Tests for the linear CD-MPC controller (ContinuousDiscreteLinearKF + CDOptOCP)."""
 
     def _make_ctrl(self, N=10):
         model = SimpleLinearCD()
-        kf = ContinuousDiscreteKalmanFilter(model, n_steps=10)
+        kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
         Q = matrix(np.eye(1))
         R = matrix(np.eye(1) * 0.1)
         ocp = CDOptimalControlProblem(model, N=N, Q=Q, R=R, y_offset=10.0)
@@ -518,7 +518,7 @@ class TestCDMPCController:
     def test_closed_loop_drives_toward_reference(self):
         """CD-MPC should drive the system output toward x_ref."""
         model = SimpleLinearCD(x0=[0.0])
-        kf = ContinuousDiscreteKalmanFilter(model, n_steps=10)
+        kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
         Q = matrix(np.eye(1) * 5.0)
         R = matrix(np.eye(1) * 0.01)
         ocp = CDOptimalControlProblem(model, N=20, Q=Q, R=R, y_offset=10.0)
@@ -1471,7 +1471,7 @@ class TestCDLinearizedMPCController:
         model = _ScalarBoundedNonlinear()
         x0 = np.array([0.0])
         P0 = np.eye(1)
-        ekf = ContinuousDiscreteEKF(model, x0=x0.copy(), P0=P0, Ts=1.0, n_steps=8)
+        ekf = ContinuousDiscreteEKF(model, x0=x0.copy(), P0=P0, Ts=1.0, params=ContinuousDiscreteEKFParams(n_steps=8))
 
         Q = matrix(np.eye(1) * 8.0)
         R = matrix(np.eye(1) * 0.05)
@@ -1589,7 +1589,7 @@ class TestWarmStartMPC:
 
     def _run(self, warm_start, N=10, n_steps=12, formulation="auto"):
         model = DoubleIntegrator()
-        kf = KalmanFilter(model)
+        kf = DiscreteLinearKF(model)
         ocp = OptimalControlProblem(
             model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=20.0,
             formulation=formulation,
@@ -1616,7 +1616,7 @@ class TestWarmStartMPC:
     def test_cd_warm_vs_cold_same_inputs(self):
         def run(warm):
             model = SimpleLinearCD()
-            kf = ContinuousDiscreteKalmanFilter(model, n_steps=10)
+            kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
             ocp = CDOptimalControlProblem(
                 model, N=10, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0
             )

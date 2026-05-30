@@ -1,75 +1,63 @@
 """
-Continuous-Discrete Unscented Kalman Filter (CD-UKF) for SDE systems
+Continuous-Discrete Unscented Kalman Filter (``ContinuousDiscreteUKF``).
+
 (ControlToolbox §State Estimation for Nonlinear SDE Systems —
-*Continuous-Discrete Unscented Kalman Filter*).
+*Continuous-Discrete Unscented Kalman Filter*)
 
 The CD-UKF represents the state distribution by deterministically sampled
-sigma points (the unscented transform).  Sigma points are propagated
-through the true nonlinear dynamics; predicted mean and covariance are
-recovered as weighted statistics over the propagated set.  No Jacobian is
-required.
+sigma points (the unscented transform).  No Jacobians are required.
 
 Time update — augmented dimension n̄ = nx + nω
 ----------------------------------------------
 Tuning parameters α ∈ ]0, 1], κ ≥ 0, β ≥ 0 (β = 2 optimal for Gaussian):
 
-    c̄ = α² (n̄ + κ),    λ̄ = α² (n̄ + κ) − n̄
+    c̄ = α²(n̄ + κ),    λ̄ = α²(n̄ + κ) − n̄
 
-Weights for i ∈ {1, …, 2 n̄}:
+Two sigma-point sets are built from (x̂_{k|k}, P_{k|k}):
 
-    W̄_m^{(0)} = λ̄ / (n̄ + λ̄),
-    W̄_c^{(0)} = λ̄ / (n̄ + λ̄) + 1 − α² + β,
-    W̄_m^{(i)} = W̄_c^{(i)} = 1 / (2 (n̄ + λ̄)).
+Deterministic state set (2 nx + 1 points, captures state covariance)
+    χ^{(0)}      = x̂_{k|k}
+    χ^{(i)}      = x̂_{k|k} + √c̄ (√P)_i,   i = 1, …, nx
+    χ^{(nx+i)}   = x̂_{k|k} − √c̄ (√P)_i,   i = 1, …, nx
 
-Two sets of sigma points are constructed.  Deterministic state set
-(2 nx + 1 points capturing the state covariance):
+Stochastic noise sigma set (2 nω points, all placed at the mean) with
+deterministic Wiener increments that produce total increment √(c̄ Ts) e_i:
 
-    χ^{(0)} = x̂_{k|k},
-    χ^{(i)} = x̂_{k|k} + √c̄ (√P_{k|k})_i,            i = 1, …, nx,
-    χ^{(nx+i)} = x̂_{k|k} − √c̄ (√P_{k|k})_i,        i = 1, …, nx.
+    Δω^{(2nx+i)}    = +√(c̄ Ts) e_i / n_steps,   i = 1, …, nω   (per sub-step)
+    Δω^{(2nx+nω+i)} = −√(c̄ Ts) e_i / n_steps,   i = 1, …, nω
 
-Stochastic noise sigma set (2 nω points all placed at the mean) with
-structured deterministic noise increments
+The state set is propagated via the drift ODE (explicit Euler, sub-step h);
+the noise set is propagated via the full SDE with its structured increments.
 
-    Δω^{(2nx+i)}      = +√(c̄ Δt) e_i,    i = 1, …, nω
-    Δω^{(2nx+nω+i)}   = −√(c̄ Δt) e_i,    i = 1, …, nω.
-
-Propagation
-^^^^^^^^^^^
-The deterministic set is propagated through the drift ODE via explicit
-Euler with sub-step h = dt/n_steps:
-
-    χ^{(i)} ← χ^{(i)} + h f(χ^{(i)}, u, d, p, t),    i = 0, …, 2 nx.
-
-The stochastic set (held fixed at the mean) is propagated through the
-full SDE with its structured noise:
-
-    χ^{(2nx+i)} ← χ^{(2nx+i)} + h f(χ^{(2nx+i)}, …)
-                              + sigma(χ^{(2nx+i)}, …) Δω^{(2nx+i)} / √n_steps.
-
-Predicted mean and covariance are weighted statistics over all 2 n̄ + 1
-sigma points.
+Predicted mean and covariance are the Wm/Wc-weighted statistics over all
+2 n̄ + 1 sigma points.
 
 Measurement update — state dimension nx
 ---------------------------------------
-A new sigma-point set of size 2 nx + 1 is generated from (x̂_{k|k-1},
-P_{k|k-1}) using parameters c, λ, weights based only on nx:
+A new 2 nx + 1 sigma-point set is generated from (x̂_{k|k-1}, P_{k|k-1})
+using state-only tuning parameters (dimension nx):
 
-    z^{m,(i)} = hm(χ^{(i)}, p),   ŷ^m_{k|k-1} = Σ_i W_m^{(i)} z^{m,(i)},
-    R_zz   = Σ_i W_c^{(i)} (z^{m,(i)} − ŷ^m_{k|k-1})(…)ᵀ,
-    R_e    = R_zz + R,
-    R_xy   = Σ_i W_c^{(i)} (χ^{(i)} − x̂_{k|k-1})(z^{m,(i)} − ŷ^m_{k|k-1})ᵀ,
-    K      = R_xy R_e⁻¹,
-    x̂_{k|k} = x̂_{k|k-1} + K (y^m_k − ŷ^m_{k|k-1}),
+    z^{m,(i)} = hm(χ^{(i)}, u, d, p),
+    ŷ^m_{k|k-1} = Σ W_m^{(i)} z^{m,(i)},
+    R_zz = Σ W_c^{(i)} (z − ŷ^m)ᵀ,   R_e = R_zz + Rm,
+    R_xy = Σ W_c^{(i)} (χ − x̂)(z − ŷ^m)ᵀ,
+    K = R_xy R_e⁻¹,
+    x̂_{k|k} = x̂_{k|k-1} + K (ym_k − ŷ^m_{k|k-1}),
     P_{k|k} = P_{k|k-1} − K R_e Kᵀ.
 """
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 
 from ..models import ContinuousDiscreteSDE
 from .._utils import _cholesky_psd
+from ._base import ContinuousDiscreteEstimator, EstimatorParams
+
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
 
 
 def _sigma_weights(n: int, alpha: float, beta: float, kappa: float):
@@ -83,7 +71,37 @@ def _sigma_weights(n: int, alpha: float, beta: float, kappa: float):
     return c, lam, Wm, Wc
 
 
-class ContinuousDiscreteUKF:
+# ── Parameter structure ───────────────────────────────────────────────────────
+
+
+@dataclass
+class ContinuousDiscreteUKFParams(EstimatorParams):
+    """
+    Algorithm parameters for :class:`ContinuousDiscreteUKF`.
+
+    Parameters
+    ----------
+    n_steps : int
+        Number of explicit-Euler integration sub-steps per measurement
+        interval.  Default: 10.
+    alpha : float
+        Sigma-point spread parameter α ∈ ]0, 1].  Default: 1.0.
+    beta : float
+        Distribution parameter (β = 2 is optimal for a Gaussian).
+        Default: 2.0.
+    kappa : float
+        Secondary spread parameter κ ≥ 0.  Default: 0.0.
+    """
+    n_steps: int = 10
+    alpha: float = 1.0
+    beta: float = 2.0
+    kappa: float = 0.0
+
+
+# ── Estimator ─────────────────────────────────────────────────────────────────
+
+
+class ContinuousDiscreteUKF(ContinuousDiscreteEstimator):
     """
     Continuous-Discrete Unscented Kalman Filter for SDE systems
     (ControlToolbox §SDE State Estimation — *CD-UKF*).
@@ -98,16 +116,9 @@ class ContinuousDiscreteUKF:
         Initial state covariance P_{0|0}.
     Ts : float
         Measurement sampling interval (seconds).
-    n_steps : int, optional
-        Number of explicit-Euler integration sub-steps per measurement
-        interval.  Default: 10.
-    alpha : float, optional
-        Sigma-point spread parameter α ∈ ]0, 1].  Default: 1.0.
-    beta : float, optional
-        Distribution parameter (β = 2 is optimal for a Gaussian).
-        Default: 2.0.
-    kappa : float, optional
-        Secondary spread parameter κ ≥ 0.  Default: 0.
+    params : ContinuousDiscreteUKFParams, optional
+        Algorithm parameter struct.  Pass to control integration steps and
+        unscented-transform tuning scalars.
     """
 
     def __init__(
@@ -116,20 +127,20 @@ class ContinuousDiscreteUKF:
         x0: np.ndarray,
         P0: np.ndarray,
         Ts: float,
-        n_steps: int = 10,
-        alpha: float = 1.0,
-        beta: float = 2.0,
-        kappa: float = 0.0,
+        params: ContinuousDiscreteUKFParams | None = None,
     ) -> None:
+        if params is None:
+            params = ContinuousDiscreteUKFParams()
+
         self._model = model
         self._x = np.array(x0, dtype=float)
         self._P = np.array(P0, dtype=float)
-        self._Ts = Ts
-        self._n_steps = n_steps
-        self._h_sub = Ts / n_steps
-        self._alpha = float(alpha)
-        self._beta = float(beta)
-        self._kappa = float(kappa)
+        self._Ts = float(Ts)
+        self._n_steps = int(params.n_steps)
+        self._h_sub = self._Ts / self._n_steps
+        self._alpha = float(params.alpha)
+        self._beta = float(params.beta)
+        self._kappa = float(params.kappa)
 
         self._nx = self._x.shape[0]
         self._nw = model.nw
@@ -138,7 +149,7 @@ class ContinuousDiscreteUKF:
         n_bar = self._nx + self._nw
         self._n_bar = n_bar
         c_bar, lam_bar, Wm_bar, Wc_bar = _sigma_weights(
-            n_bar, alpha, beta, kappa
+            n_bar, self._alpha, self._beta, self._kappa
         )
         self._c_bar = c_bar
         self._lam_bar = lam_bar
@@ -146,7 +157,9 @@ class ContinuousDiscreteUKF:
         self._Wc_bar = Wc_bar
 
         # State-only (measurement-update) weights: dimension nx
-        c_x, lam_x, Wm_x, Wc_x = _sigma_weights(self._nx, alpha, beta, kappa)
+        c_x, lam_x, Wm_x, Wc_x = _sigma_weights(
+            self._nx, self._alpha, self._beta, self._kappa
+        )
         self._c_x = c_x
         self._lam_x = lam_x
         self._Wm_x = Wm_x
@@ -170,28 +183,23 @@ class ContinuousDiscreteUKF:
         self,
         u: np.ndarray,
         d: np.ndarray,
-        p: np.ndarray,
+        p: np.ndarray | None,
         t: float,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Time update via the augmented sigma-point scheme.
 
-        Builds 2 nx + 1 deterministic state sigma points and 2 nω
-        stochastic noise sigma points placed at the mean with structured
-        deterministic Wiener increments, propagates each set, and
-        reconstructs the predicted mean and covariance.
-
         Parameters
         ----------
-        u : (nu,) ndarray  — control input applied over [t, t+dt].
-        d : (nd,) ndarray  — disturbance over [t, t+dt].
-        p : (nparams,) ndarray  — parameter vector.
-        t : float          — current time.
+        u : (nu,) ndarray       — input applied (ZOH) over [t, t+Ts].
+        d : (nd,) ndarray       — disturbance over [t, t+Ts].
+        p : (np,) ndarray       — parameter vector.
+        t : float               — current time.
 
         Returns
         -------
-        x_pred : (nx,) predicted state estimate x̂_{k+1|k}.
-        P_pred : (nx, nx) predicted covariance P_{k+1|k}.
+        x_pred : (nx,) predicted state estimate.
+        P_pred : (nx, nx) predicted covariance.
         """
         model = self._model
         nx = self._nx
@@ -199,8 +207,8 @@ class ContinuousDiscreteUKF:
         n_bar = self._n_bar
         h = self._h_sub
 
-        # ── Build deterministic state sigma points (2 nx + 1) ──
-        L = _cholesky_psd(self._P)              # P = L L^T
+        # Deterministic state sigma points (2 nx + 1)
+        L = _cholesky_psd(self._P)
         sqrt_c = np.sqrt(self._c_bar)
         det_sigma = np.empty((2 * nx + 1, nx))
         det_sigma[0] = self._x
@@ -208,38 +216,21 @@ class ContinuousDiscreteUKF:
             det_sigma[i + 1]      = self._x + sqrt_c * L[:, i]
             det_sigma[nx + i + 1] = self._x - sqrt_c * L[:, i]
 
-        # ── Build stochastic sigma set (all at mean) ──
-        # 2 nw points; the structured noise increments are stored separately
-        # and applied per-sub-step (the structured Wiener increment over
-        # [t_k, t_{k+1}] is split equally across n_steps so that the
-        # accumulated Brownian increment matches √(c̄ dt) e_i).
+        # Stochastic noise sigma set (2 nw points, all placed at mean)
+        # Total Wiener increment √(c̄ Ts) e_i split deterministically over n_steps.
         stoch_sigma = np.tile(self._x, (2 * nw, 1))
         I_nw = np.eye(nw)
-        # Per-sub-step Wiener increment: ±√(c̄ h) e_i  (so √(c̄ dt) e_i
-        # accumulates linearly when added each sub-step? No — Brownian
-        # increments add as Σ Δω_n with E[(Δω)^2] = h, so to get a single
-        # Δω = √(c̄ dt) e_i we apply it once.  Here we follow the spec
-        # which propagates the stochastic sigma points through the SDE
-        # with deterministic noise increments d ω^(.) (t).  We integrate
-        # a deterministic Wiener path that has total increment √(c̄ dt) e_i
-        # by setting the per-sub-step increment to √(c̄ dt) e_i / n_steps,
-        # which makes the cumulative Wiener increment √(c̄ dt) e_i.)
-        per_step_pos = np.sqrt(self._c_bar * self._dt) / self._n_steps * I_nw
+        per_step_pos = np.sqrt(self._c_bar * self._Ts) / self._n_steps * I_nw
         per_step_neg = -per_step_pos
-        # Stack: rows i = 1..nw are positive, rows nw+1..2nw are negative
-        # Each row gives the per-sub-step Wiener increment vector for that
-        # stochastic sigma point.
         stoch_d_omega = np.concatenate([per_step_pos, per_step_neg], axis=0)  # (2nw, nw)
 
-        # ── Propagate ──
+        # Propagate
         t_j = t
         for _ in range(self._n_steps):
-            # Deterministic set: drift only
             for i in range(2 * nx + 1):
                 f_i = model.f(det_sigma[i], u, d, p, t_j)
                 det_sigma[i] = det_sigma[i] + h * f_i
 
-            # Stochastic set: drift + structured noise
             for i in range(2 * nw):
                 xi = stoch_sigma[i]
                 f_i = model.f(xi, u, d, p, t_j)
@@ -248,9 +239,8 @@ class ContinuousDiscreteUKF:
 
             t_j += h
 
-        # ── Reconstruct mean and covariance over all 2 n̄ + 1 sigma points ──
-        # Order: deterministic[0] (mean), deterministic[1..2nx], stochastic[0..2nw-1]
-        all_sigma = np.concatenate([det_sigma, stoch_sigma], axis=0)  # (2n_bar+1, nx)
+        # Reconstruct mean and covariance over all 2 n̄ + 1 sigma points
+        all_sigma = np.concatenate([det_sigma, stoch_sigma], axis=0)
 
         x_pred = np.einsum("i,ij->j", self._Wm_bar, all_sigma)
         P_pred = np.zeros((nx, nx))
@@ -266,34 +256,31 @@ class ContinuousDiscreteUKF:
     def update(
         self,
         ym: np.ndarray,
-        u: np.ndarray,
-        d: np.ndarray,
-        p: np.ndarray,
+        u: np.ndarray | None,
+        d: np.ndarray | None,
+        p: np.ndarray | None,
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Measurement update via the standard (state-only) unscented
-        transform.  No augmentation with noise — measurement noise enters
-        only through the additive Rm term in the innovation covariance.
+        Measurement update via the standard (state-only) unscented transform.
 
         Parameters
         ----------
-        ym   : (nym,) ndarray  — measurement.
+        ym   : (nym,) ndarray  — measurement vector.
         u    : (nu,) ndarray   — input at measurement time.
         d    : (nd,) ndarray   — disturbance at measurement time.
-        p    : (nparams,) ndarray — parameter vector.
-        mask : (nym,) bool ndarray, optional — active output mask.
+        p    : (np,) ndarray   — parameter vector.
+        mask : (nym,) bool ndarray, optional — active-channel mask.
 
         Returns
         -------
-        x_hat : (nx,) corrected state estimate x̂_{k|k}.
-        P     : (nx, nx) corrected covariance P_{k|k}.
+        x_hat : (nx,) corrected state estimate.
+        P     : (nx, nx) corrected covariance.
         """
         model = self._model
         nx = self._nx
         R = model.Rm
 
-        # Generate state-only sigma points from (x̂_{k|k-1}, P_{k|k-1})
         L = _cholesky_psd(self._P)
         sqrt_c = np.sqrt(self._c_x)
         sigma = np.empty((2 * nx + 1, nx))
@@ -302,10 +289,9 @@ class ContinuousDiscreteUKF:
             sigma[i + 1]      = self._x + sqrt_c * L[:, i]
             sigma[nx + i + 1] = self._x - sqrt_c * L[:, i]
 
-        # Map sigma points through measurement function
         Z = np.array([
             model.hm(sigma[i], u, d, p, 0.0) for i in range(2 * nx + 1)
-        ])  # (2nx+1, nym)
+        ])
 
         if mask is not None:
             active = np.where(mask)[0]
@@ -318,7 +304,6 @@ class ContinuousDiscreteUKF:
             y_sub = ym
             R_sub = R
 
-        # Predicted measurement mean
         y_pred = np.einsum("i,ij->j", self._Wm_x, Z)
 
         ny_act = y_pred.shape[0]
@@ -331,10 +316,8 @@ class ContinuousDiscreteUKF:
             R_xy += self._Wc_x[i] * np.outer(dx, dy)
         R_e = R_zz + R_sub
 
-        # Kalman gain  K = R_xy R_e⁻¹
         K = np.linalg.solve(R_e.T, R_xy.T).T
 
-        # State + covariance updates (CD-UKF spec form: P = P − K R_e Kᵀ)
         innov = y_sub - y_pred
         x_new = self._x + K @ innov
         P_new = self._P - K @ R_e @ K.T
@@ -349,7 +332,7 @@ class ContinuousDiscreteUKF:
         ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
-        p: np.ndarray,
+        p: np.ndarray | None,
         t: float,
         mask: np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:

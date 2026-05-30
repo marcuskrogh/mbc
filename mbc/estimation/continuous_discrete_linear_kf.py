@@ -1,62 +1,78 @@
 """
-Continuous-Discrete Kalman Filter for linear continuous-discrete systems.
+Continuous-Discrete Linear Kalman Filter (``ContinuousDiscreteLinearKF``).
 
-Specialises the continuous-discrete EKF (ControlToolbox §SDE — *CD-EKF*)
-to a linear plant where no Jacobian linearisation is required: ``A`` is
-the constant Jacobian of the drift and ``Cm`` is the constant Jacobian of
-the measurement function.
+Linear specialisation of the continuous-discrete EKF (ControlToolbox §SDE —
+*CD-EKF*) where ``A`` and ``Cm`` are the constant drift and measurement
+Jacobians.
 
 Model
 -----
     dx(t)  = (A x + B u + E d) dt + G dw(t),     dw ~ N(0, I dt)
-    ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],  v ~ N(0, Rm)
+    ym[k]  = Cm x[k] + v[k],                       v ~ N(0, Rm)
 
 Time update over ``[t_{k-1}, t_k]``
 -----------------------------------
-Forward-Euler integration of the state and Lyapunov ODEs with
-``n_steps`` sub-steps of size ``h = dt / n_steps``:
+Forward-Euler integration of the state ODE and Lyapunov-type covariance ODE
+with ``n_steps`` sub-steps of size ``h = Ts / n_steps``:
 
-    dx̂_k/dt(t) = A x̂_k(t) + B u + E d
-    dP_k/dt(t) = A P_k(t) + P_k(t) Aᵀ + G Gᵀ
+    dx̂/dt(t) = A x̂(t) + B u + E d
+    dP/dt(t) = A P(t) + P(t) Aᵀ + G Gᵀ
 
 Inputs and disturbances are zero-order hold over each sampling interval.
 
-Measurement update at t_k (Joseph form)
----------------------------------------
-    e_k = ym_k − Cm x̂_{k|k-1}                   (innovation)
-    R_e = Cm P_{k|k-1} Cmᵀ + Rm                  (innovation covariance)
-    K_k = P_{k|k-1} Cmᵀ R_e⁻¹                    (Kalman gain)
+Measurement update at ``t_k`` (Joseph form)
+-------------------------------------------
+    e_k = ym_k − Cm x̂_{k|k-1}
+    R_e = Cm P_{k|k-1} Cmᵀ + Rm
+    K_k = P_{k|k-1} Cmᵀ R_e⁻¹
 
     x̂_{k|k} = x̂_{k|k-1} + K_k e_k
     P_{k|k} = (I − K_k Cm) P_{k|k-1} (I − K_k Cm)ᵀ + K_k Rm K_kᵀ
 
-The Joseph stabilising form preserves symmetry and positive
-semi-definiteness in finite-precision arithmetic.
-
-Missing observations (M.Sc. thesis Ch. 5.5) are handled by the optional
-``mask`` argument of :meth:`update`.
+Missing observations are handled by the optional ``mask`` argument.
 """
 
 from __future__ import annotations
 
-from typing import Optional, List, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import List, Optional, TYPE_CHECKING
 
 import numpy as np
 
 from .._utils import _any_to_np1d, _any_to_np2d
+from ._base import ContinuousDiscreteEstimator, EstimatorParams
 
 if TYPE_CHECKING:
     from ..models import ContinuousDiscreteLinearSDE
 
 
-class ContinuousDiscreteKalmanFilter:
+# ── Parameter structure ───────────────────────────────────────────────────────
+
+
+@dataclass
+class ContinuousDiscreteLinearKFParams(EstimatorParams):
+    """
+    Algorithm parameters for :class:`ContinuousDiscreteLinearKF`.
+
+    Parameters
+    ----------
+    n_steps : int
+        Number of Forward-Euler sub-steps per sampling interval.  Default: 10.
+    """
+    n_steps: int = 10
+
+
+# ── Estimator ─────────────────────────────────────────────────────────────────
+
+
+class ContinuousDiscreteLinearKF(ContinuousDiscreteEstimator):
     """
     Continuous-discrete Kalman filter for a linear continuous-discrete
-    plant (linear specialisation of :class:`~mbc.estimation.ContinuousDiscreteEKF`).
+    plant (linear specialisation of :class:`~.continuous_discrete_ekf.ContinuousDiscreteEKF`).
 
     The filter integrates the state ODE and Lyapunov-type covariance ODE
-    continuously over each sampling interval; ``Rm`` is read directly
-    from ``model.Rm``.
+    continuously over each sampling interval using Forward-Euler sub-steps;
+    ``Rm`` is read directly from ``model.Rm``.
 
     Parameters
     ----------
@@ -67,8 +83,8 @@ class ContinuousDiscreteKalmanFilter:
         Initial state estimate ``x̂_{0|0}``.  Defaults to ``np.zeros(nx)``.
     P0 : (nx, nx) ndarray, optional
         Initial state error covariance ``P_{0|0}``.  Defaults to ``I_{nx}``.
-    n_steps : int, optional
-        Forward-Euler sub-steps per sampling interval.  Default: 10.
+    params : ContinuousDiscreteLinearKFParams, optional
+        Algorithm parameter struct.  Pass to control ``n_steps``.
     """
 
     def __init__(
@@ -76,24 +92,25 @@ class ContinuousDiscreteKalmanFilter:
         model: "ContinuousDiscreteLinearSDE",
         x0: np.ndarray | None = None,
         P0: np.ndarray | None = None,
-        n_steps: int = 10,
+        params: ContinuousDiscreteLinearKFParams | None = None,
     ) -> None:
+        if params is None:
+            params = ContinuousDiscreteLinearKFParams()
+
         self._model = model
         nx = model.nx
 
-        # Cache the continuous-time matrices; G Gᵀ is the noise intensity.
-        self._A_c: np.ndarray = model.A
-        self._B_c: np.ndarray = model.B
-        self._E_c: np.ndarray = model.E
+        # Cache continuous-time matrices; G Gᵀ is the noise intensity.
+        self._A_c: np.ndarray = np.asarray(model.A, dtype=float)
+        self._B_c: np.ndarray = np.asarray(model.B, dtype=float)
+        self._E_c: np.ndarray = np.asarray(model.E, dtype=float)
         G = np.asarray(model.G, dtype=float)
         self._GGT: np.ndarray = G @ G.T
 
-        # ODE integration parameters
-        self._dt: float = model.Ts
-        self._n_steps: int = int(n_steps)
-        self._h: float = model.Ts / n_steps
+        self._Ts: float = float(model.Ts)
+        self._n_steps: int = int(params.n_steps)
+        self._h: float = self._Ts / self._n_steps
 
-        # State estimate and covariance
         self._x: np.ndarray = (
             np.asarray(x0, dtype=float).copy() if x0 is not None
             else np.zeros(nx)
@@ -101,7 +118,6 @@ class ContinuousDiscreteKalmanFilter:
         self._P: np.ndarray = (
             _any_to_np2d(P0).copy() if P0 is not None else np.eye(nx)
         )
-
         self._last_innovation: Optional[np.ndarray] = None
 
     # ── Public properties ────────────────────────────────────────────────────
@@ -129,19 +145,22 @@ class ContinuousDiscreteKalmanFilter:
         self,
         u: np.ndarray,
         d: np.ndarray,
+        p=None,
+        t: float | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Time update — forward-Euler integration of the state and
-        Lyapunov-type covariance ODEs over one sampling interval with
-        zero-order hold on ``u`` and ``d``.
+        Time update — Forward-Euler integration of the state and
+        Lyapunov-type covariance ODEs over one sampling interval (ZOH).
 
             dx̂/dt = A x̂ + B u + E d
             dP/dt = A P + P Aᵀ + G Gᵀ
 
         Parameters
         ----------
-        u : (nu,) ndarray  — input applied over the just-completed interval.
-        d : (nd,) ndarray  — disturbance applied over the same interval.
+        u : (nu,) ndarray  — input applied (ZOH) over the just-completed interval.
+        d : (nd,) ndarray  — disturbance over the same interval.
+        p : ignored         — accepted for interface uniformity.
+        t : ignored         — accepted for interface uniformity (LTI).
 
         Returns
         -------
@@ -173,17 +192,22 @@ class ContinuousDiscreteKalmanFilter:
     def update(
         self,
         ym: np.ndarray,
+        u: np.ndarray | None = None,
+        d: np.ndarray | None = None,
+        p: np.ndarray | None = None,
         mask: list[bool] | np.ndarray | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
-        Measurement update at time ``t_k`` (Joseph form).
+        Measurement update at ``t_k`` (Joseph form).
 
         Parameters
         ----------
         ym : (nym,) ndarray
             Measurement at time ``t_k``.
+        u, d, p : ignored — accepted for interface uniformity (linear model
+            has no direct feedthrough in the measurement equation).
         mask : (nym,) bool ndarray or list, optional
-            See :meth:`KalmanFilter.update`.
+            Active-channel mask; see :meth:`DiscreteLinearKF.update`.
 
         Returns
         -------
@@ -204,19 +228,16 @@ class ContinuousDiscreteKalmanFilter:
             Rm = Rm[np.ix_(active, active)]
             ym_np = ym_np[active]
 
-        x_pred = self._x
-        P_pred = self._P
+        e = ym_np - Cm @ self._x
+        R_e = Cm @ self._P @ Cm.T + Rm
 
-        e = ym_np - Cm @ x_pred
-        R_e = Cm @ P_pred @ Cm.T + Rm
-
-        Kt = np.linalg.solve(R_e, Cm @ P_pred)
+        Kt = np.linalg.solve(R_e, Cm @ self._P)
         K = Kt.T
 
-        x_new = x_pred + K @ e
+        x_new = self._x + K @ e
 
         IKC = np.eye(nx) - K @ Cm
-        P_new = IKC @ P_pred @ IKC.T + K @ Rm @ K.T
+        P_new = IKC @ self._P @ IKC.T + K @ Rm @ K.T
         P_new = 0.5 * (P_new + P_new.T)
 
         self._last_innovation = e.copy()
@@ -236,17 +257,13 @@ class ContinuousDiscreteKalmanFilter:
         """
         Combined time + measurement update.
 
-        Propagates the estimate from ``t_{k-1}`` to ``t_k`` using the
-        previously-applied ``u`` and ``d`` (ZOH), then fuses the
-        measurement ``ym``.
-
         Parameters
         ----------
         ym : (nym,) ndarray  — measurement at time ``t_k``.
         u  : (nu,) ndarray   — input applied over the previous interval.
-        d  : (nd,) ndarray   — disturbance applied over the previous interval.
-        p  : ignored          — for interface compatibility (LTI: no parameters).
-        t  : ignored          — for interface compatibility (LTI: time-invariant).
+        d  : (nd,) ndarray   — disturbance over the previous interval.
+        p  : ignored          — accepted for interface uniformity.
+        t  : ignored          — accepted for interface uniformity.
         mask : (nym,) bool ndarray, optional — see :meth:`update`.
 
         Returns

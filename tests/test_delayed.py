@@ -3,7 +3,7 @@ Tests for DelayedObservationFilter.
 
 Two main estimator flavours are covered:
 
-  1. Discrete-time  — KalmanFilter wrapped with DelayedObservationFilter.
+  1. Discrete-time  — DiscreteLinearKF wrapped with DelayedObservationFilter.
   2. Continuous-discrete — ContinuousDiscreteEKF wrapped with
      DelayedObservationFilter (using the van de Vusse CSTR model, extended to
      observe both states).
@@ -36,8 +36,8 @@ import warnings
 import numpy as np
 import pytest
 
-from mbc.estimation import KalmanFilter, ContinuousDiscreteEKF
-from mbc.estimation.delayed import DelayedObservationFilter
+from mbc.estimation import DiscreteLinearKF, ContinuousDiscreteEKF, ContinuousDiscreteEKFParams
+from mbc.estimation.delayed_observation_filter import DelayedObservationFilter
 from mbc.models import DiscreteLinearSDE, ContinuousDiscreteSDE
 
 
@@ -165,14 +165,14 @@ def two_state_model():
 
 @pytest.fixture()
 def two_state_kf(two_state_model):
-    """Bare KalmanFilter — Qd, Rm read from the model."""
-    return KalmanFilter(two_state_model)
+    """Bare DiscreteLinearKF — Qd, Rm read from the model."""
+    return DiscreteLinearKF(two_state_model)
 
 
 @pytest.fixture()
 def two_state_kf2(two_state_model):
-    """A second independent KalmanFilter for comparison tests."""
-    return KalmanFilter(two_state_model)
+    """A second independent DiscreteLinearKF for comparison tests."""
+    return DiscreteLinearKF(two_state_model)
 
 
 @pytest.fixture()
@@ -189,7 +189,7 @@ def two_output_cstr():
 def two_output_ekf(two_output_cstr):
     x0 = _VDV_SS + np.array([0.05, 0.02])
     P0 = np.diag([0.1, 0.1])
-    return ContinuousDiscreteEKF(two_output_cstr, x0, P0, Ts=0.01, n_steps=10)
+    return ContinuousDiscreteEKF(two_output_cstr, x0, P0, Ts=0.01, params=ContinuousDiscreteEKFParams(n_steps=10))
 
 
 @pytest.fixture()
@@ -316,7 +316,7 @@ class TestBufferManagement:
 
     def test_buffer_capped_at_lag_max(self):
         model = _TwoStateModel()
-        kf = KalmanFilter(model)
+        kf = DiscreteLinearKF(model)
         filt = DelayedObservationFilter(kf, lag_max=5)
 
         u = np.zeros(1)
@@ -331,7 +331,7 @@ class TestBufferManagement:
     def test_delay_exceeds_buffer_issues_warning(self):
         """A delay larger than the current buffer depth must issue RuntimeWarning."""
         model = _TwoStateModel()
-        kf = KalmanFilter(model)
+        kf = DiscreteLinearKF(model)
         filt = DelayedObservationFilter(kf, lag_max=10)
 
         u = np.zeros(1)
@@ -373,7 +373,7 @@ class TestSingleDelayedChannel:
         self, two_state_model, two_state_kf
     ):
         """With a delayed channel the estimate must differ from ignore-delay."""
-        kf_ignore = KalmanFilter(two_state_model)
+        kf_ignore = DiscreteLinearKF(two_state_model)
         filt = DelayedObservationFilter(two_state_kf, lag_max=10)
 
         _, Y, U = _simulate_linear(10, seed=42)
@@ -412,7 +412,7 @@ class TestSingleDelayedChannel:
         d = np.array([0.0])
 
         # Filter A: only channel 0 (channel 1 ignored)
-        kf_a = KalmanFilter(two_state_model)
+        kf_a = DiscreteLinearKF(two_state_model)
         X_a = []
         for ym, u in zip(Y, U):
             kf_a.step(ym, u, d, mask=[True, False])
@@ -421,7 +421,7 @@ class TestSingleDelayedChannel:
 
         # Filter B: channel 0 immediate + channel 1 delayed by tau
         kf_b = DelayedObservationFilter(
-            KalmanFilter(two_state_model), lag_max=2 * tau,
+            DiscreteLinearKF(two_state_model), lag_max=2 * tau,
         )
         delay_arr = np.array([0, tau])
         X_b = []
@@ -447,7 +447,7 @@ class TestMultipleDelayedChannels:
 
     def test_two_channels_with_different_delays(self, two_state_model):
         """delays = (2, 3) — wrapper must not error and produce finite estimates."""
-        kf = KalmanFilter(two_state_model)
+        kf = DiscreteLinearKF(two_state_model)
         filt = DelayedObservationFilter(kf, lag_max=10)
 
         _, Y, U = _simulate_linear(15, seed=55)
@@ -464,7 +464,7 @@ class TestMultipleDelayedChannels:
 
     def test_mixed_immediate_and_delayed(self, two_state_model):
         """Channel 0 immediate, channel 1 delayed by 2."""
-        kf = KalmanFilter(two_state_model)
+        kf = DiscreteLinearKF(two_state_model)
         filt = DelayedObservationFilter(kf, lag_max=10)
 
         _, Y, U = _simulate_linear(20, seed=77)
@@ -477,7 +477,7 @@ class TestMultipleDelayedChannels:
 
     def test_covariance_positive_definite(self, two_state_model):
         """Posterior covariance must remain symmetric positive-definite."""
-        kf = KalmanFilter(two_state_model)
+        kf = DiscreteLinearKF(two_state_model)
         filt = DelayedObservationFilter(kf, lag_max=10)
 
         _, Y, U = _simulate_linear(15, seed=33)
@@ -526,10 +526,12 @@ class TestDelayedEKF:
         P0 = np.diag([0.1, 0.1])
 
         ekf_bare = ContinuousDiscreteEKF(
-            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01, n_steps=10,
+            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01,
+            params=ContinuousDiscreteEKFParams(n_steps=10),
         )
         ekf_wrap = ContinuousDiscreteEKF(
-            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01, n_steps=10,
+            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01,
+            params=ContinuousDiscreteEKFParams(n_steps=10),
         )
         filt = DelayedObservationFilter(ekf_wrap, lag_max=10)
 
@@ -557,7 +559,8 @@ class TestDelayedEKF:
         P0 = np.diag([0.1, 0.1])
 
         ekf = ContinuousDiscreteEKF(
-            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01, n_steps=10,
+            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01,
+            params=ContinuousDiscreteEKFParams(n_steps=10),
         )
         filt = DelayedObservationFilter(ekf, lag_max=10)
 
@@ -579,7 +582,8 @@ class TestDelayedEKF:
         x0 = _VDV_SS + np.array([0.05, 0.02])
         P0 = np.diag([0.1, 0.1])
         ekf = ContinuousDiscreteEKF(
-            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01, n_steps=10,
+            two_output_cstr, x0.copy(), P0.copy(), Ts=0.01,
+            params=ContinuousDiscreteEKFParams(n_steps=10),
         )
         filt = DelayedObservationFilter(ekf, lag_max=10)
 
