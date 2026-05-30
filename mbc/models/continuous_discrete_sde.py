@@ -12,77 +12,10 @@ stochastic systems (ControlToolbox §SDE):
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import NamedTuple
 
 import numpy as np
 
 from .._utils import _fd_jacobian
-
-
-class Linearisation(NamedTuple):
-    """
-    System matrices of a linearisation evaluated at a steady-state operating
-    point ``(x_s, u_s, d_s)``.
-
-    The linearised dynamics are:
-
-        dδx(t) = (A δx + B δu + E δd) dt + G dw(t),  dw(t) ~ N(0, I dt)
-        δz(t)  = Cz δx + Dz δu + Fz δd
-        δym(tk)= Cm δx + Dm δu + Fm δd + v(tk),       v(tk) ~ N(0, Rm)
-
-    where δx = x − x_s, δu = u − u_s, δd = d − d_s.
-
-    The operating-point outputs ``z_s`` and ``ym_s`` are included so the
-    caller can reconstruct absolute outputs without re-evaluating the model.
-
-    Call :meth:`discretize` to obtain a :class:`DiscreteLinearisedSDE` at a
-    given sampling interval.
-    """
-    A: np.ndarray
-    B: np.ndarray
-    E: np.ndarray
-    G: np.ndarray
-    Cm: np.ndarray
-    Dm: np.ndarray
-    Fm: np.ndarray
-    Cz: np.ndarray
-    Dz: np.ndarray
-    Fz: np.ndarray
-    Rm: np.ndarray
-    x_s: np.ndarray
-    u_s: np.ndarray
-    d_s: np.ndarray
-    z_s: np.ndarray
-    ym_s: np.ndarray
-
-    def discretize(self, Ts: float) -> "DiscreteLinearisedSDE":
-        """
-        ZOH-discretise the linearisation at sampling interval ``Ts``.
-
-        Uses the augmented matrix exponential (ZOH) for ``(Ad, Bd, Ed)``
-        and the Van Loan (1978) method for the process-noise covariance ``Qd``.
-
-        Parameters
-        ----------
-        Ts : sampling interval (seconds).
-
-        Returns
-        -------
-        DiscreteLinearisedSDE
-        """
-        from .._utils import _zoh_full, _van_loan
-        from ._concrete import _ConcreteDiscreteLinearisedSDE
-
-        Ad, Bd, Ed = _zoh_full(self.A, self.B, self.E, Ts)
-        Qd = _van_loan(self.A, self.G, np.eye(self.G.shape[1]), Ts)
-        return _ConcreteDiscreteLinearisedSDE(
-            Ad=Ad, Bd=Bd, Ed=Ed,
-            Cm=self.Cm, Qd=Qd, Rm=self.Rm,
-            Cz=self.Cz, Dz=self.Dz, Fz=self.Fz,
-            Dm=self.Dm, Fm=self.Fm,
-            x_s=self.x_s, u_s=self.u_s, d_s=self.d_s,
-            z_s=self.z_s, ym_s=self.ym_s,
-        )
 
 
 class ContinuousDiscreteSDE(ABC):
@@ -284,23 +217,27 @@ class ContinuousDiscreteSDE(ABC):
         """Jacobian ∂gm/∂d at (x, u, d, p, t)  →  (nz, nd) ndarray."""
         return _fd_jacobian(lambda v: self.gm(x, u, v, p, t), d)
 
-    # ── Linearisation factory methods ─────────────────────────────────────
+    # ── Linearisation ─────────────────────────────────────────────────────
 
-    def linearisation(
+    def linearise(
         self,
         x_s: np.ndarray,
         u_s: np.ndarray,
         d_s: np.ndarray,
         p: np.ndarray | None = None,
         t: float = 0.0,
-    ) -> "Linearisation":
+    ) -> "ContinuousDiscreteLinearisedSDE":
         """
-        Return a :class:`Linearisation` with the system matrices evaluated at
-        the operating point ``(x_s, u_s, d_s)``.
+        Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at the
+        operating point ``(x_s, u_s, d_s)``.
 
         All Jacobians are evaluated via the registered analytic or
-        finite-difference methods.  The diffusion matrix ``G`` is the
-        value of ``sigma`` at the operating point.
+        finite-difference methods.  The diffusion matrix ``G`` is
+        ``sigma`` evaluated at the operating point.
+
+        The sampling interval ``Ts`` is not required here; pass it to
+        :meth:`ContinuousDiscreteLinearisedSDE.discretize` when converting
+        to a discrete-time model.
 
         Parameters
         ----------
@@ -312,11 +249,13 @@ class ContinuousDiscreteSDE(ABC):
 
         Returns
         -------
-        Linearisation
+        ContinuousDiscreteLinearisedSDE
         """
+        from ._concrete import _ConcreteContinuousDiscreteLinearisedSDE
+
         if p is None:
             p = self.params
-        return Linearisation(
+        return _ConcreteContinuousDiscreteLinearisedSDE(
             A=self.dfdx(x_s, u_s, d_s, p, t),
             B=self.dfdu(x_s, u_s, d_s, p, t),
             E=self.dfdd(x_s, u_s, d_s, p, t),
@@ -333,46 +272,6 @@ class ContinuousDiscreteSDE(ABC):
             d_s=np.asarray(d_s),
             z_s=self.gm(x_s, u_s, d_s, p, t),
             ym_s=self.hm(x_s, u_s, d_s, p, t),
-        )
-
-    def linearise(
-        self,
-        x_s: np.ndarray,
-        u_s: np.ndarray,
-        d_s: np.ndarray,
-        p: np.ndarray | None = None,
-        t: float = 0.0,
-    ) -> "ContinuousDiscreteLinearisedSDE":
-        """
-        Return a :class:`ContinuousDiscreteLinearisedSDE` linearised at the
-        operating point ``(x_s, u_s, d_s)``.
-
-        The sampling interval ``Ts`` is not required here; pass it to
-        :meth:`ContinuousDiscreteLinearisedSDE.discretize` when you need a
-        discrete-time model.
-
-        Parameters
-        ----------
-        x_s : (nx,) operating-point state.
-        u_s : (nu,) operating-point input.
-        d_s : (nd,) operating-point disturbance.
-        p   : parameter vector; defaults to ``self.params``.
-        t   : evaluation time (default 0.0).
-
-        Returns
-        -------
-        ContinuousDiscreteLinearisedSDE
-        """
-        from ._concrete import _ConcreteContinuousDiscreteLinearisedSDE
-
-        lin = self.linearisation(x_s, u_s, d_s, p=p, t=t)
-        return _ConcreteContinuousDiscreteLinearisedSDE(
-            A=lin.A, B=lin.B, E=lin.E, G=lin.G,
-            Cm=lin.Cm, Dm=lin.Dm, Fm=lin.Fm,
-            Cz=lin.Cz, Dz=lin.Dz, Fz=lin.Fz,
-            Rm=lin.Rm,
-            x_s=lin.x_s, u_s=lin.u_s, d_s=lin.d_s,
-            z_s=lin.z_s, ym_s=lin.ym_s,
         )
 
     # ── Parameters ────────────────────────────────────────────────────────
