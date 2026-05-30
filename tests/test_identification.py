@@ -60,7 +60,7 @@ class _ScalarModel:
     def nd(self) -> int:
         return 1
 
-    def discretize(self, d=None):
+    def discretize(self):
         """Return a model-like object with Ad, Bd, Ed attributes."""
         from types import SimpleNamespace
         return SimpleNamespace(
@@ -89,13 +89,10 @@ class _ScalarModel:
         e = math.exp(float(theta[2]))
         return _ScalarModel(a, b, e)
 
-    def discretize_jacobian(
-        self, d_np: np.ndarray, h: float = 1e-5
-    ):
+    def discretize_jacobian(self, h: float = 1e-5):
         """Finite-difference Jacobians ∂A_d/∂θ_i, ∂B_d/∂θ_i, ∂E_d/∂θ_i."""
-        d_arr = np.asarray(d_np, dtype=float)
         theta0 = self.params
-        _dm0 = self.discretize(d_arr)
+        _dm0 = self.discretize()
         A0, B0, E0 = _dm0.Ad, _dm0.Bd, _dm0.Ed
 
         dA, dB, dE = [], [], []
@@ -103,7 +100,7 @@ class _ScalarModel:
             theta_h = theta0.copy()
             theta_h[i] += h
             m_h = self.with_params(theta_h)
-            _dmh = m_h.discretize(d_arr)
+            _dmh = m_h.discretize()
             Ah, Bh, Eh = _dmh.Ad, _dmh.Bd, _dmh.Ed
             dA.append((np.asarray(Ah, dtype=float) - A0) / h)
             dB.append((np.asarray(Bh, dtype=float) - B0) / h)
@@ -432,7 +429,7 @@ class TestDiscreteJacobian:
 
     def test_jacobian_shape(self):
         m = _ScalarModel(0.9, 0.5, 0.2)
-        dA, dB, dE = m.discretize_jacobian(np.array([0.0]))
+        dA, dB, dE = m.discretize_jacobian()
         assert len(dA) == 3
         assert len(dB) == 3
         assert len(dE) == 3
@@ -443,7 +440,7 @@ class TestDiscreteJacobian:
         """For the scalar model, ∂A/∂log_a = A = a (chain rule in log space)."""
         a = 0.9
         m = _ScalarModel(a, 0.5, 0.2)
-        dA, _, _ = m.discretize_jacobian(np.array([0.0]))
+        dA, _, _ = m.discretize_jacobian()
         # dA/d(log_a) = a * d(log_a)/d(log_a) = a for scalar constant A = a
         np.testing.assert_allclose(dA[0][0, 0], a, rtol=1e-3)
 

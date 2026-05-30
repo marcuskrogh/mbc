@@ -17,9 +17,7 @@ where:
 The model is provided via a *factory* callable
 ``model_factory(θ) → model`` that returns any object exposing the
 ``DiscreteLinearSDE`` interface (``nx``, ``nu``, ``nd``,
-``discretize(d_cvx)``, ``predict_offset(d_np)``).  The ``d`` argument
-passed to ``discretize`` is the recorded disturbance from the history; LTI
-model implementations may ignore it.
+``discretize()``, ``predict_offset(d_np)``).
 
 History format (linear PED)
 ---------------------------
@@ -71,7 +69,7 @@ def ped_neg_log_likelihood(
     ----------
     model_factory : callable  θ → model
         Returns a model object exposing ``nx``, ``nu``, ``nd``,
-        ``discretize(d_cvx) → (A_cvx, B_cvx, E_cvx)``, and optionally
+        ``discretize() → DiscreteLinearSDE``, and optionally
         ``predict_offset(d_np) → np.ndarray``.
         May raise any exception for invalid θ; the sentinel ``_INVALID_LIKELIHOOD``
         is returned in that case.
@@ -140,7 +138,7 @@ def ped_neg_log_likelihood(
 
         # Discretise at the previous disturbance
         try:
-            _dm = model.discretize(np.asarray(d_prev, dtype=float))
+            _dm = model.discretize()
             A_raw, B_raw, E_raw = _dm.Ad, _dm.Bd, _dm.Ed
         except Exception:
             return _INVALID_LIKELIHOOD

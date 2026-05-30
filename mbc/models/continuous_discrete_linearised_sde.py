@@ -46,8 +46,8 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
 
     Discretisation
     --------------
-    ``discretize(d=None)`` has the same signature as the parent's
-    ``discretize(d=None)``: both use ``self.Ts``.  The chain
+    ``discretize()`` has the same signature as the parent's
+    ``discretize()``: both use ``self.Ts``.  The chain
 
         dm = sde.linearise(u_s, d_s).discretize()
 
@@ -91,7 +91,7 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
 
     # ── Discretisation ────────────────────────────────────────────────────
 
-    def discretize(self, d: np.ndarray | None = None) -> "DiscreteLinearisedSDE":
+    def discretize(self) -> "DiscreteLinearisedSDE":
         """
         Return a :class:`DiscreteLinearisedSDE` obtained by ZOH-discretising
         this linearised system at ``self.Ts``.
@@ -100,11 +100,6 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
         The steady-state operating point ``(x_s, u_s, d_s, z_s, ym_s)`` is
         carried over so the returned discrete model supports the full
         coordinate-transform interface (``*_dev`` / ``*_abs``).
-
-        Parameters
-        ----------
-        d : (nd,) ndarray, optional — disturbance for LPV scheduling
-            (ignored for LTI models).
 
         Returns
         -------

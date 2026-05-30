@@ -26,7 +26,7 @@ the controller operates on the ZOH-discretised prediction model
 
     x[k+1] = A_d x[k] + B_d u[k] + E_d d[k]
 
-where (A_d, B_d, E_d) = ``model.discretize(d)``.
+where (A_d, B_d, E_d) = ``model.discretize()``.
 
 The receding-horizon quadratic program over horizon N is:
 

@@ -275,7 +275,7 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
 
     # ── Concrete discretisation methods ───────────────────────────────────
 
-    def discretize(self, d: np.ndarray | None = None) -> "DiscreteLinearSDE":
+    def discretize(self) -> "DiscreteLinearSDE":
         """
         Return a :class:`DiscreteLinearSDE` obtained by ZOH-discretising this
         system at sampling interval ``Ts``.
@@ -284,14 +284,6 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
         the Van Loan (1978) method for the process-noise covariance ``Qd``.
         The output and measurement matrices ``Cz``, ``Dz``, ``Fz``, ``Cm``,
         ``Dm``, ``Fm`` carry over unchanged, as they apply at sample times.
-
-        The ``d`` argument is accepted so that LPV sub-classes may override
-        this method to schedule matrices on the current disturbance; the
-        default LTI implementation ignores it.
-
-        Parameters
-        ----------
-        d : (nd,) ndarray, optional  — current disturbance (ignored for LTI).
 
         Returns
         -------
