@@ -1,22 +1,21 @@
 """
-Delayed-Observation Filter wrapper.
+Delayed-Observation Filter wrapper (``DelayedObservationFilter``).
 
 A transparent wrapper that adds per-channel reporting-delay handling to
-**any** continuous-discrete or discrete-time state estimator that exposes
-the unified
+**any** estimator that implements the unified
 
-    estimator.step(ym, u, d, p=None, t=None, mask=None) → (x_hat, P, …)
+    estimator.step(ym, u, d, p, t, mask=None) → (x_hat, P, …)
 
 interface.
 
 Supported wrapped estimators
 -----------------------------
-* :class:`~mbc.estimation.KalmanFilter`              (linear discrete-time)
-* :class:`~mbc.estimation.CDKalmanFilter`            (linear continuous-discrete)
-* :class:`~mbc.estimation.ContinuousDiscreteEKF`     (nonlinear)
+* :class:`~mbc.estimation.DiscreteLinearKF`
+* :class:`~mbc.estimation.ContinuousDiscreteLinearKF`
+* :class:`~mbc.estimation.ContinuousDiscreteEKF`
 * :class:`~mbc.estimation.ContinuousDiscreteUKF`
 * :class:`~mbc.estimation.ContinuousDiscreteEnKF`
-* :class:`~mbc.estimation.ContinuousDiscreteParticleFilter`
+* :class:`~mbc.estimation.ContinuousDiscretePF`
 
 Algorithm (M.Sc. thesis §1.2)
 -----------------------------
@@ -25,24 +24,21 @@ disturbance ``d[k-1]``, optional parameters ``p`` and time ``t_k``):
 
 1. **Immediate update** — apply the wrapped estimator with the active
    non-delayed channels (or the full mask when ``delay`` is ``None``).
-   Push ``{x_hat, P, ym, u, d, p, t, mask}`` onto an internal ring buffer
+   Push ``{x_hat, P, ym, u, d, p, t, mask}`` onto a ring buffer
    (``deque`` with ``maxlen = lag_max``).
 
 2. **Delayed corrections** — for each channel ``i`` with ``delay[i] = τ > 0``
-   (sorted by τ ascending so shorter lags are processed first):
+   (sorted ascending so shorter lags are processed first):
 
-   a. Restore the estimator's state to the posterior at step ``k − τ``
-      (read from the buffer).
-   b. Apply a **measurement-only** correction for channel ``i`` at that
-      prior state.
-   c. Replay the buffered ``step`` calls for entries ``k − τ + 1 … k`` so
-      that the current posterior reflects the late observation.
+   a. Restore the estimator state to the posterior at step ``k − τ``.
+   b. Apply a measurement-only correction for channel ``i``.
+   c. Replay buffered steps ``k − τ + 1 … k`` to rebuild the posterior chain.
 
 3. After all delayed corrections the estimator holds the fully-corrected
-   current estimate, and the buffer stores the updated posterior chain.
+   current estimate.
 
 If ``delay[i] > lag_max`` or ``delay[i] >= buffer depth``, channel ``i``
-is dropped and a :class:`RuntimeWarning` is issued.
+is dropped with a :class:`RuntimeWarning`.
 """
 
 from __future__ import annotations
@@ -60,7 +56,6 @@ from .._utils import _cholesky_psd
 
 
 def _is_cvxopt(v) -> bool:
-    """Return True if *v* is a cvxopt matrix."""
     try:
         from cvxopt import matrix as _cvx
         return isinstance(v, _cvx)
@@ -69,7 +64,6 @@ def _is_cvxopt(v) -> bool:
 
 
 def _as_np1d(v) -> np.ndarray | None:
-    """Convert a vector (numpy or cvxopt column) to a 1-D numpy float array."""
     if v is None:
         return None
     if _is_cvxopt(v):
@@ -79,7 +73,6 @@ def _as_np1d(v) -> np.ndarray | None:
 
 
 def _as_np2d(M) -> np.ndarray:
-    """Convert a matrix (numpy or cvxopt) to a 2-D numpy float array."""
     if _is_cvxopt(M):
         rows, cols = M.size
         return np.array(list(M), dtype=float).reshape((rows, cols), order="F")
@@ -87,7 +80,6 @@ def _as_np2d(M) -> np.ndarray:
 
 
 def _ny_of(y) -> int:
-    """Return the number of output channels in a measurement vector."""
     if _is_cvxopt(y):
         return y.size[0]
     return int(np.asarray(y).ravel().shape[0])
@@ -99,12 +91,12 @@ def _ny_of(y) -> int:
 class DelayedObservationFilter:
     """
     Transparent per-channel-delay wrapper for any state estimator that
-    exposes the unified ``step(ym, u, d, p=None, t=None, mask=None)`` API.
+    exposes the unified ``step(ym, u, d, p, t, mask=None)`` API.
 
     Parameters
     ----------
     estimator : any supported estimator
-        Wrapped estimator (linear DT, linear CD, or nonlinear CD).
+        Wrapped estimator.
     lag_max : int
         Maximum reporting delay in sampling steps the buffer can
         accommodate.  Channels with a delay exceeding ``lag_max`` (or the
@@ -130,35 +122,25 @@ class DelayedObservationFilter:
     def last_innovation(self):
         return getattr(self._est, "last_innovation", None)
 
-    # ── State helpers ──────────────────────────────────────────────────────
+    # ── State save / restore ──────────────────────────────────────────────
 
     def _get_state(self) -> tuple[np.ndarray, np.ndarray]:
-        """Return ``(x_hat, P)`` as numpy arrays."""
         return _as_np1d(self._est.x_hat), _as_np2d(self._est.P)
 
     def _set_state(self, x_np: np.ndarray, P_np: np.ndarray) -> None:
         """
-        Restore the wrapped estimator's internal ``(x_hat, P)`` state.
+        Restore the wrapped estimator's ``(x_hat, P)`` state.
 
-        Used during retrospective correction to roll the estimator back to
-        the posterior at the original sample time before re-applying a
-        late observation.
+        For ensemble / particle estimators the particle cloud is resampled
+        from N(x_np, P_np); for all other estimators ``_x`` and ``_P``
+        are set directly.
         """
-        from .kalman import KalmanFilter
-        from .cd_kalman import CDKalmanFilter
-        from .ekf import ContinuousDiscreteEKF
-        from .ukf import ContinuousDiscreteUKF
-        from .enkf import ContinuousDiscreteEnKF
-        from .pf import ContinuousDiscreteParticleFilter
+        from ._base import ContinuousDiscreteEstimator, DiscreteEstimator
+        from .continuous_discrete_enkf import ContinuousDiscreteEnKF
+        from .continuous_discrete_pf import ContinuousDiscretePF
 
         est = self._est
-        if isinstance(est, (KalmanFilter, CDKalmanFilter, ContinuousDiscreteEKF)):
-            est._x_np = x_np.copy()
-            est._P_np = P_np.copy()
-        elif isinstance(est, ContinuousDiscreteUKF):
-            est._x = x_np.copy()
-            est._P = P_np.copy()
-        elif isinstance(est, (ContinuousDiscreteEnKF, ContinuousDiscreteParticleFilter)):
+        if isinstance(est, (ContinuousDiscreteEnKF, ContinuousDiscretePF)):
             try:
                 nx, N = est._nx, est._N
                 rng = est._rng
@@ -171,6 +153,9 @@ class DelayedObservationFilter:
             L = _cholesky_psd(P_np)
             Z = rng.standard_normal((nx, N))
             est._X = x_np[:, None] + L @ Z
+        elif isinstance(est, (DiscreteEstimator, ContinuousDiscreteEstimator)):
+            est._x = x_np.copy()
+            est._P = P_np.copy()
         else:
             raise TypeError(
                 f"DelayedObservationFilter: unsupported estimator type {type(est)!r}"
@@ -232,66 +217,36 @@ class DelayedObservationFilter:
     ) -> None:
         """
         Apply a measurement-only update at the prior ``(x0, P0)`` for
-        a single output channel.  Restores the estimator state to the
-        prior, then calls ``estimator.update`` with a single-channel mask.
+        a single output channel.
         """
+        from ._base import ContinuousDiscreteEstimator
+
         self._set_state(x0_np, P0_np)
         single_mask = np.zeros(ny, dtype=bool)
         single_mask[ch_idx] = True
-        # All estimators share update(ym, mask) (linear) or
-        # update(ym, u, d, p, mask) (CD).  The CD signature is detected
-        # via _is_cd_estimator.
-        if self._is_cd_estimator():
-            # Use the corresponding ``u``, ``d``, ``p`` from the prior
-            # buffer entry — they are passed in via _replay_cd's
-            # entry["u"], etc., but for the SINGLE-CHANNEL correction the
-            # CD update only needs them when hm depends on them.  For
-            # robustness, look them up from the latest buffer entry.
+
+        if isinstance(self._est, ContinuousDiscreteEstimator):
             entry = self._buf[-1]
             u_e = entry["u"]
             d_e = entry["d"]
             p_e = entry.get("p")
-            if p_e is None:
-                self._est.update(ym_np, u_e, d_e, None, mask=single_mask)
-            else:
-                self._est.update(ym_np, u_e, d_e, p_e, mask=single_mask)
+            self._est.update(ym_np, u_e, d_e, p_e, mask=single_mask)
         else:
             self._est.update(ym_np, mask=single_mask)
-
-    def _is_cd_estimator(self) -> bool:
-        """Return True if the wrapped estimator uses the CD-EKF update signature."""
-        from .ekf import ContinuousDiscreteEKF
-        from .ukf import ContinuousDiscreteUKF
-        from .enkf import ContinuousDiscreteEnKF
-        from .pf import ContinuousDiscreteParticleFilter
-
-        return isinstance(self._est, (
-            ContinuousDiscreteEKF, ContinuousDiscreteUKF,
-            ContinuousDiscreteEnKF, ContinuousDiscreteParticleFilter,
-        ))
 
     # ── Replay forward through buffer ──────────────────────────────────────
 
     def _replay(self, entries: list[dict]) -> None:
-        """
-        Re-propagate the estimator through *entries* (predict + update at
-        each entry) to bring the posterior chain up to date after a
-        delayed correction.
-
-        The estimator must already be at the corrected prior state.
-        ``entry["x_hat"]`` and ``entry["P"]`` are updated in-place.
-        """
+        """Re-propagate the estimator through *entries* to rebuild the chain."""
         for entry in entries:
-            ym_e = entry["ym"]
-            u_e = entry["u"]
-            d_e = entry["d"]
-            p_e = entry.get("p")
-            t_e = entry.get("t")
-            mask_e = entry["mask"]
-
-            # All supported estimators expose step(ym, u, d, p, t, mask).
-            self._est.step(ym_e, u_e, d_e, p_e, t_e, mask=mask_e)
-
+            self._est.step(
+                entry["ym"],
+                entry["u"],
+                entry["d"],
+                entry.get("p"),
+                entry.get("t"),
+                mask=entry["mask"],
+            )
             x_np, P_np = self._get_state()
             entry["x_hat"] = x_np
             entry["P"] = P_np
@@ -303,10 +258,6 @@ class DelayedObservationFilter:
         ym_np: np.ndarray,
         delayed_chs: list[tuple[int, int]],
     ) -> None:
-        """
-        Apply delayed corrections in ascending order of lag and rebuild
-        the posterior chain in the buffer.
-        """
         ny = len(ym_np)
         buf = list(self._buf)
         n_buf = len(buf)
@@ -326,15 +277,12 @@ class DelayedObservationFilter:
                 ch_idx, ym_np, prior["x_hat"], prior["P"], ny
             )
 
-            # Snapshot the corrected prior posterior into the buffer.
             x_np, P_np = self._get_state()
             prior["x_hat"] = x_np
             prior["P"] = P_np
 
-            # Replay forward through entries -τ … -1.
             self._replay(buf[-tau:])
 
-        # Rebuild deque from the mutated list.
         self._buf.clear()
         for e in buf:
             self._buf.append(e)
@@ -356,17 +304,14 @@ class DelayedObservationFilter:
 
         Parameters
         ----------
-        ym : (nym,) ndarray or cvxopt column — measurement at time ``t_k``.
-        u  : (nu,) ndarray or cvxopt column  — input applied over the just-
-              completed interval (ZOH).
-        d  : (nd,) ndarray or cvxopt column  — disturbance over that interval.
-        p  : (nparams,) ndarray, optional    — parameter vector (CD only;
-              ignored for linear DT/CD estimators).
-        t  : float, optional                  — current time (CD only;
-              ignored for linear DT estimators).
-        mask : (nym,) bool array, optional    — active-channel mask.
-        delay : (nym,) int ndarray, optional  — per-channel delay in steps.
-              ``delay[i] = 0`` (or ``None``) means the measurement is on time.
+        ym    : (nym,) ndarray or cvxopt column — measurement at ``t_k``.
+        u     : (nu,) ndarray or cvxopt column  — input over the previous interval.
+        d     : (nd,) ndarray or cvxopt column  — disturbance over that interval.
+        p     : (np,) ndarray, optional          — parameter vector.
+        t     : float, optional                  — current time.
+        mask  : (nym,) bool array, optional      — active-channel mask.
+        delay : (nym,) int ndarray, optional     — per-channel delay in steps.
+                ``delay[i] = 0`` (or ``None``) means the channel is on time.
 
         Returns
         -------
@@ -376,13 +321,13 @@ class DelayedObservationFilter:
         imm_mask, delayed_chs = self._partition(ny, mask, delay)
 
         ym_np = _as_np1d(ym)
-        u_np = _as_np1d(u)
-        d_np = _as_np1d(d)
-        p_np = (
+        u_np  = _as_np1d(u)
+        d_np  = _as_np1d(d)
+        p_np  = (
             np.asarray(p, dtype=float).ravel() if p is not None else None
         )
 
-        # 1. Immediate (zero-delay) step.
+        # 1. Immediate step.
         result = self._est.step(ym, u, d, p_np, t, mask=imm_mask)
 
         x_np, P_np = self._get_state()
@@ -401,7 +346,6 @@ class DelayedObservationFilter:
         # 2. Delayed corrections.
         if delayed_chs:
             self._apply_delayed(ym_np, delayed_chs)
-            # Refresh the returned tuple from the updated estimator state.
             x_np, P_np = self._get_state()
             if isinstance(result, tuple):
                 result = (x_np.copy(), P_np.copy()) + tuple(result[2:])

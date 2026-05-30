@@ -1,7 +1,7 @@
 """
 Model Predictive Controller for linear discrete-time systems.
 
-Composes a :class:`~mbc.estimation.KalmanFilter` and an
+Composes a :class:`~mbc.estimation.DiscreteLinearKF` and an
 :class:`OptimalControlProblem` for any
 :class:`~mbc.models.DiscreteLinearSDE` and implements the receding-horizon
 policy described in ControlToolbox §EMPC — *ENMPC Algorithm*, specialised
@@ -23,7 +23,7 @@ from typing import Any, Tuple, TYPE_CHECKING
 import numpy as np
 
 from .._utils import _any_to_np1d
-from ..estimation import KalmanFilter
+from ..estimation import DiscreteLinearKF
 from .ocp import OptimalControlProblem, _shift_warm_start
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ class MPCController:
     """
     Model predictive controller for a linear discrete-time plant.
 
-    Combines a :class:`~mbc.estimation.KalmanFilter` (estimator) and an
+    Combines a :class:`~mbc.estimation.DiscreteLinearKF` (estimator) and an
     :class:`OptimalControlProblem` (OCP) into a closed-loop controller.
 
     The previously-applied input ``u_{k-1}`` and disturbance ``d_{k-1}``
@@ -44,7 +44,7 @@ class MPCController:
     Parameters
     ----------
     model     : DiscreteLinearSDE
-    estimator : KalmanFilter
+    estimator : DiscreteLinearKF
     ocp       : OptimalControlProblem
     warm_start : bool, optional
         Re-use the previous horizon solution (shifted one step) as the QP
@@ -60,7 +60,7 @@ class MPCController:
     def __init__(
         self,
         model: "DiscreteLinearSDE",
-        estimator: KalmanFilter,
+        estimator: DiscreteLinearKF,
         ocp: OptimalControlProblem,
         warm_start: bool = False,
     ) -> None:

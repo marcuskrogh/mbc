@@ -43,7 +43,8 @@ import numpy as np
 import pytest
 
 from mbc.models import ContinuousDiscreteSDE
-from mbc.estimation.ekf import ContinuousDiscreteEKF
+from mbc.estimation._base import IntegrationScheme
+from mbc.estimation.continuous_discrete_ekf import ContinuousDiscreteEKF, ContinuousDiscreteEKFParams
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -119,6 +120,12 @@ class VanDeVusseCSTR(ContinuousDiscreteSDE):
     # Noise covariances
     _Q_c_val = np.diag([0.01, 0.005])   # continuous process noise
     _R_val   = np.array([[0.05]])        # measurement noise variance
+
+    def __init__(self, Ts: float = 0.01):
+        self._Ts_val = Ts
+
+    @property
+    def Ts(self) -> float: return self._Ts_val
 
     @property
     def nx(self) -> int: return 2
@@ -236,6 +243,9 @@ class MonodBioreactor(ContinuousDiscreteSDE):
     @property
     def nz(self) -> int: return 1
 
+    @property
+    def Ts(self) -> float: return 0.1
+
 
 _MONOD_P_TRUE = np.array([0.5, 0.2])   # mu_max=0.5 h⁻¹, K_s=0.2 g/L
 _MONOD_P_WRONG = np.array([0.4, 0.3])  # deliberately mismatched params
@@ -261,7 +271,7 @@ def vdv_ekf(vdv_model):
     """EKF initialised near the van de Vusse steady state."""
     x0 = _VDV_SS + np.array([0.05, 0.05])
     P0 = np.diag([0.1, 0.1])
-    return ContinuousDiscreteEKF(vdv_model, x0, P0, dt=0.01, n_steps=10)
+    return ContinuousDiscreteEKF(vdv_model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=10))
 
 
 @pytest.fixture()
@@ -269,7 +279,7 @@ def monod_ekf(monod_model):
     """EKF for Monod bioreactor with true parameters."""
     P0 = np.diag([0.5, 0.1])
     x0 = _MONOD_X0 + np.array([0.5, 0.1])   # offset from true IC
-    return ContinuousDiscreteEKF(monod_model, x0, P0, dt=0.1, n_steps=20)
+    return ContinuousDiscreteEKF(monod_model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=20))
 
 
 # ── Unit tests: model correctness ─────────────────────────────────────────────
@@ -410,7 +420,7 @@ class TestEKFCovarianceProperties:
     def test_covariance_after_many_steps(self, vdv_model):
         x0 = _VDV_SS.copy()
         P0 = np.eye(2) * 0.5
-        ekf = ContinuousDiscreteEKF(vdv_model, x0, P0, dt=0.01, n_steps=5)
+        ekf = ContinuousDiscreteEKF(vdv_model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=5))
         for k in range(50):
             y = np.array([_VDV_SS[1] + 0.01 * np.random.randn()])
             ekf.step(y, _VDV_D_RATE, _VDV_D, _VDV_P, k * 0.01)
@@ -428,7 +438,7 @@ class TestEKFCovarianceProperties:
         """
         x0 = _VDV_SS.copy()
         P0 = np.zeros((2, 2))   # start from exact certainty
-        ekf = ContinuousDiscreteEKF(vdv_model, x0, P0, dt=0.01, n_steps=10)
+        ekf = ContinuousDiscreteEKF(vdv_model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=10))
         ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert np.trace(ekf.P) > 0.0
 
@@ -462,13 +472,13 @@ class TestEKFMasking:
         P_pred = vdv_ekf.P.copy()
 
         # branch 1: no mask
-        from mbc.estimation.ekf import ContinuousDiscreteEKF as EKF
-        ekf1 = EKF(VanDeVusseCSTR(), x_pred.copy(), P_pred.copy(), dt=0.01)
+        from mbc.estimation.continuous_discrete_ekf import ContinuousDiscreteEKF as EKF
+        ekf1 = EKF(VanDeVusseCSTR(), x_pred.copy(), P_pred.copy())
         y = np.array([0.12])
         x1, P1 = ekf1.update(y, _VDV_D_RATE, _VDV_D, _VDV_P, mask=None)
 
         # branch 2: all-True mask
-        ekf2 = EKF(VanDeVusseCSTR(), x_pred.copy(), P_pred.copy(), dt=0.01)
+        ekf2 = EKF(VanDeVusseCSTR(), x_pred.copy(), P_pred.copy())
         x2, P2 = ekf2.update(y, _VDV_D_RATE, _VDV_D, _VDV_P, mask=np.array([True]))
 
         np.testing.assert_allclose(x1, x2, atol=1e-12)
@@ -537,7 +547,7 @@ class TestVanDeVusseTracking:
         model = VanDeVusseCSTR()
         x0_est = x0 + np.array([0.1, 0.05])
         P0 = np.diag([0.5, 0.5])
-        ekf = ContinuousDiscreteEKF(model, x0_est, P0, dt=self._dt, n_steps=10)
+        ekf = ContinuousDiscreteEKF(model, x0_est, P0, params=ContinuousDiscreteEKFParams(n_steps=10))
 
         rng = np.random.default_rng(42)
         R_std = np.sqrt(model.Rm[0, 0])
@@ -562,7 +572,7 @@ class TestVanDeVusseTracking:
         model = VanDeVusseCSTR()
         x0_est = x0 + np.array([0.2, 0.1])
         P0 = np.eye(2)
-        ekf = ContinuousDiscreteEKF(model, x0_est, P0, dt=self._dt, n_steps=10)
+        ekf = ContinuousDiscreteEKF(model, x0_est, P0, params=ContinuousDiscreteEKFParams(n_steps=10))
 
         rng = np.random.default_rng(7)
         R_std = np.sqrt(model.Rm[0, 0])
@@ -607,7 +617,7 @@ class TestMonodTracking:
         model = MonodBioreactor()
         x0_est = _MONOD_X0 + np.array([0.5, 0.1])
         P0 = np.diag([1.0, 0.5])
-        ekf = ContinuousDiscreteEKF(model, x0_est, P0, dt=self._dt, n_steps=20)
+        ekf = ContinuousDiscreteEKF(model, x0_est, P0, params=ContinuousDiscreteEKFParams(n_steps=20))
 
         rng = np.random.default_rng(123)
         R_std = np.sqrt(model.Rm[0, 0])
@@ -631,7 +641,7 @@ class TestMonodTracking:
         model = MonodBioreactor()
         x0_est = _MONOD_X0 + np.array([0.3, 0.05])
         P0 = np.eye(2) * 0.5
-        ekf = ContinuousDiscreteEKF(model, x0_est, P0, dt=self._dt, n_steps=20)
+        ekf = ContinuousDiscreteEKF(model, x0_est, P0, params=ContinuousDiscreteEKFParams(n_steps=20))
 
         rng = np.random.default_rng(55)
         R_std = np.sqrt(model.Rm[0, 0])
@@ -653,10 +663,8 @@ class TestMonodTracking:
         rng_wrong = np.random.default_rng(99)   # same seed → same noise
 
         def _run_ekf(p_param, rng):
-            ekf = ContinuousDiscreteEKF(
-                model, _MONOD_X0 + np.array([0.3, 0.05]),
-                np.diag([1.0, 0.5]), dt=self._dt, n_steps=20
-            )
+            ekf = ContinuousDiscreteEKF(model, _MONOD_X0 + np.array([0.3, 0.05]),
+                np.diag([1.0, 0.5]), params=ContinuousDiscreteEKFParams(n_steps=20))
             R_std = np.sqrt(model.Rm[0, 0])
             errors = []
             for k in range(self._T):
@@ -685,17 +693,17 @@ class TestNStepsEffect:
     """
 
     def test_prediction_converges_with_n_steps(self):
-        model = VanDeVusseCSTR()
+        dt = 0.05
+        model = VanDeVusseCSTR(Ts=dt)
         x0 = np.array([2.0, 0.5])
         P0 = np.eye(2) * 0.01   # small P so prediction dominates
-        dt = 0.05
         u = _VDV_D_RATE
         d = np.zeros(0)
         p = _VDV_P
 
         errors = []
         for n in [1, 5, 20, 100]:
-            ekf = ContinuousDiscreteEKF(model, x0.copy(), P0.copy(), dt=dt, n_steps=n)
+            ekf = ContinuousDiscreteEKF(model, x0.copy(), P0.copy(), params=ContinuousDiscreteEKFParams(n_steps=n))
             ekf.predict(u, d, p, 0.0)
             errors.append(np.linalg.norm(ekf.x_hat - x0))  # just use displacement
 
@@ -706,9 +714,9 @@ class TestNStepsEffect:
 
     def test_coarser_integration_higher_error(self):
         """n_steps=1 should integrate less accurately than n_steps=50."""
-        model = VanDeVusseCSTR()
-        x0 = np.array([2.0, 0.5])
         dt = 0.1
+        model = VanDeVusseCSTR(Ts=dt)
+        x0 = np.array([2.0, 0.5])
         u = _VDV_D_RATE
         d = np.zeros(0)
         p = _VDV_P
@@ -721,7 +729,7 @@ class TestNStepsEffect:
             )
 
         def _predict_x(n_steps):
-            ekf = ContinuousDiscreteEKF(model, x0.copy(), np.eye(2) * 0.001, dt=dt, n_steps=n_steps)
+            ekf = ContinuousDiscreteEKF(model, x0.copy(), np.eye(2) * 0.001, params=ContinuousDiscreteEKFParams(n_steps=n_steps))
             ekf.predict(u, d, p, 0.0)
             return ekf.x_hat
 
@@ -739,7 +747,7 @@ class TestEKFNStepsValidation:
         x0 = np.array([2.0, 0.5])
         P0 = np.eye(2) * 0.01
         with pytest.raises(ValueError, match="n_steps"):
-            ContinuousDiscreteEKF(model, x0, P0, dt=0.01, n_steps=0)
+            ContinuousDiscreteEKF(model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=0))
 
     def test_n_steps_negative_raises(self):
         """Negative n_steps must raise ValueError."""
@@ -747,28 +755,26 @@ class TestEKFNStepsValidation:
         x0 = np.array([2.0, 0.5])
         P0 = np.eye(2) * 0.01
         with pytest.raises(ValueError, match="n_steps"):
-            ContinuousDiscreteEKF(model, x0, P0, dt=0.01, n_steps=-1)
+            ContinuousDiscreteEKF(model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=-1))
 
 
 class TestEKFImplicitEuler:
     """Tests for the implicit-Euler propagation scheme."""
 
     def test_invalid_scheme_raises(self):
-        """An unrecognised scheme string must raise ValueError."""
+        """A non-IntegrationScheme value must raise TypeError."""
         model = VanDeVusseCSTR()
         x0 = np.array([2.0, 0.5])
         P0 = np.eye(2) * 0.01
-        with pytest.raises(ValueError, match="scheme"):
-            ContinuousDiscreteEKF(model, x0, P0, dt=0.01, scheme="runge-kutta")
+        with pytest.raises(TypeError, match="scheme"):
+            ContinuousDiscreteEKF(model, x0, P0, params=ContinuousDiscreteEKFParams(scheme="implicit-euler"))
 
     def test_covariance_symmetric_after_predict(self):
         """P must be symmetric after an implicit-Euler predict step."""
         model = VanDeVusseCSTR()
         x0 = _VDV_SS + np.array([0.05, 0.05])
         P0 = np.diag([0.1, 0.1])
-        ekf = ContinuousDiscreteEKF(
-            model, x0, P0, dt=0.01, n_steps=5, scheme="implicit-euler"
-        )
+        ekf = ContinuousDiscreteEKF(model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=5, scheme=IntegrationScheme.IMPLICIT_EULER))
         _, P = ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         np.testing.assert_allclose(P, P.T, atol=1e-12)
 
@@ -777,9 +783,7 @@ class TestEKFImplicitEuler:
         model = VanDeVusseCSTR()
         x0 = _VDV_SS + np.array([0.05, 0.05])
         P0 = np.diag([0.1, 0.1])
-        ekf = ContinuousDiscreteEKF(
-            model, x0, P0, dt=0.01, n_steps=5, scheme="implicit-euler"
-        )
+        ekf = ContinuousDiscreteEKF(model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=5, scheme=IntegrationScheme.IMPLICIT_EULER))
         _, P = ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         eigvals = np.linalg.eigvalsh(P)
         assert np.all(eigvals >= -1e-12), f"P not PSD: min eigenvalue = {eigvals.min()}"
@@ -789,9 +793,7 @@ class TestEKFImplicitEuler:
         model = VanDeVusseCSTR()
         x0 = _VDV_SS
         P0 = np.zeros((2, 2))
-        ekf = ContinuousDiscreteEKF(
-            model, x0, P0, dt=0.01, n_steps=5, scheme="implicit-euler"
-        )
+        ekf = ContinuousDiscreteEKF(model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=5, scheme=IntegrationScheme.IMPLICIT_EULER))
         ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         assert np.trace(ekf.P) > 0.0
 
@@ -800,9 +802,7 @@ class TestEKFImplicitEuler:
         model = VanDeVusseCSTR()
         x0 = _VDV_SS + np.array([0.05, 0.05])
         P0 = np.diag([0.1, 0.1])
-        ekf = ContinuousDiscreteEKF(
-            model, x0, P0, dt=0.01, n_steps=5, scheme="implicit-euler"
-        )
+        ekf = ContinuousDiscreteEKF(model, x0, P0, params=ContinuousDiscreteEKFParams(n_steps=5, scheme=IntegrationScheme.IMPLICIT_EULER))
         ekf.predict(_VDV_D_RATE, _VDV_D, _VDV_P, 0.0)
         P_pred_tr = np.trace(ekf.P)
         y = np.array([_VDV_SS[1]])
@@ -822,12 +822,8 @@ class TestEKFImplicitEuler:
         for _ in range(10000):
             x_rk4 = _rk4_step(lambda x: model.f(x, u, d, p, 0.0), x_rk4, dt / 10000)
 
-        ekf_e = ContinuousDiscreteEKF(
-            model, x0.copy(), P0.copy(), dt=dt, n_steps=200, scheme="euler"
-        )
-        ekf_ie = ContinuousDiscreteEKF(
-            model, x0.copy(), P0.copy(), dt=dt, n_steps=200, scheme="implicit-euler"
-        )
+        ekf_e = ContinuousDiscreteEKF(model, x0.copy(), P0.copy(), params=ContinuousDiscreteEKFParams(n_steps=200, scheme=IntegrationScheme.EXPLICIT_EULER))
+        ekf_ie = ContinuousDiscreteEKF(model, x0.copy(), P0.copy(), params=ContinuousDiscreteEKFParams(n_steps=200, scheme=IntegrationScheme.IMPLICIT_EULER))
         ekf_e.predict(u, d, p, 0.0)
         ekf_ie.predict(u, d, p, 0.0)
 
@@ -848,9 +844,7 @@ class TestEKFImplicitEuler:
 
         x0_est = x0 + np.array([0.1, 0.05])
         P0 = np.diag([0.5, 0.5])
-        ekf = ContinuousDiscreteEKF(
-            model, x0_est, P0, dt=dt, n_steps=10, scheme="implicit-euler"
-        )
+        ekf = ContinuousDiscreteEKF(model, x0_est, P0, params=ContinuousDiscreteEKFParams(n_steps=10, scheme=IntegrationScheme.IMPLICIT_EULER))
 
         rng = np.random.default_rng(42)
         R_std = np.sqrt(model.Rm[0, 0])
