@@ -14,7 +14,6 @@ take the specific forms:
 from __future__ import annotations
 
 from abc import abstractmethod
-from typing import Tuple  # used in discretize return type annotation
 
 import numpy as np
 
@@ -56,13 +55,13 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
         Dz   – output input D               Dz ∈ ℝⁿᶻˣⁿᵘ   (default: 0)
         Fz   – output disturbance D         Fz ∈ ℝⁿᶻˣⁿᵈ   (default: 0)
         Rm   – measurement noise cov.       Rm ∈ ℝⁿʸᵐˣⁿʸᵐ
-        dt   – sampling interval
+        Ts   – sampling interval
 
     ZOH discretisation (``discretize``)
     -------------------------------------
     Computed via the augmented-matrix method (no matrix inverse required):
 
-        [Ad | Bd | Ed] = expm([[A, B, E], [0, 0, 0], [0, 0, 0]] · dt)[:nx, :]
+        [Ad | Bd | Ed] = expm([[A, B, E], [0, 0, 0], [0, 0, 0]] · Ts)[:nx, :]
 
     Discrete process noise (``discretize_noise``)
     -----------------------------------------------
@@ -317,7 +316,7 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
 
         Computes
 
-            Qd = ∫₀^{dt} expm(A τ) G Gᵀ expm(A τ)ᵀ dτ
+            Qd = ∫₀^{Ts} expm(A τ) G Gᵀ expm(A τ)ᵀ dτ
 
         using the augmented 2nx×2nx matrix method.  The result is symmetric
         positive semi-definite by construction.
@@ -328,8 +327,6 @@ class ContinuousDiscreteLinearSDE(ContinuousDiscreteSDE):
         """
         from .._utils import _van_loan
 
-        # dw ~ N(0, I dt), so the noise intensity is G G^T.
-        # Computed via the Van Loan (1978) augmented matrix method.
         return _van_loan(self.A, self.G, np.eye(self.nw), self.Ts)
 
     # ── Parameter-identification interface (non-abstract, overridable) ────

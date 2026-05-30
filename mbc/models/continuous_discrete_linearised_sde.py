@@ -46,12 +46,12 @@ class ContinuousDiscreteLinearisedSDE(ContinuousDiscreteLinearSDE):
 
     Discretisation
     --------------
-    ``discretize(Ts=None, d=None)`` matches the signature of the parent's
-    ``discretize(d=None)``: both use ``self.Ts`` when no explicit sampling
-    interval is given.  Pass ``Ts`` explicitly when the model does not have
-    a preset sampling interval (e.g. factory-returned linearisations):
+    ``discretize(d=None)`` has the same signature as the parent's
+    ``discretize(d=None)``: both use ``self.Ts``.  The chain
 
-        dm = model.linearise(u_s, d_s, Ts=0.1).discretize()
+        dm = sde.linearise(u_s, d_s).discretize()
+
+    works whenever ``Ts`` is set on the source model.
 
     Coordinate transforms
     ---------------------

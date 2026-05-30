@@ -319,6 +319,21 @@ class ContinuousDiscreteSDAE(ABC):
         """Jacobian ∂gm/∂u at (x, y, u, d, p, t)  →  (nz, nu) ndarray."""
         return _fd_jacobian(lambda v: self.gm(x, y, v, d, p, t), u)
 
+    # ── Sampling interval (non-abstract, overridable) ─────────────────────
+
+    @property
+    def Ts(self) -> float:
+        """
+        Sampling interval (seconds).
+
+        Default: raises :class:`AttributeError`.  Subclasses and factory-
+        returned instances should override this property.
+        """
+        raise AttributeError(
+            f"{type(self).__name__} does not define Ts. "
+            "Override this property to specify the sampling interval."
+        )
+
     # ── Parameters ────────────────────────────────────────────────────────
 
     @property
