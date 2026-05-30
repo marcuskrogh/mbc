@@ -46,15 +46,15 @@ class DiscreteLinearisedSDE(DiscreteLinearSDE):
 
     Coordinate transforms
     ---------------------
-    The ``*_dev`` and ``*_abs`` helpers make the closed-loop workflow uniform
-    across :class:`DiscreteLinearSDE` and :class:`DiscreteLinearisedSDE`:
+    The ``*_dev`` and ``*_abs`` helpers support the standard closed-loop
+    workflow for linearised systems:
 
         δym = model.ym_dev(ym)   # absolute measurement → deviation
         # ... Kalman filter / MPC in deviation space ...
         u   = model.u_abs(δu)    # optimal deviation input → absolute
 
-    For a non-linearised :class:`DiscreteLinearSDE` these methods are
-    identity operations, so the same code works without modification.
+    These methods are specific to linearised models and are not present on
+    the base :class:`DiscreteLinearSDE`, which works only in absolute variables.
     """
 
     # ── Abstract steady-state operating point ─────────────────────────────
