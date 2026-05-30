@@ -12,7 +12,7 @@ interface.
 Supported wrapped estimators
 -----------------------------
 * :class:`~mbc.estimation.KalmanFilter`              (linear discrete-time)
-* :class:`~mbc.estimation.CDKalmanFilter`            (linear continuous-discrete)
+* :class:`~mbc.estimation.ContinuousDiscreteKalmanFilter`            (linear continuous-discrete)
 * :class:`~mbc.estimation.ContinuousDiscreteEKF`     (nonlinear)
 * :class:`~mbc.estimation.ContinuousDiscreteUKF`
 * :class:`~mbc.estimation.ContinuousDiscreteEnKF`
@@ -145,17 +145,15 @@ class DelayedObservationFilter:
         late observation.
         """
         from .kalman import KalmanFilter
-        from .cd_kalman import CDKalmanFilter
+        from .cd_kalman import ContinuousDiscreteKalmanFilter
         from .ekf import ContinuousDiscreteEKF
         from .ukf import ContinuousDiscreteUKF
         from .enkf import ContinuousDiscreteEnKF
         from .pf import ContinuousDiscreteParticleFilter
 
         est = self._est
-        if isinstance(est, (KalmanFilter, CDKalmanFilter, ContinuousDiscreteEKF)):
-            est._x_np = x_np.copy()
-            est._P_np = P_np.copy()
-        elif isinstance(est, ContinuousDiscreteUKF):
+        if isinstance(est, (KalmanFilter, ContinuousDiscreteKalmanFilter,
+                             ContinuousDiscreteEKF, ContinuousDiscreteUKF)):
             est._x = x_np.copy()
             est._P = P_np.copy()
         elif isinstance(est, (ContinuousDiscreteEnKF, ContinuousDiscreteParticleFilter)):

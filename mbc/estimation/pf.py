@@ -67,7 +67,7 @@ class ContinuousDiscreteParticleFilter:
         Initial state estimate (particle mean).
     P0 : (nx, nx) ndarray
         Initial covariance (used to draw the initial particle cloud).
-    dt : float
+    Ts : float
         Measurement sampling interval (seconds).
     N : int, optional
         Number of particles N_p.  Default: 500.
@@ -82,16 +82,16 @@ class ContinuousDiscreteParticleFilter:
         model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
-        dt: float,
+        Ts: float,
         N: int = 500,
         n_steps: int = 10,
         seed: int | None = None,
     ) -> None:
         self._model = model
-        self._dt = dt
+        self._Ts = Ts
         self._N = N
         self._n_steps = n_steps
-        self._h_sub = dt / n_steps
+        self._h_sub = Ts / n_steps
         self._rng = np.random.default_rng(seed)
 
         nx = len(x0)
@@ -181,7 +181,7 @@ class ContinuousDiscreteParticleFilter:
 
     def update(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -192,7 +192,7 @@ class ContinuousDiscreteParticleFilter:
 
         Parameters
         ----------
-        y    : (nym,) ndarray  — observation.
+        ym   : (nym,) ndarray  — measurement.
         u    : (nu,) ndarray   — input at measurement time.
         d    : (nd,) ndarray   — disturbance at measurement time.
         p    : (nparams,) ndarray — parameter vector.
@@ -214,11 +214,11 @@ class ContinuousDiscreteParticleFilter:
             active = np.where(mask)[0]
             if len(active) == 0:
                 return self.x_hat, self.P
-            y_sub = y[active]
+            y_sub = ym[active]
             Z = Z[active, :]
             R_sub = R[np.ix_(active, active)]
         else:
-            y_sub = y
+            y_sub = ym
             R_sub = R
 
         # Per-particle log-likelihood (Gaussian with covariance R)
@@ -251,7 +251,7 @@ class ContinuousDiscreteParticleFilter:
 
     def step(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -260,4 +260,4 @@ class ContinuousDiscreteParticleFilter:
     ) -> tuple[np.ndarray, np.ndarray]:
         """Combined time + measurement update."""
         self.predict(u, d, p, t)
-        return self.update(y, u, d, p, mask=mask)
+        return self.update(ym, u, d, p, mask=mask)

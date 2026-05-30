@@ -70,7 +70,7 @@ class ContinuousDiscreteEnKF:
         Initial state estimate (ensemble mean).
     P0 : (nx, nx) ndarray
         Initial covariance (used to draw the initial ensemble).
-    dt : float
+    Ts : float
         Measurement sampling interval (seconds).
     N : int, optional
         Ensemble size N_p.  Default: 100.
@@ -85,16 +85,16 @@ class ContinuousDiscreteEnKF:
         model: ContinuousDiscreteSDE,
         x0: np.ndarray,
         P0: np.ndarray,
-        dt: float,
+        Ts: float,
         N: int = 100,
         n_steps: int = 10,
         seed: int | None = None,
     ) -> None:
         self._model = model
-        self._dt = dt
+        self._Ts = Ts
         self._N = N
         self._n_steps = n_steps
-        self._h_sub = dt / n_steps
+        self._h_sub = Ts / n_steps
         self._rng = np.random.default_rng(seed)
 
         nx = len(x0)
@@ -156,7 +156,7 @@ class ContinuousDiscreteEnKF:
 
     def update(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -168,7 +168,7 @@ class ContinuousDiscreteEnKF:
 
         Parameters
         ----------
-        y    : (nym,) ndarray  — observation.
+        ym   : (nym,) ndarray  — measurement.
         u    : (nu,) ndarray   — input at measurement time.
         d    : (nd,) ndarray   — disturbance at measurement time.
         p    : (nparams,) ndarray — parameter vector.
@@ -190,11 +190,11 @@ class ContinuousDiscreteEnKF:
             active = np.where(mask)[0]
             if len(active) == 0:
                 return self.x_hat, self.P
-            y_sub = y[active]
+            y_sub = ym[active]
             Z = Z[active, :]
             R_sub = R[np.ix_(active, active)]
         else:
-            y_sub = y
+            y_sub = ym
             R_sub = R
 
         ny_act = y_sub.shape[0]
@@ -224,7 +224,7 @@ class ContinuousDiscreteEnKF:
 
     def step(
         self,
-        y: np.ndarray,
+        ym: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
@@ -233,4 +233,4 @@ class ContinuousDiscreteEnKF:
     ) -> tuple[np.ndarray, np.ndarray]:
         """Combined time + measurement update."""
         self.predict(u, d, p, t)
-        return self.update(y, u, d, p, mask=mask)
+        return self.update(ym, u, d, p, mask=mask)
