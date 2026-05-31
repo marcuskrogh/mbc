@@ -24,7 +24,7 @@ import numpy as np
 
 from .._utils import _any_to_np1d
 from ..estimation import KalmanFilter
-from .ocp import OptimalControlProblem, _shift_warm_start
+from ..ocp import DiscreteLinearOCP as OptimalControlProblem, _shift_warm_start
 
 if TYPE_CHECKING:
     from ..models import DiscreteLinearSDE

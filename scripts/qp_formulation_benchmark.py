@@ -31,7 +31,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mbc.control import OptimalControlProblem
+from mbc.ocp import DiscreteLinearOCP as OptimalControlProblem
 from mbc.models import DiscreteLinearSDE
 
 

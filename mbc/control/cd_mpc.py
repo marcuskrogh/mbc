@@ -30,8 +30,7 @@ import numpy as np
 
 from .._utils import _any_to_np1d
 from ..estimation.cd_kalman import ContinuousDiscreteKalmanFilter
-from .cd_ocp import CDOptimalControlProblem
-from .ocp import _shift_warm_start
+from ..ocp import ContinuousLinearOCP as CDOptimalControlProblem, _shift_warm_start
 
 if TYPE_CHECKING:
     from ..models import ContinuousDiscreteLinearSDE

@@ -42,7 +42,6 @@ model-based control, estimation, identification, and simulation.
       * ``CDMPCController``               – ContinuousDiscreteKalmanFilter + ContinuousLinearOCP.
       * ``CDLinearizedMPCController``     – successive-linearisation MPC.
       * ``CDNMPCController``              – generic estimator + OCP controller.
-      * ``EconomicOptimalControlProblem`` – alias for ContinuousNonlinearOCP.
 
   mbc.identification
       System-identification / parameter-estimation utilities.
@@ -105,12 +104,7 @@ from .control import (
     CDLinearizedMPCController,
     linearize_cd_model,
     discretize_cd_linearization,
-    EconomicOptimalControlProblem,
     CDNMPCController,
-    # Legacy control aliases
-    OptimalControlProblem,
-    CDOptimalControlProblem,
-    CDTrackingOptimalControlProblem,
 )
 from .identification.estimator import ParameterEstimator, CDParameterEstimator, EstimationResult
 from .identification.likelihood import (
@@ -172,12 +166,7 @@ __all__ = [
     "CDLinearizedMPCController",
     "linearize_cd_model",
     "discretize_cd_linearization",
-    "EconomicOptimalControlProblem",
     "CDNMPCController",
-    # Legacy control aliases
-    "OptimalControlProblem",
-    "CDOptimalControlProblem",
-    "CDTrackingOptimalControlProblem",
     # Identification
     "ParameterEstimator",
     "CDParameterEstimator",

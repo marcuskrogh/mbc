@@ -2,8 +2,7 @@
 Benchmark: Analytical vs Numerical Jacobians for Continuous-Discrete NLP.
 
 Measures the numerical efficiency gain from the analytical constraint and
-objective Jacobians provided by ``EconomicOptimalControlProblem`` and
-``CDTrackingOptimalControlProblem``.
+objective Jacobians provided by ``ContinuousNonlinearOCP``.
 
 Metrics
 -------
@@ -32,10 +31,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mbc.control import (
-    CDTrackingOptimalControlProblem,
-    EconomicOptimalControlProblem,
-)
+from mbc.ocp import ContinuousNonlinearOCP
 from mbc.control.nlp_solver import NLPConstraint, NLPProblem, NLPResult, ScipyNLPBackend
 from mbc.models import ContinuousDiscreteSDAE, ContinuousDiscreteSDE
 
@@ -186,8 +182,8 @@ def _solve_eocp(
     *,
     strip_jac: bool = False,
 ) -> _SolveRecord:
-    """Run a single EOCP solve and return metrics."""
-    ocp = EconomicOptimalControlProblem(
+    """Run a single ContinuousNonlinearOCP solve and return metrics."""
+    ocp = ContinuousNonlinearOCP(
         model,
         N,
         Q_z=np.eye(1) * 2.0,
@@ -233,13 +229,13 @@ def _solve_cdtracking(
     *,
     strip_jac: bool = False,
 ) -> _SolveRecord:
-    """Run a single CDTrackingOptimalControlProblem solve and return metrics."""
-    ocp = CDTrackingOptimalControlProblem(
+    """Run a single ContinuousNonlinearOCP (tracking mode) solve and return metrics."""
+    ocp = ContinuousNonlinearOCP(
         model,
         N,
-        Q=np.eye(1) * 2.0,
-        R=np.eye(1) * 0.1,
-        P=np.eye(1) * 5.0,
+        Q_z=np.eye(1) * 2.0,
+        R_stage=np.eye(1) * 0.1,
+        P_terminal=np.eye(1) * 5.0,
         z_ref=np.array([1.5]),
         n_steps=n_steps,
         dt=1.0,
@@ -248,7 +244,7 @@ def _solve_cdtracking(
         solver_options={"maxiter": 300},
     )
     if strip_jac:
-        ocp._eocp._solver_backend = _StrippedJacBackend(ocp._eocp._solver_backend)
+        ocp._solver_backend = _StrippedJacBackend(ocp._solver_backend)
 
     x0 = np.array([0.0])
     d_traj = np.zeros((N, model.nd))
@@ -263,7 +259,7 @@ def _solve_cdtracking(
         time_s=float(elapsed),
         cost=float(cost),
         success=bool(r.success),
-        n_decision_vars=int(ocp._eocp._layout.total),
+        n_decision_vars=int(ocp._layout.total),
     )
 
 

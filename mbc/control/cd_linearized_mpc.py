@@ -15,7 +15,7 @@ import numpy as np
 
 from .._utils import _fd_jacobian, _zoh_full, _van_loan
 from ..models import DiscreteLinearSDE, ContinuousDiscreteSDE
-from .ocp import OptimalControlProblem
+from ..ocp import DiscreteLinearOCP as OptimalControlProblem
 
 
 class _DeviationDiscreteLinearSDE(DiscreteLinearSDE):
