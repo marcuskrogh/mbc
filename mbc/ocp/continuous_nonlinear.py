@@ -5,9 +5,6 @@ Nonlinear CD OCP (NLP formulation) — ``ContinuousNonlinearOCP``.
     Economic / tracking optimal control problem for continuous-discrete
     nonlinear SDE / SDAE systems (ControlToolbox §EMPC).  Direct simultaneous
     formulation: implicit-Euler dynamics, right-rectangular Lagrange.
-
-This module is a refactored copy of ``mbc.control.enmpc.EconomicOptimalControlProblem``
-renamed to ``ContinuousNonlinearOCP`` and extended with property setters.
 """
 
 from __future__ import annotations
@@ -195,6 +192,8 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
         mayer_jac: Callable[..., tuple] | None = None,
         Q_z: np.ndarray | None = None,
         z_ref: np.ndarray | None = None,
+        R_stage: np.ndarray | None = None,
+        P_terminal: np.ndarray | None = None,
         Q_du: np.ndarray | None = None,
         p_u_eco: np.ndarray | None = None,
         u_min: np.ndarray | None = None,
@@ -227,7 +226,7 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
         # Sampling interval
         self._dt: float = (
-            float(dt) if dt is not None else float(getattr(model, "dt", 1.0))
+            float(dt) if dt is not None else float(getattr(model, "Ts", 1.0))
         )
         self._h = self._dt / self._n_steps  # sub-step Δt
 
@@ -242,6 +241,14 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
         if self._Q_z is not None and z_ref is None:
             raise ValueError("Q_z requires z_ref to be supplied as well.")
         self._z_ref = self._broadcast_zref(z_ref) if z_ref is not None else None
+        self._R_stage = (
+            np.asarray(R_stage, dtype=float) if R_stage is not None else None
+        )
+        self._P_terminal = (
+            np.asarray(P_terminal, dtype=float) if P_terminal is not None else None
+        )
+        if self._P_terminal is not None and z_ref is None:
+            raise ValueError("P_terminal requires z_ref to be supplied as well.")
         self._Q_du = (
             np.asarray(Q_du, dtype=float) if Q_du is not None else None
         )
@@ -316,23 +323,21 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     @property
     def R_stage(self) -> np.ndarray | None:
-        """Stage input cost matrix (maps to internal lagrange term)."""
-        # Not directly stored as a matrix — return None (legacy interface)
-        return None
+        """Stage input cost matrix R: adds ‖u_k‖²_R · Δt per sub-step."""
+        return self._R_stage
 
     @R_stage.setter
     def R_stage(self, value) -> None:
-        # No-op: R_stage is encoded in the lagrange callable in this class.
-        pass
+        self._R_stage = np.asarray(value, dtype=float) if value is not None else None
 
     @property
     def P_terminal(self) -> np.ndarray | None:
-        """Terminal tracking cost matrix (maps to internal mayer term)."""
-        return None
+        """Terminal tracking cost matrix P: adds ‖z_M − z_ref‖²_P."""
+        return self._P_terminal
 
     @P_terminal.setter
     def P_terminal(self, value) -> None:
-        pass
+        self._P_terminal = np.asarray(value, dtype=float) if value is not None else None
 
     @property
     def Q_du(self) -> np.ndarray | None:
@@ -582,6 +587,9 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
                 e = z_np1 - self._z_ref[n + 1]
                 total += float(e @ self._Q_z @ e) * h
 
+            if self._R_stage is not None:
+                total += float(u_k @ self._R_stage @ u_k) * h
+
         for k in range(self._N):
             u_k = U[k]
             u_km1 = U[k - 1] if k > 0 else u_prev_0
@@ -597,6 +605,16 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
             x_M = X[L.M]
             y_M = Y[L.M] if self._is_dae else np.empty(0)
             total += float(self._mayer(x_M, y_M, p_theta))
+
+        if self._P_terminal is not None and self._z_ref is not None:
+            x_M = X[L.M]
+            y_M = Y[L.M] if self._is_dae else np.empty(0)
+            u_last = L.get_U(z)[-1]
+            d_last = d_traj[-1]
+            t_M = t0 + L.M * self._h
+            z_M = self._gm(x_M, y_M, u_last, d_last, p_theta, t_M)
+            e = z_M - self._z_ref[L.M]
+            total += float(e @ self._P_terminal @ e)
 
         if self._has_soft_x:
             PX_lo = L.get_PX_lo(z)
@@ -941,6 +959,9 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
                 grad[x_np1_col:x_np1_col + nx] += dgmdx_val.T @ (2.0 * Qze) * h
                 grad[u_k_col:u_k_col + nu] += dgmdu_val.T @ (2.0 * Qze) * h
 
+            if self._R_stage is not None:
+                grad[u_k_col:u_k_col + nu] += 2.0 * self._R_stage @ u_k * h
+
         for k in range(self._N):
             u_k = U[k]
             u_km1 = U[k - 1] if k > 0 else u_prev_0
@@ -966,6 +987,32 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
             if self._is_dae and ny > 0:
                 y_M_col = L.y_off + L.M * ny
                 grad[y_M_col:y_M_col + ny] += np.asarray(mayer_gy, dtype=float)
+
+        if self._P_terminal is not None and self._z_ref is not None:
+            x_M = X[L.M]
+            y_M = Y[L.M] if self._is_dae else np.empty(0)
+            u_last = L.get_U(z)[-1]
+            d_last = d_traj[-1]
+            t_M = t0 + L.M * self._h
+            z_M = self._gm(x_M, y_M, u_last, d_last, p_theta, t_M)
+            e = z_M - self._z_ref[L.M]
+            Pe = self._P_terminal @ e
+
+            x_M_col = L.x_off + L.M * nx
+            u_last_col = L.u_off + (self._N - 1) * nu
+
+            if self._is_dae:
+                dgmdx_val = self._model.dgmdx(x_M, y_M, u_last, d_last, p_theta, t_M)
+                dgmdu_val = self._model.dgmdu(x_M, y_M, u_last, d_last, p_theta, t_M)
+                dgmdy_val = self._model.dgmdy(x_M, y_M, u_last, d_last, p_theta, t_M)
+                y_M_col = L.y_off + L.M * ny
+                grad[y_M_col:y_M_col + ny] += dgmdy_val.T @ (2.0 * Pe)
+            else:
+                dgmdx_val = self._model.dgmdx(x_M, u_last, d_last, p_theta, t_M)
+                dgmdu_val = self._model.dgmdu(x_M, u_last, d_last, p_theta, t_M)
+
+            grad[x_M_col:x_M_col + nx] += dgmdx_val.T @ (2.0 * Pe)
+            grad[u_last_col:u_last_col + nu] += dgmdu_val.T @ (2.0 * Pe)
 
         if self._has_soft_x:
             PX_lo = L.get_PX_lo(z)
