@@ -24,7 +24,7 @@ import numpy as np
 
 from .._utils import _any_to_np1d
 from ..estimation import DiscreteLinearKF
-from .ocp import OptimalControlProblem, _shift_warm_start
+from .discrete_linear_ocp import DiscreteLinearOCP, _shift_warm_start
 
 if TYPE_CHECKING:
     from ..models import DiscreteLinearSDE
@@ -34,8 +34,8 @@ class MPCController:
     """
     Model predictive controller for a linear discrete-time plant.
 
-    Combines a :class:`~mbc.estimation.DiscreteLinearKF` (estimator) and an
-    :class:`OptimalControlProblem` (OCP) into a closed-loop controller.
+    Combines a :class:`~mbc.estimation.DiscreteLinearKF` (estimator) and a
+    :class:`DiscreteLinearOCP` (OCP) into a closed-loop controller.
 
     The previously-applied input ``u_{k-1}`` and disturbance ``d_{k-1}``
     are tracked internally so that the estimator's predict step has the
@@ -45,7 +45,7 @@ class MPCController:
     ----------
     model     : DiscreteLinearSDE
     estimator : DiscreteLinearKF
-    ocp       : OptimalControlProblem
+    ocp       : DiscreteLinearOCP
     warm_start : bool, optional
         Re-use the previous horizon solution (shifted one step) as the QP
         warm start on each call.  Default: ``False``.  Warm-starting never
@@ -61,7 +61,7 @@ class MPCController:
         self,
         model: "DiscreteLinearSDE",
         estimator: DiscreteLinearKF,
-        ocp: OptimalControlProblem,
+        ocp: DiscreteLinearOCP,
         warm_start: bool = False,
     ) -> None:
         self._model = model

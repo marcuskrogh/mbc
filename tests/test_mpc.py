@@ -4,16 +4,15 @@ Tests for MPC controllers and Optimal Control Problems.
 Covers the following classes:
 
 Linear (discrete-time):
-  - DiscreteLinearOCP  (mbc.control)     [OptimalControlProblem = alias]
+  - DiscreteLinearOCP  (mbc.control)
   - MPCController      (mbc.control)
 
 Linear continuous-discrete:
-  - ContinuousLinearOCP  (mbc.control)  [CDOptimalControlProblem = alias]
+  - ContinuousLinearOCP  (mbc.control)
   - CDMPCController      (mbc.control)
 
 Nonlinear continuous-discrete:
-  - CDTrackingOptimalControlProblem (mbc.control)
-  - ContinuousOCP       (mbc.control)   [EconomicOptimalControlProblem = alias]
+  - ContinuousOCP       (mbc.control)
   - CDNMPCController    (mbc.control)
 """
 
@@ -51,7 +50,6 @@ from mbc.control import (
     ContinuousOCP,
     MPCController,
     CDMPCController,
-    CDTrackingOptimalControlProblem,
     CDNMPCController,
     CDLinearizedMPCController,
     linearize_cd_model,
@@ -59,11 +57,6 @@ from mbc.control import (
     NLPScalingPolicy,
     ScipyNLPBackend,
 )
-
-# Backward-compatible aliases used in this test file
-OptimalControlProblem = DiscreteLinearOCP
-CDOptimalControlProblem = ContinuousLinearOCP
-EconomicOptimalControlProblem = ContinuousOCP
 
 
 # ── Concrete model fixtures ───────────────────────────────────────────────────
@@ -233,17 +226,17 @@ def _np(m) -> np.ndarray:
     return np.asarray(m, dtype=float).ravel()
 
 
-# ── Tests: OptimalControlProblem ─────────────────────────────────────────────
+# ── Tests: DiscreteLinearOCP ──────────────────────────────────────────────────
 
 
-class TestOptimalControlProblem:
+class TestDiscreteLinearOCP:
     """Tests for the linear discrete-time OCP (QP solver)."""
 
     def _make_ocp(self, N=10, **kw):
         model = DoubleIntegrator()
         Q = matrix(np.eye(1))
         R = matrix(np.eye(1) * 0.1)
-        return OptimalControlProblem(model, N=N, Q=Q, R=R, y_offset=20.0, **kw)
+        return DiscreteLinearOCP(model, N=N, Q=Q, R=R, y_offset=20.0, **kw)
 
     def test_solve_returns_correct_shapes(self):
         ocp = self._make_ocp(N=5)
@@ -305,8 +298,8 @@ class TestOptimalControlProblem:
         D = matrix(0.0, (N * model.nd, 1))
         x_ref = model.x_ref
 
-        ocp_no_rom = OptimalControlProblem(model, N=N, Q=Q, R=R, y_offset=20.0)
-        ocp_rom = OptimalControlProblem(
+        ocp_no_rom = DiscreteLinearOCP(model, N=N, Q=Q, R=R, y_offset=20.0)
+        ocp_rom = DiscreteLinearOCP(
             model, N=N, Q=Q, R=R, y_offset=20.0,
             S=matrix(np.eye(1) * 10.0),
         )
@@ -335,7 +328,7 @@ class TestMPCController:
         kf = DiscreteLinearKF(model)
         Q_ocp = matrix(np.eye(1))
         R_ocp = matrix(np.eye(1) * 0.1)
-        ocp = OptimalControlProblem(model, N=N, Q=Q_ocp, R=R_ocp, y_offset=20.0)
+        ocp = DiscreteLinearOCP(model, N=N, Q=Q_ocp, R=R_ocp, y_offset=20.0)
         ctrl = MPCController(model, estimator=kf, ocp=ocp)
         return ctrl, model
 
@@ -402,7 +395,7 @@ class TestMPCController:
         kf = DiscreteLinearKF(model)
         Q_ocp = matrix(np.eye(1) * 5.0)
         R_ocp = matrix(np.eye(1) * 0.1)
-        ocp = OptimalControlProblem(model, N=10, Q=Q_ocp, R=R_ocp, y_offset=20.0)
+        ocp = DiscreteLinearOCP(model, N=10, Q=Q_ocp, R=R_ocp, y_offset=20.0)
         ctrl = MPCController(model, estimator=kf, ocp=ocp)
 
         x = np.array([0.0])
@@ -424,17 +417,17 @@ class TestMPCController:
         )
 
 
-# ── Tests: CDOptimalControlProblem ────────────────────────────────────────────
+# ── Tests: ContinuousLinearOCP ────────────────────────────────────────────────
 
 
-class TestCDOptimalControlProblem:
-    """Tests for CDOptimalControlProblem (linear CD system, QP via ZOH)."""
+class TestContinuousLinearOCP:
+    """Tests for ContinuousLinearOCP (linear CD system, QP via ZOH)."""
 
     def _make_ocp(self, N=10):
         model = SimpleLinearCD()
         Q = matrix(np.eye(1))
         R = matrix(np.eye(1) * 0.1)
-        return CDOptimalControlProblem(model, N=N, Q=Q, R=R, y_offset=10.0), model
+        return ContinuousLinearOCP(model, N=N, Q=Q, R=R, y_offset=10.0), model
 
     def test_solve_returns_correct_shapes(self):
         ocp, model = self._make_ocp(N=5)
@@ -492,7 +485,7 @@ class TestCDMPCController:
         kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
         Q = matrix(np.eye(1))
         R = matrix(np.eye(1) * 0.1)
-        ocp = CDOptimalControlProblem(model, N=N, Q=Q, R=R, y_offset=10.0)
+        ocp = ContinuousLinearOCP(model, N=N, Q=Q, R=R, y_offset=10.0)
         ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
         return ctrl, model
 
@@ -529,7 +522,7 @@ class TestCDMPCController:
         kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
         Q = matrix(np.eye(1) * 5.0)
         R = matrix(np.eye(1) * 0.01)
-        ocp = CDOptimalControlProblem(model, N=20, Q=Q, R=R, y_offset=10.0)
+        ocp = ContinuousLinearOCP(model, N=20, Q=Q, R=R, y_offset=10.0)
         ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
 
         from mbc._utils import _zoh_full
@@ -549,18 +542,18 @@ class TestCDMPCController:
         )
 
 
-# ── Tests: CDTrackingOptimalControlProblem ────────────────────────────────────
+# ── Tests: ContinuousOCP (tracking) ──────────────────────────────────────────
 
 
-class TestCDTrackingOptimalControlProblem:
-    """Tests for the nonlinear tracking OCP (SLSQP NLP solver)."""
+class TestContinuousOCPTracking:
+    """Tests for the nonlinear tracking OCP using ContinuousOCP with Q_z/R_stage."""
 
     def _make_ocp(self, N=5, **kw):
         model = ScalarNonlinear()
         Q = np.eye(1)
         R = np.eye(1) * 0.1
-        return CDTrackingOptimalControlProblem(
-            model, N=N, Q=Q, R=R,
+        return ContinuousOCP(
+            model, N=N, Q_z=Q, R_stage=R,
             z_ref=np.array([2.0]),
             u_min=np.array([-3.0]),
             u_max=np.array([3.0]),
@@ -609,7 +602,7 @@ class TestCDTrackingOptimalControlProblem:
         )
 
     def test_rom_penalty_reduces_variation(self):
-        """Rate-of-movement penalty S should reduce input variation."""
+        """Rate-of-movement penalty Q_du should reduce input variation."""
         model = ScalarNonlinear()
         N = 8
         Q = np.eye(1)
@@ -617,13 +610,13 @@ class TestCDTrackingOptimalControlProblem:
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
 
-        ocp_no_rom = CDTrackingOptimalControlProblem(
-            model, N=N, Q=Q, R=R, z_ref=np.array([2.0]),
+        ocp_no_rom = ContinuousOCP(
+            model, N=N, Q_z=Q, R_stage=R, z_ref=np.array([2.0]),
             u_min=np.array([-5.0]), u_max=np.array([5.0]), dt=1.0,
         )
-        ocp_rom = CDTrackingOptimalControlProblem(
-            model, N=N, Q=Q, R=R, z_ref=np.array([2.0]),
-            S=np.eye(1) * 10.0,
+        ocp_rom = ContinuousOCP(
+            model, N=N, Q_z=Q, R_stage=R, z_ref=np.array([2.0]),
+            Q_du=np.eye(1) * 10.0,
             u_min=np.array([-5.0]), u_max=np.array([5.0]), dt=1.0,
         )
         u_no_rom, _, _ = ocp_no_rom.solve(x0, d_traj)
@@ -641,11 +634,10 @@ class TestCDTrackingOptimalControlProblem:
         x0 = np.array([3.0])
         d_traj = np.zeros((N, model.nd))
 
-        # Without state constraint, the unconstrained optimal might let x stay
         # With soft state constraint x_max = 2, input should push x down
-        ocp = CDTrackingOptimalControlProblem(
-            model, N=N, Q=Q, R=R, z_ref=np.array([3.0]),
-            x_max=np.array([2.0]), rho_x=1e3,
+        ocp = ContinuousOCP(
+            model, N=N, Q_z=Q, R_stage=R, z_ref=np.array([3.0]),
+            x_max=np.array([2.0]), rho_x_2=1e3,
             u_min=np.array([-5.0]), u_max=np.array([5.0]), dt=1.0,
         )
         u_opt, _, _ = ocp.solve(x0, d_traj)
@@ -655,11 +647,11 @@ class TestCDTrackingOptimalControlProblem:
         )
 
 
-# ── Tests: EconomicOptimalControlProblem ─────────────────────────────────────
+# ── Tests: ContinuousOCP (economic) ──────────────────────────────────────────
 
 
-class TestEconomicOptimalControlProblem:
-    """Tests for the economic nonlinear OCP."""
+class TestContinuousOCP:
+    """Tests for the economic/tracking nonlinear OCP."""
 
     def _make_model_ocp(self, N=5, **kw):
         model = ScalarNonlinear()
@@ -670,7 +662,7 @@ class TestEconomicOptimalControlProblem:
         def lagrange(t, x, y, u, theta):
             return -float(x[0]) + 0.5 * float(u[0] ** 2)
 
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=N,
             lagrange=lagrange,
             u_min=np.array([-3.0]),
@@ -722,7 +714,7 @@ class TestEconomicOptimalControlProblem:
         def lag(t, x, y, u, theta):
             return 0.1 * float(u[0] ** 2)
 
-        ocp_no_mayer = EconomicOptimalControlProblem(
+        ocp_no_mayer = ContinuousOCP(
             model, N=N, lagrange=lag, dt=1.0,
         )
 
@@ -730,7 +722,7 @@ class TestEconomicOptimalControlProblem:
         def mayer(x, y, theta):
             return 100.0 * float((x[0] - 1.0) ** 2)
 
-        ocp_mayer = EconomicOptimalControlProblem(
+        ocp_mayer = ContinuousOCP(
             model, N=N, lagrange=lag, mayer=mayer, dt=1.0,
         )
 
@@ -757,7 +749,7 @@ class TestEconomicOptimalControlProblem:
         def lag(t, x, y, u, theta):
             return 0.01 * float(u[0] ** 2)
 
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=N, lagrange=lag,
             z_min=np.array([1.5]),
             rho_z_2=1e3,
@@ -775,7 +767,7 @@ class TestEconomicOptimalControlProblem:
         """Soft z bounds should use one shared slack block per output."""
         model = ScalarNonlinear()
         N = 4
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model,
             N=N,
             z_min=np.array([-0.5]),
@@ -807,7 +799,7 @@ class TestEconomicOptimalControlProblem:
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
 
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model,
             N=N,
             Q_z=np.array([[1.0]]),
@@ -830,7 +822,7 @@ class TestEconomicOptimalControlProblem:
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
         backend = ScipyNLPBackend(method="SLSQP", options={"maxiter": 80})
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model,
             N=N,
             Q_z=np.array([[1.0]]),
@@ -856,7 +848,7 @@ class TestEconomicOptimalControlProblem:
             variable_scale=10.0,
             constraint_scale=2.0,
         )
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model,
             N=N,
             Q_z=np.array([[1.0]]),
@@ -880,7 +872,7 @@ class TestEconomicOptimalControlProblem:
         N = 4
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model,
             N=N,
             Q_z=np.array([[1.0]]),
@@ -897,7 +889,7 @@ class TestEconomicOptimalControlProblem:
         assert info["result"].success
 
 
-# ── Tests: EconomicOptimalControlProblem on SDAE plant ──────────────────────
+# ── Tests: ContinuousOCP on SDAE plant ──────────────────────
 
 
 class _IsomerisationReactor(ContinuousDiscreteSDAE):
@@ -950,13 +942,13 @@ class _IsomerisationReactor(ContinuousDiscreteSDAE):
     def Ts(self): return 1.0
 
 
-class TestEconomicOCPOnSDAE:
-    """The EOCP's direct-simultaneous formulation must satisfy g(x, y, p) = 0
+class TestContinuousOCPOnSDAE:
+    """ContinuousOCP direct-simultaneous formulation must satisfy g(x, y, p) = 0
     to machine precision at every sub-step (ControlToolbox §EMPC)."""
 
     def _make_ocp(self, N=5, n_steps=2):
         model = _IsomerisationReactor()
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=N,
             Q_z=np.array([[1.0]]), z_ref=np.array([1.5]),
             u_min=np.array([0.0]), u_max=np.array([1.0]),
@@ -1009,7 +1001,7 @@ class TestEconomicOCPOnSDAE:
         pytest.importorskip("cyipopt")
         ocp, model = self._make_ocp(N=4, n_steps=2)
         # Rebuild with explicit IPOPT backend selector.
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=4,
             Q_z=np.array([[1.0]]), z_ref=np.array([1.5]),
             u_min=np.array([0.0]), u_max=np.array([1.0]),
@@ -1038,8 +1030,8 @@ class TestCDNMPCController:
         ekf = ContinuousDiscreteEKF(model, x0, P0)
 
         if ocp_cls == "tracking":
-            ocp = CDTrackingOptimalControlProblem(
-                model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1,
+            ocp = ContinuousOCP(
+                model, N=N, Q_z=np.eye(1), R_stage=np.eye(1) * 0.1,
                 z_ref=np.array([2.0]),
                 u_min=np.array([-3.0]),
                 u_max=np.array([3.0]),
@@ -1048,7 +1040,7 @@ class TestCDNMPCController:
         else:
             def lag(t, x, y, u, theta):
                 return -float(x[0]) + 0.1 * float(u[0] ** 2)
-            ocp = EconomicOptimalControlProblem(
+            ocp = ContinuousOCP(
                 model, N=N, lagrange=lag,
                 u_min=np.array([-3.0]),
                 u_max=np.array([3.0]),
@@ -1085,8 +1077,8 @@ class TestCDNMPCController:
         x0 = np.array([0.0])
         P0 = np.eye(1)
         ekf = ContinuousDiscreteEKF(model, x0.copy(), P0)
-        ocp = CDTrackingOptimalControlProblem(
-            model, N=10, Q=np.eye(1) * 5.0, R=np.eye(1) * 0.01,
+        ocp = ContinuousOCP(
+            model, N=10, Q_z=np.eye(1) * 5.0, R_stage=np.eye(1) * 0.01,
             z_ref=np.array([2.0]),
             u_min=np.array([-5.0]),
             u_max=np.array([5.0]),
@@ -1133,7 +1125,7 @@ class TestAnalyticalJacobians:
     def _make_sde_ocp(self):
         """Small SDE tracking OCP with ROM and soft-z constraints."""
         model = ScalarNonlinear()
-        return EconomicOptimalControlProblem(
+        return ContinuousOCP(
             model,
             N=2,
             Q_z=np.eye(1) * 2.0,
@@ -1197,7 +1189,7 @@ class TestAnalyticalJacobians:
     def test_objective_jac_matches_fd_when_all_terms_analytical(self):
         """For a pure tracking OCP (no user lagrange/mayer), objective grad is analytical."""
         model = ScalarNonlinear()
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model,
             N=2,
             Q_z=np.eye(1) * 2.0,
@@ -1220,35 +1212,33 @@ class TestAnalyticalJacobians:
         np.testing.assert_allclose(grad_ana, grad_fd, atol=1e-4, rtol=1e-4,
                                    err_msg="Objective gradient mismatch")
 
-    def test_cdtracking_ocp_has_analytical_jac(self):
-        """CDTrackingOptimalControlProblem always provides analytical lagrange/mayer Jacs."""
+    def test_tracking_ocp_has_analytical_jac(self):
+        """ContinuousOCP with R_stage/P_terminal always provides analytical Jacs."""
         model = ScalarNonlinear()
-        ocp_wrapper = CDTrackingOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=3,
-            Q=np.eye(1) * 2.0,
-            R=np.eye(1) * 0.1,
-            P=np.eye(1) * 5.0,
+            Q_z=np.eye(1) * 2.0,
+            R_stage=np.eye(1) * 0.1,
+            P_terminal=np.eye(1) * 5.0,
             z_ref=np.array([1.5]),
             dt=1.0,
         )
-        eocp = ocp_wrapper._eocp
-        assert eocp._can_use_analytical_objective_jac(), (
-            "CDTrackingOCP should provide analytical Jacobians for all objective terms"
+        assert ocp._can_use_analytical_objective_jac(), (
+            "ContinuousOCP with R_stage/P_terminal should provide analytical Jacobians"
         )
 
-    def test_cdtracking_ocp_objective_jac_matches_fd(self):
-        """CDTrackingOptimalControlProblem objective gradient matches finite differences."""
+    def test_tracking_ocp_objective_jac_matches_fd(self):
+        """ContinuousOCP with R_stage/P_terminal objective gradient matches finite differences."""
         model = ScalarNonlinear()
-        ocp_wrapper = CDTrackingOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=2,
-            Q=np.eye(1) * 2.0,
-            R=np.eye(1) * 0.1,
-            P=np.eye(1) * 5.0,
+            Q_z=np.eye(1) * 2.0,
+            R_stage=np.eye(1) * 0.1,
+            P_terminal=np.eye(1) * 5.0,
             z_ref=np.array([1.5]),
             dt=1.0,
             n_steps=2,
         )
-        ocp = ocp_wrapper._eocp
         x0 = np.array([0.5])
         d_traj = np.zeros((2, model.nd))
         u_prev_0 = np.zeros(1)
@@ -1261,14 +1251,14 @@ class TestAnalyticalJacobians:
         grad_fd = self._fd_jac(fun, z0).ravel()
 
         np.testing.assert_allclose(grad_ana, grad_fd, atol=1e-4, rtol=1e-4,
-                                   err_msg="CDTracking objective gradient mismatch")
+                                   err_msg="Tracking OCP objective gradient mismatch")
 
     def test_solve_produces_same_result_with_analytical_jac(self):
         """Solving with analytical Jacobians yields the same optimum as without."""
         model = ScalarNonlinear()
 
         # Without analytical Jacobians (no lagrange_jac)
-        ocp_nograd = EconomicOptimalControlProblem(
+        ocp_nograd = ContinuousOCP(
             model, N=3,
             lagrange=lambda t, x, y, u, p: float(u @ u),
             Q_z=np.eye(1) * 2.0,
@@ -1278,7 +1268,7 @@ class TestAnalyticalJacobians:
         )
 
         # With analytical Jacobians
-        ocp_grad = EconomicOptimalControlProblem(
+        ocp_grad = ContinuousOCP(
             model, N=3,
             lagrange=lambda t, x, y, u, p: float(u @ u),
             lagrange_jac=lambda t, x, y, u, p: (
@@ -1530,8 +1520,8 @@ class TestOCPFormulationEquivalence:
                   solver="highs")
         if use_rom:
             kw["S"] = np.eye(1) * 5.0
-        ocp_c = OptimalControlProblem(formulation="condensed", **kw)
-        ocp_s = OptimalControlProblem(formulation="sparse", **kw)
+        ocp_c = DiscreteLinearOCP(formulation="condensed", **kw)
+        ocp_s = DiscreteLinearOCP(formulation="sparse", **kw)
 
         x0 = np.array([0.0, 0.0])
         D = np.zeros(N * model.nd)
@@ -1546,8 +1536,8 @@ class TestOCPFormulationEquivalence:
         N = 12
         kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0,
                   solver="highs")
-        ocp_c = CDOptimalControlProblem(formulation="condensed", **kw)
-        ocp_s = CDOptimalControlProblem(formulation="sparse", **kw)
+        ocp_c = ContinuousLinearOCP(formulation="condensed", **kw)
+        ocp_s = ContinuousLinearOCP(formulation="sparse", **kw)
         x0 = np.array([0.0])
         D = np.zeros(N * model.nd)
         x_ref = model.x_ref
@@ -1564,10 +1554,10 @@ class TestOCPFormulationEquivalence:
         D = np.zeros(N * model.nd)
         x_ref = model.x_ref
         kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
-        U_ref, _ = OptimalControlProblem(solver="highs", formulation="condensed",
+        U_ref, _ = DiscreteLinearOCP(solver="highs", formulation="condensed",
                                          **kw).solve(x0, D, x_ref)
         for solver in ("highs", "osqp"):
-            U, _ = OptimalControlProblem(solver=solver, **kw).solve(x0, D, x_ref)
+            U, _ = DiscreteLinearOCP(solver=solver, **kw).solve(x0, D, x_ref)
             np.testing.assert_allclose(U, U_ref, atol=1e-4,
                                        err_msg=f"{solver} disagrees with reference")
 
@@ -1576,14 +1566,14 @@ class TestOCPFormulationEquivalence:
         model = DoubleIntegrator()
         kw = dict(Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
         for N in (5, 40, 100):
-            assert OptimalControlProblem(
+            assert DiscreteLinearOCP(
                 model, N=N, solver="osqp", **kw)._resolve_formulation() == "sparse"
-            assert OptimalControlProblem(
+            assert DiscreteLinearOCP(
                 model, N=N, solver="highs", **kw)._resolve_formulation() == "condensed"
 
     def test_explicit_formulation_overrides_auto(self):
         model = DoubleIntegrator()
-        ocp = OptimalControlProblem(
+        ocp = DiscreteLinearOCP(
             model, N=5, Q=np.eye(1), R=np.eye(1), formulation="sparse"
         )
         assert ocp._resolve_formulation() == "sparse"
@@ -1591,7 +1581,7 @@ class TestOCPFormulationEquivalence:
     def test_invalid_formulation_raises(self):
         model = DoubleIntegrator()
         with pytest.raises(ValueError):
-            OptimalControlProblem(model, N=5, Q=np.eye(1), R=np.eye(1),
+            DiscreteLinearOCP(model, N=5, Q=np.eye(1), R=np.eye(1),
                                   formulation="banana")
 
 
@@ -1604,7 +1594,7 @@ class TestWarmStartMPC:
     def _run(self, warm_start, N=10, n_steps=12, formulation="auto"):
         model = DoubleIntegrator()
         kf = DiscreteLinearKF(model)
-        ocp = OptimalControlProblem(
+        ocp = DiscreteLinearOCP(
             model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=20.0,
             formulation=formulation,
         )
@@ -1631,7 +1621,7 @@ class TestWarmStartMPC:
         def run(warm):
             model = SimpleLinearCD()
             kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
-            ocp = CDOptimalControlProblem(
+            ocp = ContinuousLinearOCP(
                 model, N=10, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0
             )
             ctrl = CDMPCController(model, estimator=kf, ocp=ocp, warm_start=warm)

@@ -7,17 +7,13 @@ from .continuous_linear_ocp import ContinuousLinearOCP
 from .continuous_ocp import ContinuousOCP
 from .continuous_linearised_ocp import ContinuousLinearisedOCP
 from .mpc import MPCController
-from .cd_ocp import CDOptimalControlProblem, CDTrackingOptimalControlProblem
 from .cd_mpc import CDMPCController
 from .cd_linearized_mpc import (
     CDLinearizedMPCController,
     linearize_cd_model,
     discretize_cd_linearization,
 )
-from .enmpc import (
-    EconomicOptimalControlProblem,
-    CDNMPCController,
-)
+from .enmpc import CDNMPCController
 from .nlp_solver import (
     NLPConstraint,
     NLPProblem,
@@ -35,23 +31,15 @@ from .qp_solver import (
     make_qp_backend,
 )
 
-# Backward-compatible alias
-OptimalControlProblem = DiscreteLinearOCP
-
 __all__ = [
     # Abstract base
     "OCP",
-    # New canonical names
+    # OCP canonical names
     "DiscreteLinearOCP",
     "DiscreteLinearisedOCP",
     "ContinuousLinearOCP",
     "ContinuousOCP",
     "ContinuousLinearisedOCP",
-    # Backward-compatible aliases
-    "OptimalControlProblem",
-    "CDOptimalControlProblem",
-    "CDTrackingOptimalControlProblem",
-    "EconomicOptimalControlProblem",
     # MPC controllers
     "MPCController",
     "CDMPCController",

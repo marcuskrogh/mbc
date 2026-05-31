@@ -39,9 +39,9 @@ model-based control, estimation, identification, and simulation.
       * ``ContinuousLinearOCP``           – receding-horizon QP for linear continuous-discrete systems.
       * ``ContinuousOCP``                 – economic/tracking NLP for nonlinear CD systems.
       * ``ContinuousLinearisedOCP``       – QP for linearised CD systems with SS coordinate shifting.
-      * ``MPCController``                 – KalmanFilter + DiscreteLinearOCP.
-      * ``CDMPCController``               – ContinuousDiscreteKalmanFilter + ContinuousLinearOCP.
-      * ``CDNMPCController``              – generic estimator + OCP controller.
+      * ``MPCController``    – DiscreteLinearKF + DiscreteLinearOCP.
+      * ``CDMPCController``  – ContinuousDiscreteLinearKF + ContinuousLinearOCP.
+      * ``CDNMPCController`` – generic estimator + OCP controller.
 
   mbc.identification
       System-identification / parameter-estimation utilities:
@@ -110,11 +110,6 @@ from .control import (
     ContinuousLinearOCP,
     ContinuousOCP,
     ContinuousLinearisedOCP,
-    # Backward-compatible aliases
-    OptimalControlProblem,
-    CDOptimalControlProblem,
-    CDTrackingOptimalControlProblem,
-    EconomicOptimalControlProblem,
     MPCController,
     CDMPCController,
     CDNMPCController,
@@ -164,17 +159,12 @@ __all__ = [
     "DelayedObservationFilter",
     # Control — abstract base
     "OCP",
-    # Control — new canonical names
+    # Control — OCP canonical names
     "DiscreteLinearOCP",
     "DiscreteLinearisedOCP",
     "ContinuousLinearOCP",
     "ContinuousOCP",
     "ContinuousLinearisedOCP",
-    # Control — backward-compatible aliases
-    "OptimalControlProblem",
-    "CDOptimalControlProblem",
-    "CDTrackingOptimalControlProblem",
-    "EconomicOptimalControlProblem",
     # Control — MPC controllers
     "MPCController",
     "CDMPCController",

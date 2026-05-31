@@ -1,12 +1,6 @@
 """
-Backward-compatibility shim for :class:`EconomicOptimalControlProblem`, and
-:class:`CDNMPCController`.
-
-``EconomicOptimalControlProblem`` is an alias for :class:`ContinuousOCP`.
-New code should use :class:`~mbc.control.ContinuousOCP` directly.
-
-``CDNMPCController`` is the closed-loop receding-horizon controller that
-composes any continuous-discrete state estimator with any OCP.
+:class:`CDNMPCController` — generic closed-loop receding-horizon controller
+that composes any continuous-discrete state estimator with any OCP.
 """
 
 from __future__ import annotations
@@ -14,9 +8,6 @@ from __future__ import annotations
 import numpy as np
 
 from .continuous_ocp import ContinuousOCP
-
-# Backward-compatible alias
-EconomicOptimalControlProblem = ContinuousOCP
 
 
 # ── Generic CD-NMPC Controller ────────────────────────────────────────────────
