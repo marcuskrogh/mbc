@@ -21,61 +21,40 @@ model-based control, estimation, identification, and simulation.
       State-estimation algorithms:
 
       * ``KalmanFilter``                    – discrete-time KF (Joseph form).
-        Supports noise-separated covariance (M.Sc. Ch. 5.4) and missing
-        observations (M.Sc. Ch. 5.5).
-      * ``ContinuousDiscreteKalmanFilter``                  – KF for linear continuous-discrete
-                                              systems; ZOH + Van Loan Q_d (M.Sc. Ch. 5).
+      * ``ContinuousDiscreteKalmanFilter``  – KF for linear continuous-discrete systems.
       * ``ContinuousDiscreteEKF``           – CD-EKF (Ph.D. Ch. 7.1).
       * ``ContinuousDiscreteUKF``           – CD-UKF (Ph.D. Ch. 7.2).
       * ``ContinuousDiscreteEnKF``          – CD-EnKF (Ph.D. Ch. 7.3).
       * ``ContinuousDiscreteParticleFilter``– CD-PF  (Ph.D. Ch. 7.4).
       * ``ContinuousDiscreteDAEEKF``        – CD-EKF for SDAE (Ph.D. Ch. 8).
 
-  mbc.control
-      Optimal control algorithms:
+  mbc.ocp
+      Optimal Control Problems:
 
-      * ``OptimalControlProblem``         – receding-horizon QP (tracking MPC, discrete).
-      * ``MPCController``                 – KalmanFilter + OptimalControlProblem.
-      * ``CDOptimalControlProblem``       – receding-horizon QP for linear CD systems.
-      * ``CDMPCController``               – ContinuousDiscreteKalmanFilter + CDOptimalControlProblem.
-      * ``CDTrackingOptimalControlProblem`` – nonlinear tracking OCP for CD systems
-                                             (NLP; input/state/output constraints,
-                                             ROM penalty + constraints, linear input
-                                             penalty).
-      * ``EconomicOptimalControlProblem`` – economic nonlinear OCP (Ph.D. Ch. 9).
-                                           Accepts Mayer + Lagrange functions and
-                                           the same constraint set as the tracking OCP.
-      * ``CDNMPCController``              – generic estimator + OCP controller
-                                           (works with any CD estimator and any OCP).
+      * ``DiscreteLinearOCP``             – receding-horizon QP (tracking MPC, discrete).
+      * ``ContinuousLinearOCP``           – receding-horizon QP for linear CD systems.
+      * ``ContinuousNonlinearOCP``        – economic nonlinear OCP (Ph.D. Ch. 9).
+
+  mbc.control
+      Model Predictive Control:
+
+      * ``MPCController``                 – KalmanFilter + DiscreteLinearOCP.
+      * ``CDMPCController``               – ContinuousDiscreteKalmanFilter + ContinuousLinearOCP.
+      * ``CDLinearizedMPCController``     – successive-linearisation MPC.
+      * ``CDNMPCController``              – generic estimator + OCP controller.
+      * ``EconomicOptimalControlProblem`` – alias for ContinuousNonlinearOCP.
 
   mbc.identification
-      System-identification / parameter-estimation utilities:
-
-      * ``ped_neg_log_likelihood``          – PED Kalman log-likelihood (linear discrete).
-      * ``ped_neg_log_likelihood_gradient`` – finite-difference gradient.
-      * ``ParameterEstimator``              – multi-start optimiser (linear discrete).
-      * ``cd_ped_neg_log_likelihood``       – CD-EKF PED log-likelihood (nonlinear CD).
-      * ``cd_ped_neg_log_likelihood_gradient`` – finite-difference gradient (nonlinear CD).
-      * ``CDParameterEstimator``            – multi-start optimiser (nonlinear CD).
-      * ``EstimationResult``                – result dataclass.
+      System-identification / parameter-estimation utilities.
 
   mbc.realization
-      State-space realization from I/O data (M.Sc. Ch. 2–4):
-
-      * ``SISORealization`` – from transfer function or impulse response.
-      * ``MIMORealization`` – Ho–Kalman from Markov parameters.
+      State-space realization from I/O data (M.Sc. Ch. 2–4).
 
   mbc.simulation
-      Numerical integration of SDE/SDAE models (Ph.D. Ch. 5–6):
-
-      * ``SDESimulator``  – Euler-Maruyama for SDE systems.
-      * ``SDAESimulator`` – Euler-Maruyama for SDAE systems.
+      Numerical integration of SDE/SDAE models (Ph.D. Ch. 5–6).
 
   mbc.monte_carlo
-      Closed-loop Monte Carlo simulation framework (Ph.D. Ch. 12):
-
-      * ``MonteCarloSimulation`` – N_mc independent closed-loop trials.
-      * ``MonteCarloResult``     – results container.
+      Closed-loop Monte Carlo simulation framework (Ph.D. Ch. 12).
 """
 
 from .models import (
@@ -95,14 +74,43 @@ from .estimation import (
     ContinuousDiscreteParticleFilter,
     ContinuousDiscreteDAEEKF,
 )
+from .ocp import (
+    OCP,
+    DiscreteLinearOCPBase,
+    DiscreteLinearisedOCPBase,
+    ContinuousLinearOCPBase,
+    ContinuousLinearisedOCPBase,
+    ContinuousNonlinearOCPBase,
+    DiscreteLinearOCP,
+    DiscreteLinearisedOCP,
+    ContinuousLinearOCP,
+    ContinuousLinearisedOCP,
+    ContinuousNonlinearOCP,
+    NLPConstraint,
+    NLPProblem,
+    NLPScalingPolicy,
+    NLPSolverBackend,
+    ScipyNLPBackend,
+    IpoptNLPBackend,
+    QPProblem,
+    QPResult,
+    QPSolverBackend,
+    HighsQPBackend,
+    OSQPBackend,
+    make_qp_backend,
+)
 from .control import (
-    OptimalControlProblem,
     MPCController,
-    CDOptimalControlProblem,
-    CDTrackingOptimalControlProblem,
     CDMPCController,
+    CDLinearizedMPCController,
+    linearize_cd_model,
+    discretize_cd_linearization,
     EconomicOptimalControlProblem,
     CDNMPCController,
+    # Legacy control aliases
+    OptimalControlProblem,
+    CDOptimalControlProblem,
+    CDTrackingOptimalControlProblem,
 )
 from .identification.estimator import ParameterEstimator, CDParameterEstimator, EstimationResult
 from .identification.likelihood import (
@@ -131,14 +139,45 @@ __all__ = [
     "ContinuousDiscreteEnKF",
     "ContinuousDiscreteParticleFilter",
     "ContinuousDiscreteDAEEKF",
-    # Control
-    "OptimalControlProblem",
+    # OCP abstract bases
+    "OCP",
+    "DiscreteLinearOCPBase",
+    "DiscreteLinearisedOCPBase",
+    "ContinuousLinearOCPBase",
+    "ContinuousLinearisedOCPBase",
+    "ContinuousNonlinearOCPBase",
+    # OCP concrete classes
+    "DiscreteLinearOCP",
+    "DiscreteLinearisedOCP",
+    "ContinuousLinearOCP",
+    "ContinuousLinearisedOCP",
+    "ContinuousNonlinearOCP",
+    # NLP solver
+    "NLPConstraint",
+    "NLPProblem",
+    "NLPScalingPolicy",
+    "NLPSolverBackend",
+    "ScipyNLPBackend",
+    "IpoptNLPBackend",
+    # QP solver
+    "QPProblem",
+    "QPResult",
+    "QPSolverBackend",
+    "HighsQPBackend",
+    "OSQPBackend",
+    "make_qp_backend",
+    # MPC controllers
     "MPCController",
-    "CDOptimalControlProblem",
-    "CDTrackingOptimalControlProblem",
     "CDMPCController",
+    "CDLinearizedMPCController",
+    "linearize_cd_model",
+    "discretize_cd_linearization",
     "EconomicOptimalControlProblem",
     "CDNMPCController",
+    # Legacy control aliases
+    "OptimalControlProblem",
+    "CDOptimalControlProblem",
+    "CDTrackingOptimalControlProblem",
     # Identification
     "ParameterEstimator",
     "CDParameterEstimator",
