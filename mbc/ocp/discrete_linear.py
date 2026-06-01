@@ -429,7 +429,6 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
         elif x_ref_raw.ndim == 2 and x_ref_raw.shape[1] == nx and x_ref_raw.shape[0] == N:
             x_ref = x_ref_raw  # (N, nx)
         elif x_ref_raw.ndim == 2 and (x_ref_raw.shape[0] == 1 or x_ref_raw.shape[1] == 1):
-            # CVXOPT column/row vector — flatten to 1-D
             x_ref = x_ref_raw.ravel()
         else:
             raise ValueError(

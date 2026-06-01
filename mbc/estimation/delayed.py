@@ -59,37 +59,20 @@ from .._utils import _cholesky_psd
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 
-def _is_cvxopt(v) -> bool:
-    """Return True if *v* is a cvxopt matrix."""
-    try:
-        from cvxopt import matrix as _cvx
-        return isinstance(v, _cvx)
-    except ImportError:
-        return False
-
-
 def _as_np1d(v) -> np.ndarray | None:
-    """Convert a vector (numpy or cvxopt column) to a 1-D numpy float array."""
+    """Convert a list or numpy array to a 1-D float array."""
     if v is None:
         return None
-    if _is_cvxopt(v):
-        n = v.size[0] * v.size[1]
-        return np.array([float(v[i]) for i in range(n)])
     return np.asarray(v, dtype=float).ravel().copy()
 
 
 def _as_np2d(M) -> np.ndarray:
-    """Convert a matrix (numpy or cvxopt) to a 2-D numpy float array."""
-    if _is_cvxopt(M):
-        rows, cols = M.size
-        return np.array(list(M), dtype=float).reshape((rows, cols), order="F")
+    """Convert a list-of-lists or numpy array to a 2-D float array."""
     return np.asarray(M, dtype=float).copy()
 
 
 def _ny_of(y) -> int:
     """Return the number of output channels in a measurement vector."""
-    if _is_cvxopt(y):
-        return y.size[0]
     return int(np.asarray(y).ravel().shape[0])
 
 
@@ -354,10 +337,9 @@ class DelayedObservationFilter:
 
         Parameters
         ----------
-        ym : (nym,) ndarray or cvxopt column — measurement at time ``t_k``.
-        u  : (nu,) ndarray or cvxopt column  — input applied over the just-
-              completed interval (ZOH).
-        d  : (nd,) ndarray or cvxopt column  — disturbance over that interval.
+        ym : (nym,) ndarray — measurement at time ``t_k``.
+        u  : (nu,) ndarray — input applied over the just-completed interval (ZOH).
+        d  : (nd,) ndarray — disturbance over that interval.
         p  : (nparams,) ndarray, optional    — parameter vector (CD only;
               ignored for linear DT/CD estimators).
         t  : float, optional                  — current time (CD only;
