@@ -158,19 +158,67 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
             )
         self._model = model
         self._N = N
-        self._Q = _any_to_np2d(Q)
-        self._R = _any_to_np2d(R)
-        self._P = _any_to_np2d(P) if P is not None else self._Q.copy()
-        self._S = _any_to_np2d(S) if S is not None else None
+
+        # Q: accept (nz,nz) or (N,nz,nz)
+        Q_arr = np.asarray(Q, dtype=float)
+        if Q_arr.ndim not in (2, 3):
+            raise ValueError(f"Q must be 2-D or 3-D, got ndim={Q_arr.ndim}")
+        if Q_arr.ndim == 3 and Q_arr.shape[0] != N:
+            raise ValueError(
+                f"Per-stage Q must have first dim = N={N}, got {Q_arr.shape[0]}"
+            )
+        self._Q = Q_arr
+
+        # R: accept (nu,nu) or (N,nu,nu)
+        R_arr = np.asarray(R, dtype=float)
+        if R_arr.ndim not in (2, 3):
+            raise ValueError(f"R must be 2-D or 3-D, got ndim={R_arr.ndim}")
+        if R_arr.ndim == 3 and R_arr.shape[0] != N:
+            raise ValueError(
+                f"Per-stage R must have first dim = N={N}, got {R_arr.shape[0]}"
+            )
+        self._R = R_arr
+
+        # P: always (nz,nz) — terminal cost
+        if P is not None:
+            self._P = _any_to_np2d(P)
+        else:
+            # default P = Q (or Q[0] if per-stage)
+            self._P = (self._Q[0] if self._Q.ndim == 3 else self._Q).copy()
+
+        # S: accept (nu,nu) or (N,nu,nu)
+        if S is not None:
+            S_arr = np.asarray(S, dtype=float)
+            if S_arr.ndim not in (2, 3):
+                raise ValueError(f"S must be 2-D or 3-D, got ndim={S_arr.ndim}")
+            if S_arr.ndim == 3 and S_arr.shape[0] != N:
+                raise ValueError(
+                    f"Per-stage S must have first dim = N={N}, got {S_arr.shape[0]}"
+                )
+            self._S = S_arr
+        else:
+            self._S = None
+
         self._rho = rho
-        self._y_offset = y_offset
+
+        # y_offset: accept scalar or (N,)
+        y_off_arr = np.asarray(y_offset, dtype=float)
+        if y_off_arr.ndim == 0:
+            self._y_offset = float(y_off_arr)
+        elif y_off_arr.shape == (N,):
+            self._y_offset = y_off_arr
+        else:
+            raise ValueError(
+                f"y_offset must be scalar or shape ({N},), got {y_off_arr.shape}"
+            )
+
         self._backend = make_qp_backend(solver, solver_options=solver_options)
         self._formulation = formulation
         self._u_min: np.ndarray | None = (
-            _any_to_np1d(u_min) if u_min is not None else None
+            np.asarray(u_min, dtype=float) if u_min is not None else None
         )
         self._u_max: np.ndarray | None = (
-            _any_to_np1d(u_max) if u_max is not None else None
+            np.asarray(u_max, dtype=float) if u_max is not None else None
         )
 
         nu = model.nu
@@ -179,7 +227,10 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
         self._S_bar: np.ndarray | None = None
         if self._S is not None:
             self._D_diff = _build_D_diff(nu, N)
-            self._S_bar = block_diag(*([self._S] * N))
+            if self._S.ndim == 2:
+                self._S_bar = block_diag(*([self._S] * N))
+            else:
+                self._S_bar = block_diag(*self._S)
 
     # ── Abstract property implementations ───────────────────────────────
 
@@ -199,7 +250,17 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
 
     @Q.setter
     def Q(self, value) -> None:
-        self._Q = _any_to_np2d(value)
+        arr = np.asarray(value, dtype=float)
+        if arr.ndim == 2:
+            self._Q = arr
+        elif arr.ndim == 3:
+            if arr.shape[0] != self._N:
+                raise ValueError(
+                    f"Per-stage Q must have first dim = N={self._N}, got {arr.shape[0]}"
+                )
+            self._Q = arr
+        else:
+            raise ValueError(f"Q must be 2-D or 3-D, got ndim={arr.ndim}")
 
     @property
     def R(self) -> np.ndarray:
@@ -207,7 +268,17 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
 
     @R.setter
     def R(self, value) -> None:
-        self._R = _any_to_np2d(value)
+        arr = np.asarray(value, dtype=float)
+        if arr.ndim == 2:
+            self._R = arr
+        elif arr.ndim == 3:
+            if arr.shape[0] != self._N:
+                raise ValueError(
+                    f"Per-stage R must have first dim = N={self._N}, got {arr.shape[0]}"
+                )
+            self._R = arr
+        else:
+            raise ValueError(f"R must be 2-D or 3-D, got ndim={arr.ndim}")
 
     @property
     def P(self) -> np.ndarray:
@@ -223,11 +294,24 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
 
     @S.setter
     def S(self, value) -> None:
-        self._S = _any_to_np2d(value) if value is not None else None
         nu, N = self._model.nu, self._N
+        if value is not None:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim not in (2, 3):
+                raise ValueError(f"S must be 2-D or 3-D, got ndim={arr.ndim}")
+            if arr.ndim == 3 and arr.shape[0] != N:
+                raise ValueError(
+                    f"Per-stage S must have first dim = N={N}, got {arr.shape[0]}"
+                )
+            self._S = arr
+        else:
+            self._S = None
         if self._S is not None:
             self._D_diff = _build_D_diff(nu, N)
-            self._S_bar = block_diag(*([self._S] * N))
+            if self._S.ndim == 2:
+                self._S_bar = block_diag(*([self._S] * N))
+            else:
+                self._S_bar = block_diag(*self._S)
         else:
             self._D_diff = None
             self._S_bar = None
@@ -246,7 +330,15 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
 
     @y_offset.setter
     def y_offset(self, value) -> None:
-        self._y_offset = float(value)
+        arr = np.asarray(value, dtype=float)
+        if arr.ndim == 0:
+            self._y_offset = float(arr)
+        elif arr.shape == (self._N,):
+            self._y_offset = arr
+        else:
+            raise ValueError(
+                f"y_offset must be scalar or shape ({self._N},), got {arr.shape}"
+            )
 
     @property
     def u_min(self) -> np.ndarray:
@@ -255,7 +347,17 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
 
     @u_min.setter
     def u_min(self, value) -> None:
-        self._u_min = _any_to_np1d(value) if value is not None else None
+        if value is not None:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim not in (1, 2):
+                raise ValueError(f"u_min must be 1-D or 2-D, got ndim={arr.ndim}")
+            if arr.ndim == 2 and arr.shape[0] != self._N:
+                raise ValueError(
+                    f"Per-stage u_min must have first dim = N={self._N}, got {arr.shape[0]}"
+                )
+            self._u_min = arr
+        else:
+            self._u_min = None
 
     @property
     def u_max(self) -> np.ndarray:
@@ -264,7 +366,17 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
 
     @u_max.setter
     def u_max(self, value) -> None:
-        self._u_max = _any_to_np1d(value) if value is not None else None
+        if value is not None:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim not in (1, 2):
+                raise ValueError(f"u_max must be 1-D or 2-D, got ndim={arr.ndim}")
+            if arr.ndim == 2 and arr.shape[0] != self._N:
+                raise ValueError(
+                    f"Per-stage u_max must have first dim = N={self._N}, got {arr.shape[0]}"
+                )
+            self._u_max = arr
+        else:
+            self._u_max = None
 
     def _resolve_formulation(self) -> str:
         """Return the concrete formulation ('condensed' or 'sparse')."""
@@ -309,9 +421,20 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
         Cz = _any_to_np2d(self._model.Cz)
         nz = Cz.shape[0]
 
-        # ── Coerce inputs to numpy 1-D ──────────────────────────────────
+        # ── Coerce inputs to numpy ──────────────────────────────────────
         x0 = _any_to_np1d(x0).reshape(-1)
-        x_ref = _any_to_np1d(x_ref).reshape(-1)
+        x_ref_raw = np.asarray(x_ref, dtype=float)
+        if x_ref_raw.ndim == 1:
+            x_ref = x_ref_raw
+        elif x_ref_raw.ndim == 2 and x_ref_raw.shape[1] == nx and x_ref_raw.shape[0] == N:
+            x_ref = x_ref_raw  # (N, nx)
+        elif x_ref_raw.ndim == 2 and (x_ref_raw.shape[0] == 1 or x_ref_raw.shape[1] == 1):
+            # CVXOPT column/row vector — flatten to 1-D
+            x_ref = x_ref_raw.ravel()
+        else:
+            raise ValueError(
+                f"x_ref must be (nx,) or (N={N},nx), got {x_ref_raw.shape}"
+            )
         D = _any_to_np1d(D).reshape(-1) if D is not None else np.zeros(N * nd)
 
         Ad = _any_to_np2d(self._model.Ad)
@@ -353,6 +476,28 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
             return U_flat, X_flat
 
         return extract(np.asarray(result.x, dtype=float))
+
+    # ── Per-stage z_ref helper ────────────────────────────────────────
+
+    @staticmethod
+    def _make_z_ref_seq(x_ref_arr: np.ndarray, Cz: np.ndarray, N: int) -> np.ndarray:
+        """Return (N, nz) z_ref for each of the N stages.
+
+        Parameters
+        ----------
+        x_ref_arr : (nx,) or (N, nx) ndarray
+        Cz        : (nz, nx) ndarray
+        N         : int
+
+        Returns
+        -------
+        (N, nz) ndarray — z_ref[k] is the reference output for stage k.
+        """
+        if x_ref_arr.ndim == 1:
+            z_ref = Cz @ x_ref_arr  # (nz,)
+            return np.tile(z_ref, (N, 1))  # (N, nz)
+        else:  # (N, nx)
+            return (Cz @ x_ref_arr.T).T  # (N, nz)
 
     # ── Warm-start assembly ────────────────────────────────────────────
 
@@ -440,11 +585,22 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
         CP = Cz_bar @ Psi
         CL = Cz_bar @ Lambda
 
-        Q_bar = block_diag(*([self._Q] * (N - 1) + [self._P])) if N > 1 else self._P
-        R_bar = block_diag(*([self._R] * N))
+        # Build Q_bar: (N*nz, N*nz)
+        if self._Q.ndim == 2:
+            Q_blocks = [self._Q] * (N - 1) + [self._P]
+        else:  # (N, nz, nz)
+            Q_blocks = list(self._Q[:N - 1]) + [self._P]
+        Q_bar = block_diag(*Q_blocks) if N > 1 else self._P
 
-        z_ref = Cz @ x_ref
-        z_ref_bar = np.tile(z_ref, N)
+        # Build R_bar: (N*nu, N*nu)
+        if self._R.ndim == 2:
+            R_bar = block_diag(*([self._R] * N))
+        else:
+            R_bar = block_diag(*self._R)
+
+        # z_ref per stage: (N, nz)
+        z_ref_seq = self._make_z_ref_seq(x_ref, Cz, N)  # (N, nz)
+        z_ref_bar = z_ref_seq.reshape(-1)  # (N*nz,)
         Z_free = CP @ x0 + CL @ D
         e_free = Z_free - z_ref_bar
 
@@ -469,13 +625,29 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
         f = np.zeros(n_Z)
         f[:n_U] = f_u
 
-        u_min_t = np.tile(self.u_min.reshape(-1), N)
-        u_max_t = np.tile(self.u_max.reshape(-1), N)
+        # u bounds: per-stage or uniform
+        u_min_val = self.u_min
+        u_max_val = self.u_max
+        if u_min_val.ndim == 1:
+            u_min_t = np.tile(u_min_val, N)
+        else:
+            u_min_t = u_min_val.reshape(-1)
+        if u_max_val.ndim == 1:
+            u_max_t = np.tile(u_max_val, N)
+        else:
+            u_max_t = u_max_val.reshape(-1)
         lb = np.concatenate([u_min_t, np.zeros(n_eps)])
         ub = np.concatenate([u_max_t, np.full(n_eps, np.inf)])
 
-        z_min_t = np.tile(z_ref - self._y_offset, N)
-        z_max_t = np.tile(z_ref + self._y_offset, N)
+        # Soft constraint bounds with per-stage y_offset
+        y_off = self._y_offset
+        if np.isscalar(y_off) or np.ndim(y_off) == 0:
+            z_min_t = (z_ref_seq - float(y_off)).reshape(-1)
+            z_max_t = (z_ref_seq + float(y_off)).reshape(-1)
+        else:  # (N,)
+            y_off_arr = np.asarray(y_off, dtype=float)[:, None]  # (N, 1)
+            z_min_t = (z_ref_seq - y_off_arr).reshape(-1)
+            z_max_t = (z_ref_seq + y_off_arr).reshape(-1)
         neg_I = -np.eye(n_eps)
         G = np.vstack([np.hstack([-CG, neg_I]), np.hstack([CG, neg_I])])
         h = np.concatenate([-z_min_t + Z_free, z_max_t - Z_free])
@@ -502,19 +674,32 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
         oU = n_X            # offset of U block
         oE = n_X + n_U      # offset of ε block
 
-        z_ref = Cz @ x_ref
         f = np.zeros(n_Z)
 
         # ── Objective Hessian ½ ZᵀHZ (block diagonal, assembled sparse) ──
         Czt = Cz.T
-        H_state = Czt @ self._Q @ Cz          # repeated stage state-cost block
-        H_state_term = Czt @ self._P @ Cz     # terminal state-cost block
-        x_blocks = [H_state] * (N - 1) + [H_state_term] if N > 1 else [H_state_term]
-        for k in range(N):
-            Qk = self._P if k == N - 1 else self._Q
-            f[k * nx:(k + 1) * nx] = -Czt @ (Qk @ z_ref)
 
-        R_bar = block_diag(*([self._R] * N))
+        # Per-stage Q blocks for the state cost in H
+        if self._Q.ndim == 2:
+            H_state = Czt @ self._Q @ Cz
+            H_state_term = Czt @ self._P @ Cz
+            x_blocks = [H_state] * (N - 1) + [H_state_term] if N > 1 else [H_state_term]
+        else:
+            x_blocks = [Czt @ self._Q[k] @ Cz for k in range(N - 1)] + [Czt @ self._P @ Cz]
+
+        # z_ref per stage: (N, nz)
+        z_ref_seq = self._make_z_ref_seq(x_ref, Cz, N)  # (N, nz)
+
+        for k in range(N):
+            Qk = self._P if k == N - 1 else (self._Q if self._Q.ndim == 2 else self._Q[k])
+            f[k * nx:(k + 1) * nx] = -Czt @ (Qk @ z_ref_seq[k])
+
+        # Build R_bar: (N*nu, N*nu)
+        if self._R.ndim == 2:
+            R_bar = block_diag(*([self._R] * N))
+        else:
+            R_bar = block_diag(*self._R)
+
         if self._S is not None:
             d0 = np.zeros(n_U)
             d0[:nu] = -u_prev_np
@@ -558,8 +743,16 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
         A_eq = sp.csc_matrix((vals, (rows, cols)), shape=(n_X, n_Z))
 
         # ── Bounds ──────────────────────────────────────────────────────
-        u_min_t = np.tile(self.u_min.reshape(-1), N)
-        u_max_t = np.tile(self.u_max.reshape(-1), N)
+        u_min_val = self.u_min
+        u_max_val = self.u_max
+        if u_min_val.ndim == 1:
+            u_min_t = np.tile(u_min_val, N)
+        else:
+            u_min_t = u_min_val.reshape(-1)
+        if u_max_val.ndim == 1:
+            u_max_t = np.tile(u_max_val, N)
+        else:
+            u_max_t = u_max_val.reshape(-1)
         lb = np.concatenate([np.full(n_X, -np.inf), u_min_t, np.zeros(n_eps)])
         ub = np.concatenate([np.full(n_X, np.inf), u_max_t, np.full(n_eps, np.inf)])
 
@@ -580,8 +773,15 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
 
         neg_eye_nz = -np.eye(nz)
         h = np.zeros(2 * n_eps)
-        z_min = z_ref - self._y_offset
-        z_max = z_ref + self._y_offset
+        # Per-stage or uniform soft output bounds
+        y_off = self._y_offset
+        if np.isscalar(y_off) or np.ndim(y_off) == 0:
+            z_min_arr = z_ref_seq - float(y_off)  # (N, nz)
+            z_max_arr = z_ref_seq + float(y_off)
+        else:
+            y_off_arr = np.asarray(y_off, dtype=float)[:, None]
+            z_min_arr = z_ref_seq - y_off_arr  # (N, nz)
+            z_max_arr = z_ref_seq + y_off_arr
         for k in range(N):
             xs = k * nx
             es = oE + k * nz
@@ -589,10 +789,10 @@ class DiscreteLinearOCP(DiscreteLinearOCPBase):
             r_lo = n_eps + k * nz
             _add_g(r_hi, xs, Cz)
             _add_g(r_hi, es, neg_eye_nz)
-            h[r_hi:r_hi + nz] = z_max
+            h[r_hi:r_hi + nz] = z_max_arr[k]
             _add_g(r_lo, xs, -Cz)
             _add_g(r_lo, es, neg_eye_nz)
-            h[r_lo:r_lo + nz] = -z_min
+            h[r_lo:r_lo + nz] = -z_min_arr[k]
         G = sp.csc_matrix((g_vals, (g_rows, g_cols)), shape=(2 * n_eps, n_Z))
 
         def extract(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:

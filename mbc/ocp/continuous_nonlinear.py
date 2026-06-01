@@ -235,44 +235,55 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
         self._lagrange_jac = lagrange_jac
         self._mayer = mayer
         self._mayer_jac = mayer_jac
-        self._Q_z = (
-            np.asarray(Q_z, dtype=float) if Q_z is not None else None
-        )
+
+        # Use setters for validated assignment of per-stage-capable parameters.
+        # Initialise backing attributes to None first so setters can reference them.
+        self._Q_z = None
+        self._R_stage = None
+        self._Q_du = None
+        self._u_min = None
+        self._u_max = None
+        self._du_min = None
+        self._du_max = None
+        self._x_min = None
+        self._x_max = None
+        self._z_min = None
+        self._z_max = None
+        self._has_soft_x = False
+        self._has_soft_z = False
+
+        # Assign via setters to enforce shape validation
+        self.Q_z = Q_z
         if self._Q_z is not None and z_ref is None:
             raise ValueError("Q_z requires z_ref to be supplied as well.")
         self._z_ref = self._broadcast_zref(z_ref) if z_ref is not None else None
-        self._R_stage = (
-            np.asarray(R_stage, dtype=float) if R_stage is not None else None
-        )
+        self.R_stage = R_stage
         self._P_terminal = (
             np.asarray(P_terminal, dtype=float) if P_terminal is not None else None
         )
         if self._P_terminal is not None and z_ref is None:
             raise ValueError("P_terminal requires z_ref to be supplied as well.")
-        self._Q_du = (
-            np.asarray(Q_du, dtype=float) if Q_du is not None else None
-        )
+        self.Q_du = Q_du
         self._p_u_eco = (
             np.asarray(p_u_eco, dtype=float) if p_u_eco is not None else None
         )
 
-        # Hard constraints
-        self._u_min = self._asfloat(u_min)
-        self._u_max = self._asfloat(u_max)
-        self._du_min = self._asfloat(du_min)
-        self._du_max = self._asfloat(du_max)
+        # Hard constraints — use setters for validation
+        self.u_min = u_min
+        self.u_max = u_max
+        self.du_min = du_min
+        self.du_max = du_max
 
-        # Soft constraints
-        self._x_min = self._asfloat(x_min)
-        self._x_max = self._asfloat(x_max)
-        self._z_min = self._asfloat(z_min)
-        self._z_max = self._asfloat(z_max)
+        # Soft constraints — use setters for validation; note _has_soft_* is managed there
+        # We must set _has_soft_x/_has_soft_z before calling setters since setters check old value
+        self.x_min = x_min
+        self.x_max = x_max
+        self.z_min = z_min
+        self.z_max = z_max
         self._rho_x_1 = float(rho_x_1)
         self._rho_x_2 = float(rho_x_2)
         self._rho_z_1 = float(rho_z_1)
         self._rho_z_2 = float(rho_z_2)
-        self._has_soft_x = self._x_min is not None or self._x_max is not None
-        self._has_soft_z = self._z_min is not None or self._z_max is not None
 
         # NLP setup
         self._solver_backend = make_nlp_backend(
@@ -311,7 +322,18 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     @Q_z.setter
     def Q_z(self, value) -> None:
-        self._Q_z = np.asarray(value, dtype=float) if value is not None else None
+        if value is None:
+            self._Q_z = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim == 2:
+                self._Q_z = arr
+            elif arr.ndim == 3 and arr.shape[0] == self._N:
+                self._Q_z = arr
+            else:
+                raise ValueError(
+                    f"Q_z must be (nz,nz) or (N={self._N},nz,nz), got {arr.shape}"
+                )
 
     @property
     def z_ref(self) -> np.ndarray | None:
@@ -328,7 +350,18 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     @R_stage.setter
     def R_stage(self, value) -> None:
-        self._R_stage = np.asarray(value, dtype=float) if value is not None else None
+        if value is None:
+            self._R_stage = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim == 2:
+                self._R_stage = arr
+            elif arr.ndim == 3 and arr.shape[0] == self._N:
+                self._R_stage = arr
+            else:
+                raise ValueError(
+                    f"R_stage must be (nu,nu) or (N={self._N},nu,nu), got {arr.shape}"
+                )
 
     @property
     def P_terminal(self) -> np.ndarray | None:
@@ -345,7 +378,18 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     @Q_du.setter
     def Q_du(self, value) -> None:
-        self._Q_du = np.asarray(value, dtype=float) if value is not None else None
+        if value is None:
+            self._Q_du = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim == 2:
+                self._Q_du = arr
+            elif arr.ndim == 3 and arr.shape[0] == self._N:
+                self._Q_du = arr
+            else:
+                raise ValueError(
+                    f"Q_du must be (nu,nu) or (N={self._N},nu,nu), got {arr.shape}"
+                )
 
     @property
     def u_min(self) -> np.ndarray | None:
@@ -353,7 +397,18 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     @u_min.setter
     def u_min(self, value) -> None:
-        self._u_min = self._asfloat(value)
+        if value is None:
+            self._u_min = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim == 1:
+                self._u_min = arr
+            elif arr.ndim == 2 and arr.shape[0] == self._N:
+                self._u_min = arr
+            else:
+                raise ValueError(
+                    f"u_min must be (nu,) or (N={self._N},nu), got {arr.shape}"
+                )
 
     @property
     def u_max(self) -> np.ndarray | None:
@@ -361,7 +416,18 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     @u_max.setter
     def u_max(self, value) -> None:
-        self._u_max = self._asfloat(value)
+        if value is None:
+            self._u_max = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim == 1:
+                self._u_max = arr
+            elif arr.ndim == 2 and arr.shape[0] == self._N:
+                self._u_max = arr
+            else:
+                raise ValueError(
+                    f"u_max must be (nu,) or (N={self._N},nu), got {arr.shape}"
+                )
 
     @property
     def du_min(self) -> np.ndarray | None:
@@ -369,7 +435,18 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     @du_min.setter
     def du_min(self, value) -> None:
-        self._du_min = self._asfloat(value)
+        if value is None:
+            self._du_min = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim == 1:
+                self._du_min = arr
+            elif arr.ndim == 2 and arr.shape[0] == self._N:
+                self._du_min = arr
+            else:
+                raise ValueError(
+                    f"du_min must be (nu,) or (N={self._N},nu), got {arr.shape}"
+                )
 
     @property
     def du_max(self) -> np.ndarray | None:
@@ -377,7 +454,18 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     @du_max.setter
     def du_max(self, value) -> None:
-        self._du_max = self._asfloat(value)
+        if value is None:
+            self._du_max = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            if arr.ndim == 1:
+                self._du_max = arr
+            elif arr.ndim == 2 and arr.shape[0] == self._N:
+                self._du_max = arr
+            else:
+                raise ValueError(
+                    f"du_max must be (nu,) or (N={self._N},nu), got {arr.shape}"
+                )
 
     @property
     def z_min(self) -> np.ndarray | None:
@@ -386,7 +474,19 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
     @z_min.setter
     def z_min(self, value) -> None:
         old = self._has_soft_z
-        self._z_min = np.asarray(value, dtype=float) if value is not None else None
+        if value is None:
+            self._z_min = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            M = self._N * self._n_steps
+            if arr.ndim == 1:
+                self._z_min = arr
+            elif arr.shape == (M + 1, self._nz):
+                self._z_min = arr
+            else:
+                raise ValueError(
+                    f"z_min must be (nz,) or (M+1={M + 1},nz={self._nz}), got {arr.shape}"
+                )
         self._has_soft_z = self._z_min is not None or self._z_max is not None
         if self._has_soft_z != old:
             self._rebuild_layout()
@@ -398,7 +498,19 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
     @z_max.setter
     def z_max(self, value) -> None:
         old = self._has_soft_z
-        self._z_max = np.asarray(value, dtype=float) if value is not None else None
+        if value is None:
+            self._z_max = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            M = self._N * self._n_steps
+            if arr.ndim == 1:
+                self._z_max = arr
+            elif arr.shape == (M + 1, self._nz):
+                self._z_max = arr
+            else:
+                raise ValueError(
+                    f"z_max must be (nz,) or (M+1={M + 1},nz={self._nz}), got {arr.shape}"
+                )
         self._has_soft_z = self._z_min is not None or self._z_max is not None
         if self._has_soft_z != old:
             self._rebuild_layout()
@@ -428,7 +540,19 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
     @x_min.setter
     def x_min(self, value) -> None:
         old = self._has_soft_x
-        self._x_min = np.asarray(value, dtype=float) if value is not None else None
+        if value is None:
+            self._x_min = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            M = self._N * self._n_steps
+            if arr.ndim == 1:
+                self._x_min = arr
+            elif arr.shape == (M + 1, self._nx):
+                self._x_min = arr
+            else:
+                raise ValueError(
+                    f"x_min must be (nx,) or (M+1={M + 1},nx={self._nx}), got {arr.shape}"
+                )
         self._has_soft_x = self._x_min is not None or self._x_max is not None
         if self._has_soft_x != old:
             self._rebuild_layout()
@@ -440,7 +564,19 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
     @x_max.setter
     def x_max(self, value) -> None:
         old = self._has_soft_x
-        self._x_max = np.asarray(value, dtype=float) if value is not None else None
+        if value is None:
+            self._x_max = None
+        else:
+            arr = np.asarray(value, dtype=float)
+            M = self._N * self._n_steps
+            if arr.ndim == 1:
+                self._x_max = arr
+            elif arr.shape == (M + 1, self._nx):
+                self._x_max = arr
+            else:
+                raise ValueError(
+                    f"x_max must be (nx,) or (M+1={M + 1},nx={self._nx}), got {arr.shape}"
+                )
         self._has_soft_x = self._x_min is not None or self._x_max is not None
         if self._has_soft_x != old:
             self._rebuild_layout()
@@ -465,6 +601,10 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
 
     def _rebuild_layout(self) -> None:
         """Rebuild the decision-variable layout after a structural change."""
+        if not hasattr(self, "_layout"):
+            # Called during __init__ before _layout is created; a final layout
+            # will be created at the end of __init__, so skip here.
+            return
         self._layout = _DecisionLayout(
             N=self._N,
             n_steps=self._n_steps,
@@ -583,20 +723,23 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
                 total += float(self._lagrange(t_np1, x_np1, y_np1, u_k, p_theta)) * h
 
             if self._Q_z is not None:
+                Q_z_k = self._Q_z if self._Q_z.ndim == 2 else self._Q_z[k]
                 z_np1 = self._gm(x_np1, y_np1, u_k, d_k, p_theta, t_np1)
                 e = z_np1 - self._z_ref[n + 1]
-                total += float(e @ self._Q_z @ e) * h
+                total += float(e @ Q_z_k @ e) * h
 
             if self._R_stage is not None:
-                total += float(u_k @ self._R_stage @ u_k) * h
+                R_k = self._R_stage if self._R_stage.ndim == 2 else self._R_stage[k]
+                total += float(u_k @ R_k @ u_k) * h
 
         for k in range(self._N):
             u_k = U[k]
             u_km1 = U[k - 1] if k > 0 else u_prev_0
 
             if self._Q_du is not None:
+                Q_du_k = self._Q_du if self._Q_du.ndim == 2 else self._Q_du[k]
                 du = u_k - u_km1
-                total += float(du @ self._Q_du @ du) * Ts
+                total += float(du @ Q_du_k @ du) * Ts
 
             if self._p_u_eco is not None:
                 total += float(self._p_u_eco @ u_k) * Ts
@@ -692,18 +835,22 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
                 u_km1 = U[k - 1] if k > 0 else u_prev_0
                 du = u_k - u_km1
                 if self._du_min is not None:
-                    out.extend(du - self._du_min)
+                    du_min_k = self._du_min if self._du_min.ndim == 1 else self._du_min[k]
+                    out.extend(du - du_min_k)
                 if self._du_max is not None:
-                    out.extend(self._du_max - du)
+                    du_max_k = self._du_max if self._du_max.ndim == 1 else self._du_max[k]
+                    out.extend(du_max_k - du)
 
         if self._has_soft_x:
             PX_lo = L.get_PX_lo(z)
             PX_hi = L.get_PX_hi(z)
             for n in range(L.M + 1):
                 if self._x_min is not None:
-                    out.extend(X[n] + PX_lo[n] - self._x_min)
+                    x_min_n = self._x_min if self._x_min.ndim == 1 else self._x_min[n]
+                    out.extend(X[n] + PX_lo[n] - x_min_n)
                 if self._x_max is not None:
-                    out.extend(self._x_max + PX_hi[n] - X[n])
+                    x_max_n = self._x_max if self._x_max.ndim == 1 else self._x_max[n]
+                    out.extend(x_max_n + PX_hi[n] - X[n])
 
         if self._has_soft_z:
             PZ = L.get_PZ(z)
@@ -715,9 +862,11 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
                 y_n = Y[n] if self._is_dae else np.empty(0)
                 z_n = self._gm(X[n], y_n, u_k, d_k, p_theta, t_n)
                 if self._z_min is not None:
-                    out.extend(z_n + PZ[n] - self._z_min)
+                    z_min_n = self._z_min if self._z_min.ndim == 1 else self._z_min[n]
+                    out.extend(z_n + PZ[n] - z_min_n)
                 if self._z_max is not None:
-                    out.extend(self._z_max + PZ[n] - z_n)
+                    z_max_n = self._z_max if self._z_max.ndim == 1 else self._z_max[n]
+                    out.extend(z_max_n + PZ[n] - z_n)
 
         return np.asarray(out, dtype=float)
 
@@ -934,9 +1083,10 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
                     )
 
             if self._Q_z is not None:
+                Q_z_k = self._Q_z if self._Q_z.ndim == 2 else self._Q_z[k]
                 z_np1 = self._gm(x_np1, y_np1, u_k, d_k, p_theta, t_np1)
                 e = z_np1 - self._z_ref[n + 1]
-                Qze = self._Q_z @ e
+                Qze = Q_z_k @ e
 
                 if self._is_dae:
                     dgmdx_val = self._model.dgmdx(
@@ -960,7 +1110,8 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
                 grad[u_k_col:u_k_col + nu] += dgmdu_val.T @ (2.0 * Qze) * h
 
             if self._R_stage is not None:
-                grad[u_k_col:u_k_col + nu] += 2.0 * self._R_stage @ u_k * h
+                R_k = self._R_stage if self._R_stage.ndim == 2 else self._R_stage[k]
+                grad[u_k_col:u_k_col + nu] += 2.0 * R_k @ u_k * h
 
         for k in range(self._N):
             u_k = U[k]
@@ -968,8 +1119,9 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
             u_k_col = L.u_off + k * nu
 
             if self._Q_du is not None:
+                Q_du_k = self._Q_du if self._Q_du.ndim == 2 else self._Q_du[k]
                 du = u_k - u_km1
-                Qdu_du = self._Q_du @ du
+                Qdu_du = Q_du_k @ du
                 grad[u_k_col:u_k_col + nu] += 2.0 * Qdu_du * Ts
                 if k > 0:
                     u_km1_col = L.u_off + (k - 1) * nu
@@ -1111,9 +1263,15 @@ class ContinuousNonlinearOCP(ContinuousNonlinearOCPBase):
         lb = np.full(L.total, -np.inf)
         ub = np.full(L.total, np.inf)
         if self._u_min is not None:
-            lb[L.u_off:L.u_off + L.u_size] = np.tile(self._u_min, self._N)
+            if self._u_min.ndim == 1:
+                lb[L.u_off:L.u_off + L.u_size] = np.tile(self._u_min, self._N)
+            else:  # (N, nu)
+                lb[L.u_off:L.u_off + L.u_size] = self._u_min.reshape(-1)
         if self._u_max is not None:
-            ub[L.u_off:L.u_off + L.u_size] = np.tile(self._u_max, self._N)
+            if self._u_max.ndim == 1:
+                ub[L.u_off:L.u_off + L.u_size] = np.tile(self._u_max, self._N)
+            else:  # (N, nu)
+                ub[L.u_off:L.u_off + L.u_size] = self._u_max.reshape(-1)
         if self._has_soft_x:
             lb[L.px_lo_off:L.px_lo_off + L.px_lo_size] = 0.0
             lb[L.px_hi_off:L.px_hi_off + L.px_hi_size] = 0.0

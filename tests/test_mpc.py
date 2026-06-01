@@ -1625,3 +1625,316 @@ class TestWarmStartMPC:
                 us.append(float(np.asarray(u).ravel()[0]))
             return np.array(us)
         np.testing.assert_allclose(run(True), run(False), atol=1e-5)
+
+
+# ── Tests: Per-stage parameter support ───────────────────────────────────────
+
+
+class TestDiscreteLinearOCPPerStage:
+    """Smoke-tests for per-stage (time-varying) parameters in DiscreteLinearOCP."""
+
+    def _make_model(self):
+        return DoubleIntegrator()
+
+    def test_per_stage_Q_accepted(self):
+        """Per-stage Q (N,nz,nz) should be accepted and return valid shapes."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]  # 1
+        nu = model.nu
+        nx = model.nx
+        Q_staged = np.stack([np.eye(nz) * (k + 1) for k in range(N)])  # (N,1,1)
+        R = np.eye(nu) * 0.1
+        ocp = DiscreteLinearOCP(model, N=N, Q=Q_staged, R=R, y_offset=20.0)
+        x0 = np.zeros(nx)
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        U, X = ocp.solve(x0, D, x_ref)
+        assert U.shape == (N * nu,)
+        assert X.shape == (N * nx,)
+
+    def test_per_stage_R_accepted(self):
+        """Per-stage R (N,nu,nu) should be accepted and return valid shapes."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        nx = model.nx
+        Q = np.eye(nz)
+        R_staged = np.stack([np.eye(nu) * (0.1 * (k + 1)) for k in range(N)])
+        ocp = DiscreteLinearOCP(model, N=N, Q=Q, R=R_staged, y_offset=20.0)
+        x0 = np.zeros(nx)
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        U, X = ocp.solve(x0, D, x_ref)
+        assert U.shape == (N * nu,)
+        assert X.shape == (N * nx,)
+
+    def test_per_stage_x_ref_accepted(self):
+        """Per-stage x_ref (N,nx) should be accepted and return valid shapes."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        nx = model.nx
+        Q = np.eye(nz)
+        R = np.eye(nu) * 0.1
+        ocp = DiscreteLinearOCP(model, N=N, Q=Q, R=R, y_offset=20.0)
+        x0 = np.zeros(nx)
+        D = np.zeros(N * model.nd)
+        # Per-stage reference ramping from 0 to x_ref
+        x_ref_staged = np.zeros((N, nx))
+        for k in range(N):
+            x_ref_staged[k] = model.x_ref * (k + 1) / N
+        U, X = ocp.solve(x0, D, x_ref_staged)
+        assert U.shape == (N * nu,)
+        assert X.shape == (N * nx,)
+
+    def test_per_stage_y_offset_accepted(self):
+        """Per-stage y_offset (N,) should be accepted and return valid shapes."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        nx = model.nx
+        Q = np.eye(nz)
+        R = np.eye(nu) * 0.1
+        y_offset_staged = np.array([10.0, 15.0, 20.0, 25.0])
+        ocp = DiscreteLinearOCP(model, N=N, Q=Q, R=R, y_offset=y_offset_staged)
+        x0 = np.zeros(nx)
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        U, X = ocp.solve(x0, D, x_ref)
+        assert U.shape == (N * nu,)
+        assert X.shape == (N * nx,)
+
+    def test_per_stage_u_bounds_accepted(self):
+        """Per-stage u_min/u_max (N,nu) should be accepted and return valid shapes."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        nx = model.nx
+        Q = np.eye(nz)
+        R = np.eye(nu) * 0.1
+        u_min_staged = np.full((N, nu), -3.0)
+        u_max_staged = np.full((N, nu), 3.0)
+        ocp = DiscreteLinearOCP(
+            model, N=N, Q=Q, R=R, y_offset=20.0,
+            u_min=u_min_staged, u_max=u_max_staged,
+        )
+        x0 = np.zeros(nx)
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        U, X = ocp.solve(x0, D, x_ref)
+        assert U.shape == (N * nu,)
+        assert X.shape == (N * nx,)
+
+    def test_per_stage_Q_differs_from_constant(self):
+        """Per-stage Q produces a different solution than constant Q."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        nx = model.nx
+        Q_const = np.eye(nz) * 2.0
+        # Stage 0 has zero weight, stages 1-3 have weight 4
+        Q_staged = np.stack(
+            [np.eye(nz) * (0.0 if k == 0 else 4.0) for k in range(N)]
+        )
+        R = np.eye(nu) * 0.1
+        x0 = np.zeros(nx)
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+
+        ocp_const = DiscreteLinearOCP(model, N=N, Q=Q_const, R=R, y_offset=20.0)
+        ocp_staged = DiscreteLinearOCP(model, N=N, Q=Q_staged, R=R, y_offset=20.0)
+        U_const, _ = ocp_const.solve(x0, D, x_ref)
+        U_staged, _ = ocp_staged.solve(x0, D, x_ref)
+        # Both should have correct shapes
+        assert U_const.shape == (N * nu,)
+        assert U_staged.shape == (N * nu,)
+        # Solutions should differ (different weights produce different optima)
+        assert not np.allclose(U_const, U_staged, atol=1e-6)
+
+    def test_per_stage_Q_setter(self):
+        """The Q setter should accept 3-D arrays after construction."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        Q_const = np.eye(nz)
+        R = np.eye(nu) * 0.1
+        ocp = DiscreteLinearOCP(model, N=N, Q=Q_const, R=R, y_offset=20.0)
+        Q_staged = np.stack([np.eye(nz) * k for k in range(1, N + 1)])
+        ocp.Q = Q_staged
+        assert ocp.Q.shape == (N, nz, nz)
+
+    def test_per_stage_y_offset_setter(self):
+        """The y_offset setter should accept (N,) arrays after construction."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        ocp = DiscreteLinearOCP(model, N=N, Q=np.eye(nz), R=np.eye(nu) * 0.1,
+                                y_offset=20.0)
+        ocp.y_offset = np.linspace(10.0, 30.0, N)
+        assert np.ndim(ocp.y_offset) == 1 and len(ocp.y_offset) == N
+
+    def test_per_stage_Q_sparse_formulation(self):
+        """Per-stage Q works with the sparse formulation."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        nx = model.nx
+        Q_staged = np.stack([np.eye(nz) * (k + 1) for k in range(N)])
+        R = np.eye(nu) * 0.1
+        ocp = DiscreteLinearOCP(
+            model, N=N, Q=Q_staged, R=R, y_offset=20.0, formulation="sparse"
+        )
+        x0 = np.zeros(nx)
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        U, X = ocp.solve(x0, D, x_ref)
+        assert U.shape == (N * nu,)
+        assert X.shape == (N * nx,)
+
+    def test_per_stage_Q_condensed_formulation(self):
+        """Per-stage Q works with the condensed formulation."""
+        model = self._make_model()
+        N = 4
+        nz = model.Cm.shape[0]
+        nu = model.nu
+        nx = model.nx
+        Q_staged = np.stack([np.eye(nz) * (k + 1) for k in range(N)])
+        R = np.eye(nu) * 0.1
+        ocp = DiscreteLinearOCP(
+            model, N=N, Q=Q_staged, R=R, y_offset=20.0, formulation="condensed"
+        )
+        x0 = np.zeros(nx)
+        D = np.zeros(N * model.nd)
+        x_ref = model.x_ref
+        U, X = ocp.solve(x0, D, x_ref)
+        assert U.shape == (N * nu,)
+        assert X.shape == (N * nx,)
+
+
+class TestContinuousNonlinearOCPPerStage:
+    """Smoke-tests for per-stage parameters in ContinuousNonlinearOCP."""
+
+    def _make_model(self):
+        return ScalarNonlinear()
+
+    def test_per_stage_Q_z_accepted(self):
+        """Per-stage Q_z (N,nz,nz) should be accepted and return valid shapes."""
+        model = self._make_model()
+        N = 4
+        nz = model.nz
+        nu = model.nu
+        Q_staged = np.stack([np.eye(nz) * (k + 1) for k in range(N)])
+        R = np.eye(nu) * 0.1
+        ocp = ContinuousNonlinearOCP(
+            model, N=N, Q_z=Q_staged, R_stage=R,
+            z_ref=np.array([2.0]),
+            u_min=np.array([-3.0]),
+            u_max=np.array([3.0]),
+            dt=1.0,
+        )
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+        U, cost, _ = ocp.solve(x0, d_traj)
+        assert U.shape == (N, nu)
+        assert np.isfinite(cost)
+
+    def test_per_stage_R_stage_accepted(self):
+        """Per-stage R_stage (N,nu,nu) should be accepted and return valid shapes."""
+        model = self._make_model()
+        N = 4
+        nz = model.nz
+        nu = model.nu
+        Q = np.eye(nz)
+        R_staged = np.stack([np.eye(nu) * (0.1 * (k + 1)) for k in range(N)])
+        ocp = ContinuousNonlinearOCP(
+            model, N=N, Q_z=Q, R_stage=R_staged,
+            z_ref=np.array([2.0]),
+            u_min=np.array([-3.0]),
+            u_max=np.array([3.0]),
+            dt=1.0,
+        )
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+        U, cost, _ = ocp.solve(x0, d_traj)
+        assert U.shape == (N, nu)
+        assert np.isfinite(cost)
+
+    def test_per_stage_u_min_accepted(self):
+        """Per-stage u_min (N,nu) should be accepted and return valid shapes."""
+        model = self._make_model()
+        N = 4
+        nz = model.nz
+        nu = model.nu
+        Q = np.eye(nz)
+        R = np.eye(nu) * 0.1
+        u_min_staged = np.full((N, nu), -3.0)
+        u_max_staged = np.full((N, nu), 3.0)
+        ocp = ContinuousNonlinearOCP(
+            model, N=N, Q_z=Q, R_stage=R,
+            z_ref=np.array([2.0]),
+            u_min=u_min_staged, u_max=u_max_staged,
+            dt=1.0,
+        )
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+        U, cost, _ = ocp.solve(x0, d_traj)
+        assert U.shape == (N, nu)
+        assert np.isfinite(cost)
+
+    def test_per_stage_Q_z_setter(self):
+        """Q_z setter should accept per-stage (N,nz,nz) arrays."""
+        model = self._make_model()
+        N = 4
+        nz = model.nz
+        nu = model.nu
+        Q = np.eye(nz)
+        R = np.eye(nu) * 0.1
+        ocp = ContinuousNonlinearOCP(
+            model, N=N, Q_z=Q, R_stage=R,
+            z_ref=np.array([2.0]),
+            u_min=np.array([-3.0]),
+            u_max=np.array([3.0]),
+            dt=1.0,
+        )
+        Q_staged = np.stack([np.eye(nz) * (k + 1) for k in range(N)])
+        ocp.Q_z = Q_staged
+        assert ocp.Q_z.shape == (N, nz, nz)
+
+    def test_per_stage_Q_z_differs_from_constant(self):
+        """Per-stage Q_z produces a different solution than constant Q_z."""
+        model = self._make_model()
+        N = 4
+        nz = model.nz
+        nu = model.nu
+        Q_const = np.eye(nz) * 2.0
+        # Zero weight on first stage, high weight on remaining
+        Q_staged = np.stack(
+            [np.eye(nz) * (0.0 if k == 0 else 4.0) for k in range(N)]
+        )
+        R = np.eye(nu) * 0.1
+        x0 = np.array([0.0])
+        d_traj = np.zeros((N, model.nd))
+
+        ocp_const = ContinuousNonlinearOCP(
+            model, N=N, Q_z=Q_const, R_stage=R, z_ref=np.array([2.0]),
+            u_min=np.array([-3.0]), u_max=np.array([3.0]), dt=1.0,
+        )
+        ocp_staged = ContinuousNonlinearOCP(
+            model, N=N, Q_z=Q_staged, R_stage=R, z_ref=np.array([2.0]),
+            u_min=np.array([-3.0]), u_max=np.array([3.0]), dt=1.0,
+        )
+        U_const, _, _ = ocp_const.solve(x0, d_traj)
+        U_staged, _, _ = ocp_staged.solve(x0, d_traj)
+        assert U_const.shape == (N, nu)
+        assert U_staged.shape == (N, nu)
+        # Solutions should differ due to different stage weights
+        assert not np.allclose(U_const, U_staged, atol=1e-6)

@@ -168,11 +168,13 @@ class ContinuousLinearisedOCP(ContinuousLinearisedOCPBase):
         u_ss = np.asarray(self._cd_model.u_ss, dtype=float).reshape(-1)
 
         x0_np = _any_to_np1d(x0).reshape(-1)
-        x_ref_np = _any_to_np1d(x_ref).reshape(-1)
+        x_ref_raw = np.asarray(x_ref, dtype=float)
 
         # Convert to deviation coordinates.
         x0_dev = x0_np - x_ss
-        x_ref_dev = x_ref_np - x_ss
+        # numpy broadcasting handles both (nx,) and (N, nx) correctly:
+        # (nx,) - (nx,) = (nx,)  and  (N, nx) - (nx,) = (N, nx)
+        x_ref_dev = x_ref_raw - x_ss
         u_prev_dev = (
             None if u_prev is None
             else _any_to_np1d(u_prev).reshape(-1) - u_ss
