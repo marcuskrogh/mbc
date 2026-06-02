@@ -5,10 +5,9 @@ approximation in nonlinear CD systems.
 Jacobian benchmarks
 -------------------
 These tests verify that the analytical constraint and objective Jacobians
-added to ``EconomicOptimalControlProblem`` and
-``CDTrackingOptimalControlProblem`` produce a measurable reduction in the
-number of NLP function evaluations (``nfev``) compared to the numerical
-finite-difference baseline.
+added to ``ContinuousOCP`` produce a
+measurable reduction in the number of NLP function evaluations (``nfev``)
+compared to the numerical finite-difference baseline.
 
 The key insight: scipy's SLSQP must estimate the constraint Jacobian by
 finite differences when ``jac`` is not provided.  Each FD column requires
@@ -18,12 +17,12 @@ eliminate this overhead entirely.
 
 Background
 ----------
-The analytical Jacobians were introduced in:
+The analytical Jacobians are available in:
 
-* ``EconomicOptimalControlProblem._equality_constraint_jac``   — dynamics
-* ``EconomicOptimalControlProblem._inequality_constraint_jac`` — ROM/soft constraints
-* ``EconomicOptimalControlProblem._objective_jac``             — tracking + penalties
-* ``CDTrackingOptimalControlProblem``                          — lagrange + mayer Jacs
+* ``ContinuousOCP._equality_constraint_jac``   — dynamics
+* ``ContinuousOCP._inequality_constraint_jac`` — ROM/soft constraints
+* ``ContinuousOCP._objective_jac``             — tracking + penalties
+* ``ContinuousOCP`` R_stage + P_terminal         — analytical Lagrange/Mayer Jacs
 
 All tests compare ``nfev`` between two modes:
 
@@ -60,10 +59,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mbc.control import (
-    CDTrackingOptimalControlProblem,
-    EconomicOptimalControlProblem,
-)
+from mbc.control import ContinuousOCP
 from mbc.control.nlp_solver import (
     IpoptNLPBackend,
     NLPConstraint,
@@ -193,9 +189,9 @@ class _IsomerisationReactor(ContinuousDiscreteSDAE):
 # ── Shared fixture helpers ────────────────────────────────────────────────────
 
 
-def _make_sde_eocp(N: int, n_steps: int, strip_jac: bool) -> EconomicOptimalControlProblem:
+def _make_sde_eocp(N: int, n_steps: int, strip_jac: bool) -> ContinuousOCP:
     model = _ScalarNonlinear()
-    ocp = EconomicOptimalControlProblem(
+    ocp = ContinuousOCP(
         model, N,
         Q_z=np.eye(1) * 2.0,
         z_ref=np.array([1.5]),
@@ -214,9 +210,9 @@ def _make_sde_eocp(N: int, n_steps: int, strip_jac: bool) -> EconomicOptimalCont
     return ocp
 
 
-def _make_sdae_eocp(N: int, n_steps: int, strip_jac: bool) -> EconomicOptimalControlProblem:
+def _make_sdae_eocp(N: int, n_steps: int, strip_jac: bool) -> ContinuousOCP:
     model = _IsomerisationReactor()
-    ocp = EconomicOptimalControlProblem(
+    ocp = ContinuousOCP(
         model, N,
         Q_z=np.eye(1) * 2.0,
         z_ref=np.array([1.5]),
@@ -232,13 +228,13 @@ def _make_sdae_eocp(N: int, n_steps: int, strip_jac: bool) -> EconomicOptimalCon
     return ocp
 
 
-def _make_cdtracking(N: int, n_steps: int, strip_jac: bool) -> CDTrackingOptimalControlProblem:
+def _make_cdtracking(N: int, n_steps: int, strip_jac: bool) -> ContinuousOCP:
     model = _ScalarNonlinear()
-    ocp = CDTrackingOptimalControlProblem(
+    ocp = ContinuousOCP(
         model, N,
-        Q=np.eye(1) * 2.0,
-        R=np.eye(1) * 0.1,
-        P=np.eye(1) * 5.0,
+        Q_z=np.eye(1) * 2.0,
+        R_stage=np.eye(1) * 0.1,
+        P_terminal=np.eye(1) * 5.0,
         z_ref=np.array([1.5]),
         n_steps=n_steps,
         dt=1.0,
@@ -247,7 +243,7 @@ def _make_cdtracking(N: int, n_steps: int, strip_jac: bool) -> CDTrackingOptimal
         solver_options={"maxiter": 300},
     )
     if strip_jac:
-        ocp._eocp._solver_backend = _StrippedJacBackend(ocp._eocp._solver_backend)
+        ocp._solver_backend = _StrippedJacBackend(ocp._solver_backend)
     return ocp
 
 
@@ -278,7 +274,7 @@ class TestAnalyticalJacobiansAreWired:
                 )
 
         model = _ScalarNonlinear()
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=3, Q_z=np.eye(1), z_ref=np.array([1.0]),
             n_steps=2, dt=1.0,
         )
@@ -300,7 +296,7 @@ class TestAnalyticalJacobiansAreWired:
     def test_eocp_objective_has_analytical_jac_for_pure_tracking(self):
         """EOCP with only Q_z tracking must provide an objective Jacobian."""
         model = _ScalarNonlinear()
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=3, Q_z=np.eye(1) * 2.0, z_ref=np.array([1.5]),
             n_steps=2, dt=1.0,
         )
@@ -309,21 +305,21 @@ class TestAnalyticalJacobiansAreWired:
         )
 
     def test_cdtracking_always_has_analytical_objective_jac(self):
-        """CDTrackingOptimalControlProblem always provides analytical Jacs."""
+        """ContinuousOCP with R_stage/P_terminal always provides analytical Jacs."""
         model = _ScalarNonlinear()
-        ocp = CDTrackingOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=3,
-            Q=np.eye(1) * 2.0, R=np.eye(1) * 0.1, P=np.eye(1) * 5.0,
+            Q_z=np.eye(1) * 2.0, R_stage=np.eye(1) * 0.1, P_terminal=np.eye(1) * 5.0,
             z_ref=np.array([1.5]), dt=1.0,
         )
-        assert ocp._eocp._can_use_analytical_objective_jac(), (
-            "CDTrackingOCP should always provide analytical objective Jacobian"
+        assert ocp._can_use_analytical_objective_jac(), (
+            "ContinuousOCP with R_stage/P_terminal should provide analytical objective Jacobian"
         )
 
     def test_eocp_with_user_lagrange_no_jac_disables_analytical_obj_grad(self):
         """If lagrange_jac is not provided, analytical obj grad must be disabled."""
         model = _ScalarNonlinear()
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=3,
             lagrange=lambda t, x, y, u, p: float(u @ u),
             n_steps=2, dt=1.0,
@@ -335,7 +331,7 @@ class TestAnalyticalJacobiansAreWired:
     def test_eocp_with_user_lagrange_and_jac_enables_analytical_obj_grad(self):
         """If both lagrange and lagrange_jac are provided, analytical grad is enabled."""
         model = _ScalarNonlinear()
-        ocp = EconomicOptimalControlProblem(
+        ocp = ContinuousOCP(
             model, N=3,
             lagrange=lambda t, x, y, u, p: float(u @ u),
             lagrange_jac=lambda t, x, y, u, p: (np.zeros_like(x), np.zeros_like(y), 2.0 * u),
@@ -619,7 +615,7 @@ def _make_sde_eocp_ipopt(N: int, n_steps: int, *, strip_jac: bool = False):
     IPOPT falls back to finite-difference Jacobians, establishing the baseline.
     """
     model = _ScalarNonlinear()
-    ocp = EconomicOptimalControlProblem(
+    ocp = ContinuousOCP(
         model, N,
         Q_z=np.eye(1) * 2.0,
         z_ref=np.array([1.5]),
@@ -640,13 +636,13 @@ def _make_sde_eocp_ipopt(N: int, n_steps: int, *, strip_jac: bool = False):
 
 
 def _make_cdtracking_ipopt(N: int, n_steps: int, *, strip_jac: bool = False):
-    """Build a CDTracking OCP using IPOPT with L-BFGS."""
+    """Build a ContinuousOCP (tracking) using IPOPT with L-BFGS."""
     model = _ScalarNonlinear()
-    ocp = CDTrackingOptimalControlProblem(
+    ocp = ContinuousOCP(
         model, N,
-        Q=np.eye(1) * 2.0,
-        R=np.eye(1) * 0.1,
-        P=np.eye(1) * 5.0,
+        Q_z=np.eye(1) * 2.0,
+        R_stage=np.eye(1) * 0.1,
+        P_terminal=np.eye(1) * 5.0,
         z_ref=np.array([1.5]),
         n_steps=n_steps,
         dt=1.0,
@@ -656,8 +652,7 @@ def _make_cdtracking_ipopt(N: int, n_steps: int, *, strip_jac: bool = False):
         solver_options={"max_iter": 300},
     )
     if strip_jac:
-        # CDTrackingOptimalControlProblem delegates to an internal EOCP.
-        ocp._eocp._solver_backend = _StrippedJacBackend(ocp._eocp._solver_backend)
+        ocp._solver_backend = _StrippedJacBackend(ocp._solver_backend)
     return ocp
 
 

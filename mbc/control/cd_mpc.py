@@ -2,7 +2,7 @@
 Model Predictive Controller for linear continuous-discrete systems.
 
 :class:`CDMPCController` composes a :class:`~mbc.estimation.ContinuousDiscreteLinearKF`
-and a :class:`~mbc.control.CDOptimalControlProblem` and implements the
+and a :class:`~mbc.control.ContinuousLinearOCP` and implements the
 receding-horizon policy described in ControlToolbox §EMPC —
 *ENMPC Algorithm*, specialised to the linear continuous-discrete case.
 
@@ -30,8 +30,8 @@ import numpy as np
 
 from .._utils import _any_to_np1d
 from ..estimation.continuous_discrete_linear_kf import ContinuousDiscreteLinearKF
-from .cd_ocp import CDOptimalControlProblem
-from .ocp import _shift_warm_start
+from .continuous_linear_ocp import ContinuousLinearOCP
+from .discrete_linear_ocp import _shift_warm_start
 
 if TYPE_CHECKING:
     from ..models import ContinuousDiscreteLinearSDE
@@ -42,7 +42,7 @@ class CDMPCController:
     MPC controller for a linear continuous-discrete plant.
 
     Composes a :class:`~mbc.estimation.ContinuousDiscreteLinearKF` and a
-    :class:`~mbc.control.CDOptimalControlProblem` into a single
+    :class:`~mbc.control.ContinuousLinearOCP` into a single
     receding-horizon controller.  The previously-applied ``(u, d)`` are
     tracked internally so that the estimator's predict step has the
     correct ZOH inputs over the just-completed interval.
@@ -54,7 +54,7 @@ class CDMPCController:
         and ``discretize_noise``.
     estimator : ContinuousDiscreteLinearKF
         State estimator (continuous ODE integration internally).
-    ocp       : CDOptimalControlProblem
+    ocp       : ContinuousLinearOCP
         Optimal control problem (lifted-batch QP on ZOH-discretised matrices).
     """
 
@@ -62,7 +62,7 @@ class CDMPCController:
         self,
         model: "ContinuousDiscreteLinearSDE",
         estimator: ContinuousDiscreteLinearKF,
-        ocp: CDOptimalControlProblem,
+        ocp: ContinuousLinearOCP,
         warm_start: bool = False,
     ) -> None:
         self._model = model

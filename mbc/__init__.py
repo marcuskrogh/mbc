@@ -34,19 +34,14 @@ model-based control, estimation, identification, and simulation.
   mbc.control
       Optimal control algorithms:
 
-      * ``OptimalControlProblem``         – receding-horizon QP (tracking MPC, discrete).
-      * ``MPCController``                 – KalmanFilter + OptimalControlProblem.
-      * ``CDOptimalControlProblem``       – receding-horizon QP for linear CD systems.
-      * ``CDMPCController``               – ContinuousDiscreteKalmanFilter + CDOptimalControlProblem.
-      * ``CDTrackingOptimalControlProblem`` – nonlinear tracking OCP for CD systems
-                                             (NLP; input/state/output constraints,
-                                             ROM penalty + constraints, linear input
-                                             penalty).
-      * ``EconomicOptimalControlProblem`` – economic nonlinear OCP (Ph.D. Ch. 9).
-                                           Accepts Mayer + Lagrange functions and
-                                           the same constraint set as the tracking OCP.
-      * ``CDNMPCController``              – generic estimator + OCP controller
-                                           (works with any CD estimator and any OCP).
+      * ``DiscreteLinearOCP``             – receding-horizon QP for discrete-time linear systems.
+      * ``DiscreteLinearisedOCP``         – QP for linearised discrete-time systems with SS coordinate shifting.
+      * ``ContinuousLinearOCP``           – receding-horizon QP for linear continuous-discrete systems.
+      * ``ContinuousOCP``                 – economic/tracking NLP for nonlinear CD systems.
+      * ``ContinuousLinearisedOCP``       – QP for linearised CD systems with SS coordinate shifting.
+      * ``MPCController``    – DiscreteLinearKF + DiscreteLinearOCP.
+      * ``CDMPCController``  – ContinuousDiscreteLinearKF + ContinuousLinearOCP.
+      * ``CDNMPCController`` – generic estimator + OCP controller.
 
   mbc.identification
       System-identification / parameter-estimation utilities:
@@ -109,12 +104,14 @@ from .estimation import (
     DelayedObservationFilter,
 )
 from .control import (
-    OptimalControlProblem,
+    OCP,
+    DiscreteLinearOCP,
+    DiscreteLinearisedOCP,
+    ContinuousLinearOCP,
+    ContinuousOCP,
+    ContinuousLinearisedOCP,
     MPCController,
-    CDOptimalControlProblem,
-    CDTrackingOptimalControlProblem,
     CDMPCController,
-    EconomicOptimalControlProblem,
     CDNMPCController,
 )
 from .identification.estimator import ParameterEstimator, CDParameterEstimator, EstimationResult
@@ -160,13 +157,17 @@ __all__ = [
     "ContinuousDiscretePF",
     "ContinuousDiscreteDAEEKF",
     "DelayedObservationFilter",
-    # Control
-    "OptimalControlProblem",
+    # Control — abstract base
+    "OCP",
+    # Control — OCP canonical names
+    "DiscreteLinearOCP",
+    "DiscreteLinearisedOCP",
+    "ContinuousLinearOCP",
+    "ContinuousOCP",
+    "ContinuousLinearisedOCP",
+    # Control — MPC controllers
     "MPCController",
-    "CDOptimalControlProblem",
-    "CDTrackingOptimalControlProblem",
     "CDMPCController",
-    "EconomicOptimalControlProblem",
     "CDNMPCController",
     # Identification
     "ParameterEstimator",

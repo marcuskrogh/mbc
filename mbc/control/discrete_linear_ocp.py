@@ -1,13 +1,13 @@
 """
-Optimal Control Problem (OCP) for linear discrete-time MPC.
+Discrete-time linear receding-horizon QP (``DiscreteLinearOCP``).
 
 Linear specialisation of the ControlToolbox §EMPC formulation: when the
 plant dynamics are linear and the OCP is restricted to quadratic stage
 costs and box / soft-box constraints, the entire NLP reduces to a single
 finite-horizon **quadratic program** that is solved directly with a convex-QP
 backend (OSQP by default; HiGHS also available) — strictly more efficient than
-the implicit-Euler direct-simultaneous formulation used by
-:class:`~mbc.control.EconomicOptimalControlProblem` for nonlinear plants.
+the direct-simultaneous formulation used by
+:class:`~mbc.control.ContinuousOCP` for nonlinear plants.
 
 Plant model (ControlToolbox notation, discrete-time specialisation)
 -------------------------------------------------------------------
@@ -15,10 +15,7 @@ Plant model (ControlToolbox notation, discrete-time specialisation)
     z[k]   = Cz x[k] + Dz u[k] + Fz d[k]
     ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
 
-The OCP optimises the *output* ``z[k] = Cz x[k] + …``.  When the plant has
-``Cz = Cm`` (the default of :class:`~mbc.models.DiscreteLinearSDE`) the
-output and measurement coincide and the OCP tracks the measured channel
-directly.
+The OCP optimises the *output* ``z[k] = Cz x[k] + …``.
 
 Cost function over horizon N
 ----------------------------
@@ -27,43 +24,21 @@ Cost function over horizon N
          + ρ Σ_{k=0}^{N-1} ‖ε[k+1]‖²
 
 with Δu[k] = u[k] − u[k−1] (rate of movement) and ε[k] the soft-output
-slack variable.  (The QP objective is scaled by ½ relative to Φ, which does
-not change the optimiser.)
-
-Constraints
------------
-    x[k+1] = Ad x[k] + Bd u[k] + Ed d[k]                (deterministic dynamics)
-    u_min ≤ u[k] ≤ u_max                                  (hard input box)
-    z_ref − δ − ε[k+1] ≤ Cz x[k+1] ≤ z_ref + δ + ε[k+1]  (soft output box)
-    ε[k+1] ≥ 0                                            (slack non-negativity)
+slack variable.
 
 Two equivalent formulations
 ---------------------------
 The same QP is built in one of two ways, selected by ``formulation``:
 
 * **condensed** — eliminate the states via the lifted prediction
-  ``X = Ψ x₀ + Γ U + Λ D`` and optimise over ``Z = [U; ε]`` only.  The
-  Hessian is dense and the prediction matrices cost O(N²) to build, but the
-  problem is small (``N·nu + N·nz`` variables).  Best for short horizons.
+  ``X = Ψ x₀ + Γ U + Λ D`` and optimise over ``Z = [U; ε]`` only.
 
 * **sparse** (a.k.a. simultaneous / non-condensed) — keep the states as
   decision variables ``Z = [X; U; ε]`` and impose the dynamics as
-  block-banded linear *equality* constraints.  The Hessian and constraint
-  matrices are sparse with O(N) nonzeros, so this scales far better for long
-  horizons; HiGHS exploits the sparsity directly.
+  block-banded linear *equality* constraints.
 
-``formulation="auto"`` (default) is **backend-aware**: with OSQP (the default
-backend) it resolves to ``sparse``, and with HiGHS it resolves to
-``condensed``.  This pairs each solver with the formulation it handles best —
-OSQP's sparse first-order solver exploits the banded KKT structure and warm
-starts, scaling ~linearly in the horizon, whereas HiGHS's active-set QP is
-fastest on the small dense condensed problem (and the dense condensed Hessian
-is ill-conditioned for first-order methods at long horizons).  Both
-formulations yield the same optimiser to solver tolerance.
-
-Empirically (see ``scripts/qp_formulation_benchmark.py``) OSQP+sparse is the
-fastest combination and scales best with the horizon, which is why it is the
-default; hence ``solver="osqp"`` with ``formulation="auto"``.
+``formulation="auto"`` (default) is **backend-aware**: OSQP → ``sparse``,
+HiGHS → ``condensed``.
 
 Notation
 --------
@@ -86,6 +61,7 @@ import numpy as np
 from scipy.linalg import block_diag
 
 from .._utils import _any_to_np1d, _any_to_np2d
+from ._base import OCP
 from .qp_solver import QPProblem, QPSolverBackend, make_qp_backend
 
 if TYPE_CHECKING:
@@ -141,18 +117,18 @@ def _shift_warm_start(
     return {"U": U_warm.reshape(-1), "X": X_warm.reshape(-1)}
 
 
-# ── Optimal Control Problem ─────────────────────────────────────────────
+# ── Discrete-time linear OCP ─────────────────────────────────────────────────
 
 
-class OptimalControlProblem:
+class DiscreteLinearOCP(OCP):
     """
-    Receding-horizon QP with hard input and soft output box constraints.
+    Receding-horizon QP with hard input and soft output box constraints for
+    discrete-time linear systems.
 
     The OCP tracks the **output** ``z[k] = Cz x[k]`` against a constant
     reference ``z_ref``.  When ``Cz = Cm`` (the default of
     :class:`~mbc.models.DiscreteLinearSDE`) the output and the
-    measurement coincide and the OCP tracks the measured channel
-    directly.
+    measurement coincide and the OCP tracks the measured channel directly.
 
     Parameters
     ----------
@@ -175,19 +151,11 @@ class OptimalControlProblem:
         Symmetric half-width δ of the soft-output band ``[z_ref − δ,
         z_ref + δ]``.  Default: 2.0.
     solver : str or QPSolverBackend, optional
-        Convex-QP backend selector.  ``"osqp"`` (default) uses the Apache-2.0
-        OSQP solver (sparse, warm-startable, fastest here); ``"highs"`` uses
-        the MIT-licensed HiGHS solver via ``highspy``.  A
-        :class:`~mbc.control.qp_solver.QPSolverBackend` instance may also be
-        supplied directly.
+        Convex-QP backend selector.  ``"osqp"`` (default) or ``"highs"``.
     solver_options : dict, optional
         Backend-specific options forwarded to the QP solver.
     formulation : {"auto", "condensed", "sparse"}, optional
-        QP construction strategy (see the module docstring).  Default
-        ``"auto"`` is backend-aware: ``"sparse"`` for OSQP and ``"condensed"``
-        for HiGHS.  Note that OSQP with ``"condensed"`` is *not* recommended
-        for long horizons — the dense condensed Hessian is ill-conditioned for
-        OSQP's first-order method; use the (default) sparse form with OSQP.
+        QP construction strategy.  Default ``"auto"`` is backend-aware.
     """
 
     def __init__(
@@ -221,31 +189,37 @@ class OptimalControlProblem:
         self._formulation = formulation
 
         nu = model.nu
-        # Pre-compute constant structures
         self._D_diff: np.ndarray | None = None
         self._S_bar: np.ndarray | None = None
         if self._S is not None:
             self._D_diff = _build_D_diff(nu, N)
             self._S_bar = block_diag(*([self._S] * N))
 
+    # ── OCP abstract properties ────────────────────────────────────────────
+
+    @property
+    def N(self) -> int:
+        """Prediction horizon (number of control intervals)."""
+        return self._N
+
+    @property
+    def nu(self) -> int:
+        """Input dimension nᵘ."""
+        return self._model.nu
+
+    # ── Internal helpers ───────────────────────────────────────────────────
+
     def _resolve_formulation(self) -> str:
         """Return the concrete formulation ('condensed' or 'sparse').
 
-        ``"auto"`` is backend-aware:
-
-        * OSQP (sparse first-order, exploits the banded KKT structure and
-          warm starts) → ``"sparse"`` — scales ~linearly in the horizon and
-          is the faster, well-conditioned choice.
-        * HiGHS (active-set QP, does not exploit banded structure; the dense
-          condensed Hessian is ill-conditioned for first-order methods but
-          fine for active-set) → ``"condensed"``.
+        ``"auto"`` is backend-aware: OSQP → ``"sparse"``, HiGHS → ``"condensed"``.
         """
         if self._formulation != "auto":
             return self._formulation
         from .qp_solver import OSQPBackend
         return "sparse" if isinstance(self._backend, OSQPBackend) else "condensed"
 
-    # ── Public solve ─────────────────────────────────────────────────────
+    # ── Public solve ────────────────────────────────────────────────────────
 
     def solve(
         self,
@@ -266,12 +240,9 @@ class OptimalControlProblem:
         x_ref : (nx,) array-like — state reference; the output reference is
                 ``z_ref = Cz x_ref``.
         u_prev : (nu,) array-like, optional
-            Previously-applied input — used only when an input rate-of-
-            movement penalty ``S`` is active.
+            Previously-applied input (used only when ``S`` is active).
         warm_start : dict, optional
-            ``{"U": (N·nu,), "X": (N·nx,)}`` primal warm-start trajectory
-            (typically the previous solution shifted one step by
-            :func:`_shift_warm_start`).  Ignored if the shapes do not match.
+            ``{"U": (N·nu,), "X": (N·nx,)}`` primal warm-start trajectory.
 
         Returns
         -------
@@ -285,7 +256,6 @@ class OptimalControlProblem:
         Cz = _any_to_np2d(self._model.Cz)
         nz = Cz.shape[0]
 
-        # ── Coerce inputs to numpy 1-D ──────────────────────────────────
         x0 = _any_to_np1d(x0).reshape(-1)
         x_ref = _any_to_np1d(x_ref).reshape(-1)
         D = _any_to_np1d(D).reshape(-1) if D is not None else np.zeros(N * nd)
@@ -294,7 +264,6 @@ class OptimalControlProblem:
         Bd = _any_to_np2d(self._model.Bd)
         Ed = _any_to_np2d(self._model.Ed)
 
-        # Rate-of-movement reference input
         if self._S is not None:
             u_prev_np = (
                 np.zeros(nu) if u_prev is None
@@ -319,7 +288,7 @@ class OptimalControlProblem:
 
         if not result.success:
             warnings.warn(
-                f"OptimalControlProblem.solve: QP solver returned status "
+                f"DiscreteLinearOCP.solve: QP solver returned status "
                 f"'{result.status}'; returning zero inputs as fallback.",
                 RuntimeWarning,
                 stacklevel=2,
@@ -330,7 +299,7 @@ class OptimalControlProblem:
 
         return extract(np.asarray(result.x, dtype=float))
 
-    # ── Warm-start assembly ────────────────────────────────────────────
+    # ── Warm-start assembly ────────────────────────────────────────────────
 
     @staticmethod
     def _assemble_warm(
@@ -363,7 +332,7 @@ class OptimalControlProblem:
             return None
         return np.concatenate([X_w, U_w, np.zeros(n_eps)])
 
-    # ── Forward simulation (fallback X reconstruction) ──────────────────
+    # ── Forward simulation (fallback X reconstruction) ─────────────────────
 
     @staticmethod
     def _simulate(
@@ -388,19 +357,17 @@ class OptimalControlProblem:
             X[k * nx:(k + 1) * nx] = xk
         return X
 
-    # ── Condensed (dense, state-eliminated) builder ─────────────────────
+    # ── Condensed (dense, state-eliminated) builder ────────────────────────
 
     def _build_condensed(
         self, x0, D, x_ref, Ad, Bd, Ed, Cz, nx, nu, nd, nz, u_prev_np,
     ) -> tuple[dict[str, Any], Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]]:
         N = self._N
 
-        # Powers of Ad
         Ad_pow = [np.eye(nx)]
         for _ in range(N):
             Ad_pow.append(Ad @ Ad_pow[-1])
 
-        # State prediction matrices  X = Ψ x₀ + Γ U + Λ D
         Psi = np.zeros((N * nx, nx))
         Gamma = np.zeros((N * nx, N * nu))
         Lambda = np.zeros((N * nx, N * nd))
@@ -464,7 +431,7 @@ class OptimalControlProblem:
 
         return {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h}, extract
 
-    # ── Sparse (simultaneous, banded) builder ───────────────────────────
+    # ── Sparse (simultaneous, banded) builder ──────────────────────────────
 
     def _build_sparse(
         self, x0, D, x_ref, Ad, Bd, Ed, Cz, nx, nu, nd, nz, u_prev_np,
@@ -476,16 +443,15 @@ class OptimalControlProblem:
         n_U = N * nu
         n_eps = N * nz
         n_Z = n_X + n_U + n_eps
-        oU = n_X            # offset of U block
-        oE = n_X + n_U      # offset of ε block
+        oU = n_X
+        oE = n_X + n_U
 
         z_ref = Cz @ x_ref
         f = np.zeros(n_Z)
 
-        # ── Objective Hessian ½ ZᵀHZ (block diagonal, assembled sparse) ──
         Czt = Cz.T
-        H_state = Czt @ self._Q @ Cz          # repeated stage state-cost block
-        H_state_term = Czt @ self._P @ Cz     # terminal state-cost block
+        H_state = Czt @ self._Q @ Cz
+        H_state_term = Czt @ self._P @ Cz
         x_blocks = [H_state] * (N - 1) + [H_state_term] if N > 1 else [H_state_term]
         for k in range(N):
             Qk = self._P if k == N - 1 else self._Q
@@ -505,7 +471,6 @@ class OptimalControlProblem:
             format="csc",
         )
 
-        # ── Dynamics equality constraints  A_eq Z = b_eq (banded) ───────
         rows: list[int] = []
         cols: list[int] = []
         vals: list[float] = []
@@ -522,27 +487,24 @@ class OptimalControlProblem:
 
         b_eq = np.zeros(n_X)
         eye_nx = np.eye(nx)
-        for k in range(N):                     # equation for x[k+1]
+        for k in range(N):
             rs = k * nx
-            _add_block(rs, k * nx, eye_nx)             # +x[k+1]
-            _add_block(rs, oU + k * nu, -Bd)           # −Bd u[k]
+            _add_block(rs, k * nx, eye_nx)
+            _add_block(rs, oU + k * nu, -Bd)
             dk = D[k * nd:(k + 1) * nd]
             if k == 0:
                 b_eq[rs:rs + nx] = Ad @ x0 + Ed @ dk
             else:
-                _add_block(rs, (k - 1) * nx, -Ad)      # −Ad x[k]
+                _add_block(rs, (k - 1) * nx, -Ad)
                 b_eq[rs:rs + nx] = Ed @ dk
         A_eq = sp.csc_matrix((vals, (rows, cols)), shape=(n_X, n_Z))
 
-        # ── Bounds ──────────────────────────────────────────────────────
         u_min, u_max = self._model.u_bounds
         u_min_t = np.tile(_any_to_np1d(u_min).reshape(-1), N)
         u_max_t = np.tile(_any_to_np1d(u_max).reshape(-1), N)
         lb = np.concatenate([np.full(n_X, -np.inf), u_min_t, np.zeros(n_eps)])
         ub = np.concatenate([np.full(n_X, np.inf), u_max_t, np.full(n_eps, np.inf)])
 
-        # ── Soft output box (inequalities on the states), assembled sparse
-        #   Cz x[k+1] − ε[k] ≤ z_max     and    −Cz x[k+1] − ε[k] ≤ −z_min
         g_rows: list[int] = []
         g_cols: list[int] = []
         g_vals: list[float] = []

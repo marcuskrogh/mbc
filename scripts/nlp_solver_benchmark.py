@@ -17,7 +17,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mbc.control import EconomicOptimalControlProblem
+from mbc.control import ContinuousOCP
 from mbc.control import NLPProblem, ScipyNLPBackend
 from mbc.models import ContinuousDiscreteSDAE, ContinuousDiscreteSDE
 
@@ -123,7 +123,7 @@ def _solve_once(solver: str, model, N: int, n_steps: int, dt: float) -> RunStats
     d_traj = np.zeros((N, model.nd))
     x0 = np.array([0.0]) if not isinstance(model, IsomerisationReactor) else np.array([4.0])
     options = {"maxiter": 150} if _normalize_solver_name(solver) != "ipopt" else {"max_iter": 150}
-    ocp = EconomicOptimalControlProblem(
+    ocp = ContinuousOCP(
         model,
         N=N,
         Q_z=np.array([[1.0]]),

@@ -1,18 +1,19 @@
 """Optimal control sub-package for mbc."""
 
-from .ocp import OptimalControlProblem
+from ._base import OCP
+from .discrete_linear_ocp import DiscreteLinearOCP, _shift_warm_start
+from .discrete_linearised_ocp import DiscreteLinearisedOCP
+from .continuous_linear_ocp import ContinuousLinearOCP
+from .continuous_ocp import ContinuousOCP
+from .continuous_linearised_ocp import ContinuousLinearisedOCP
 from .mpc import MPCController
-from .cd_ocp import CDOptimalControlProblem, CDTrackingOptimalControlProblem
 from .cd_mpc import CDMPCController
 from .cd_linearized_mpc import (
     CDLinearizedMPCController,
     linearize_cd_model,
     discretize_cd_linearization,
 )
-from .enmpc import (
-    EconomicOptimalControlProblem,
-    CDNMPCController,
-)
+from .enmpc import CDNMPCController
 from .nlp_solver import (
     NLPConstraint,
     NLPProblem,
@@ -31,26 +32,35 @@ from .qp_solver import (
 )
 
 __all__ = [
-    "OptimalControlProblem",
+    # Abstract base
+    "OCP",
+    # OCP canonical names
+    "DiscreteLinearOCP",
+    "DiscreteLinearisedOCP",
+    "ContinuousLinearOCP",
+    "ContinuousOCP",
+    "ContinuousLinearisedOCP",
+    # MPC controllers
     "MPCController",
-    "CDOptimalControlProblem",
-    "CDTrackingOptimalControlProblem",
     "CDMPCController",
     "CDLinearizedMPCController",
     "linearize_cd_model",
     "discretize_cd_linearization",
-    "EconomicOptimalControlProblem",
     "CDNMPCController",
+    # NLP solver
     "NLPConstraint",
     "NLPProblem",
     "NLPScalingPolicy",
     "NLPSolverBackend",
     "ScipyNLPBackend",
     "IpoptNLPBackend",
+    # QP solver
     "QPProblem",
     "QPResult",
     "QPSolverBackend",
     "HighsQPBackend",
     "OSQPBackend",
     "make_qp_backend",
+    # Helpers
+    "_shift_warm_start",
 ]

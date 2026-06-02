@@ -3,8 +3,8 @@ Successive-linearisation MPC for nonlinear continuous-discrete models.
 
 This module provides a linear-QP MPC controller that, at each control interval,
 linearises a nonlinear continuous-discrete model around an operating point,
-ZOH-discretises the local model, and solves the existing linear
-:class:`~mbc.control.OptimalControlProblem` in deviation coordinates.
+ZOH-discretises the local model, and solves a
+:class:`~mbc.control.DiscreteLinearOCP` in deviation coordinates.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ import numpy as np
 
 from .._utils import _fd_jacobian, _zoh_full, _van_loan
 from ..models import DiscreteLinearSDE, ContinuousDiscreteSDE
-from .ocp import OptimalControlProblem
+from .discrete_linear_ocp import DiscreteLinearOCP
 
 
 class _DeviationDiscreteLinearSDE(DiscreteLinearSDE):
@@ -230,7 +230,7 @@ class CDLinearizedMPCController:
     Successive-linearisation MPC for nonlinear continuous-discrete models.
 
     The controller keeps existing nonlinear estimators unchanged and reuses
-    :class:`OptimalControlProblem` by updating a mutable deviation linear model
+    :class:`DiscreteLinearOCP` by updating a mutable deviation linear model
     at each sampling instant.
     """
 
@@ -271,7 +271,7 @@ class CDLinearizedMPCController:
             u_max_abs=np.asarray(u_max, dtype=float),
         )
 
-        self._ocp = OptimalControlProblem(
+        self._ocp = DiscreteLinearOCP(
             model=self._lin_model,
             N=self._N,
             Q=Q,
