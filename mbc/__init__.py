@@ -133,8 +133,6 @@ from .simulation import (
     ContinuousDiscreteSDAESimulatorParams,
     ContinuousDiscreteSDESimulator,
     ContinuousDiscreteSDAESimulator,
-    SDESimulator,
-    SDAESimulator,
 )
 from .monte_carlo import MonteCarloSimulation, MonteCarloResult
 
@@ -199,9 +197,6 @@ __all__ = [
     # Simulation — simulators
     "ContinuousDiscreteSDESimulator",
     "ContinuousDiscreteSDAESimulator",
-    # Simulation — backward-compatible aliases
-    "SDESimulator",
-    "SDAESimulator",
     # Monte Carlo
     "MonteCarloSimulation",
     "MonteCarloResult",

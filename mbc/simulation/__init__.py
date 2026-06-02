@@ -14,10 +14,6 @@ from .continuous_discrete_sdae_simulator import (
     ContinuousDiscreteSDAESimulator,
 )
 
-# Backward-compatible aliases
-SDESimulator = ContinuousDiscreteSDESimulator
-SDAESimulator = ContinuousDiscreteSDAESimulator
-
 __all__ = [
     # Abstract bases
     "SimulatorParams",
@@ -29,7 +25,4 @@ __all__ = [
     # Simulators
     "ContinuousDiscreteSDESimulator",
     "ContinuousDiscreteSDAESimulator",
-    # Backward-compatible aliases
-    "SDESimulator",
-    "SDAESimulator",
 ]
