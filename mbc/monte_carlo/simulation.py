@@ -26,8 +26,8 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..models import ContinuousDiscreteSDE
-from ..simulation.sde import SDESimulator
-from ..simulation.sdae import SDAESimulator
+from ..simulation.continuous_discrete_sde_simulator import ContinuousDiscreteSDESimulator
+from ..simulation.continuous_discrete_sdae_simulator import ContinuousDiscreteSDAESimulator
 
 
 @dataclass
@@ -61,7 +61,7 @@ class MonteCarloSimulation:
     ----------
     model : ContinuousDiscreteSDE
         Plant model (used for generating noisy observations).
-    simulator : SDESimulator or SDAESimulator
+    simulator : ContinuousDiscreteSDESimulator or ContinuousDiscreteSDAESimulator
         Numerical integrator for the plant dynamics.
     controller : object with ``.step(x_hat, d, ...)`` method
         Feedback controller.  Must return a (nu,) input array.
@@ -81,7 +81,7 @@ class MonteCarloSimulation:
     def __init__(
         self,
         model: ContinuousDiscreteSDE,
-        simulator: SDESimulator | SDAESimulator,
+        simulator: ContinuousDiscreteSDESimulator | ContinuousDiscreteSDAESimulator,
         controller,
         estimator=None,
         stage_cost=None,
@@ -130,7 +130,7 @@ class MonteCarloSimulation:
         p = self._model.params
 
         # Check if simulator is SDAE (needs algebraic state y) or SDE
-        is_sdae = isinstance(self._simulator, SDAESimulator)
+        is_sdae = isinstance(self._simulator, ContinuousDiscreteSDAESimulator)
 
         # Allocate result arrays
         X = np.zeros((N_mc, T + 1, nx))

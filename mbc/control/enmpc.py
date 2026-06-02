@@ -53,7 +53,7 @@ The sub-step dynamics residual is
         g(x_{n+1}, y_{n+1}, θ)
     ] = 0
 
-— the same form used by :class:`mbc.simulation.SDAESimulator`, allowing
+— the same form used by :class:`mbc.simulation.ContinuousDiscreteSDAESimulator`, allowing
 Jacobian reuse between simulation and optimisation.  For SDE plant models
 (``ContinuousDiscreteSDE``) the algebraic block ``g`` is absent.
 

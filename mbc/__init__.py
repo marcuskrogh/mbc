@@ -68,8 +68,8 @@ model-based control, estimation, identification, and simulation.
   mbc.simulation
       Numerical integration of SDE/SDAE models (Ph.D. Ch. 5–6):
 
-      * ``SDESimulator``  – Euler-Maruyama for SDE systems.
-      * ``SDAESimulator`` – Euler-Maruyama for SDAE systems.
+      * ``ContinuousDiscreteSDESimulator``  – Euler-Maruyama for SDE systems.
+      * ``ContinuousDiscreteSDAESimulator`` – Euler-Maruyama for SDAE systems.
 
   mbc.monte_carlo
       Closed-loop Monte Carlo simulation framework (Ph.D. Ch. 12):
@@ -125,7 +125,17 @@ from .identification.likelihood import (
     cd_ped_neg_log_likelihood_gradient,
 )
 from .realization import SISORealization, MIMORealization
-from .simulation import SDESimulator, SDAESimulator
+from .simulation import (
+    SimulatorParams,
+    ContinuousDiscreteSimulator,
+    ContinuousDiscreteDAESimulator,
+    ContinuousDiscreteSDESimulatorParams,
+    ContinuousDiscreteSDAESimulatorParams,
+    ContinuousDiscreteSDESimulator,
+    ContinuousDiscreteSDAESimulator,
+    SDESimulator,
+    SDAESimulator,
+)
 from .monte_carlo import MonteCarloSimulation, MonteCarloResult
 
 __all__ = [
@@ -179,7 +189,17 @@ __all__ = [
     # Realization
     "SISORealization",
     "MIMORealization",
-    # Simulation
+    # Simulation — abstract bases
+    "SimulatorParams",
+    "ContinuousDiscreteSimulator",
+    "ContinuousDiscreteDAESimulator",
+    # Simulation — parameter structures
+    "ContinuousDiscreteSDESimulatorParams",
+    "ContinuousDiscreteSDAESimulatorParams",
+    # Simulation — simulators
+    "ContinuousDiscreteSDESimulator",
+    "ContinuousDiscreteSDAESimulator",
+    # Simulation — backward-compatible aliases
     "SDESimulator",
     "SDAESimulator",
     # Monte Carlo
