@@ -20,15 +20,15 @@ model-based control, estimation, identification, and simulation.
   mbc.estimation
       State-estimation algorithms:
 
-      * ``KalmanFilter``                    – discrete-time KF (Joseph form).
+      * ``DiscreteLinearKF``                – discrete-time KF (Joseph form).
         Supports noise-separated covariance (M.Sc. Ch. 5.4) and missing
         observations (M.Sc. Ch. 5.5).
-      * ``ContinuousDiscreteKalmanFilter``                  – KF for linear continuous-discrete
+      * ``ContinuousDiscreteLinearKF``      – KF for linear continuous-discrete
                                               systems; ZOH + Van Loan Q_d (M.Sc. Ch. 5).
       * ``ContinuousDiscreteEKF``           – CD-EKF (Ph.D. Ch. 7.1).
       * ``ContinuousDiscreteUKF``           – CD-UKF (Ph.D. Ch. 7.2).
       * ``ContinuousDiscreteEnKF``          – CD-EnKF (Ph.D. Ch. 7.3).
-      * ``ContinuousDiscreteParticleFilter``– CD-PF  (Ph.D. Ch. 7.4).
+      * ``ContinuousDiscretePF``            – CD-PF  (Ph.D. Ch. 7.4).
       * ``ContinuousDiscreteDAEEKF``        – CD-EKF for SDAE (Ph.D. Ch. 8).
 
   mbc.control

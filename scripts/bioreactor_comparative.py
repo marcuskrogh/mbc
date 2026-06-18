@@ -47,7 +47,16 @@ import matplotlib.gridspec as gridspec
 import matplotlib.pyplot as plt
 import numpy as np
 
-from mbc.estimation import ContinuousDiscreteEKF, ContinuousDiscreteEnKF, ContinuousDiscretePF, ContinuousDiscreteUKF
+from mbc.estimation import (
+    ContinuousDiscreteEKF,
+    ContinuousDiscreteEKFParams,
+    ContinuousDiscreteEnKF,
+    ContinuousDiscreteEnKFParams,
+    ContinuousDiscretePF,
+    ContinuousDiscretePFParams,
+    ContinuousDiscreteUKF,
+    ContinuousDiscreteUKFParams,
+)
 from mbc.models import ContinuousDiscreteSDE
 
 # ── Reproducibility ───────────────────────────────────────────────────────────
@@ -138,11 +147,17 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
     Output  y = [X]           (g/L)  — biomass only
     """
 
-    def __init__(self, Q_c: np.ndarray, R: np.ndarray) -> None:
+    def __init__(self, Q_c: np.ndarray, Rm: np.ndarray, Ts: float = DT) -> None:
         self._Q_c = Q_c
-        self._R = R
+        self._Rm = Rm
+        self._Ts = Ts
+        self._sigma = np.diag(np.sqrt(np.diag(Q_c)))
 
     # ── Dimensions ──────────────────────────────────────────────────────────
+
+    @property
+    def Ts(self) -> float:
+        return self._Ts
 
     @property
     def nx(self) -> int:
@@ -157,7 +172,11 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
         return 1
 
     @property
-    def ny(self) -> int:
+    def nym(self) -> int:
+        return 1
+
+    @property
+    def nz(self) -> int:
         return 1
 
     @property
@@ -167,12 +186,8 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
     # ── Noise covariances ────────────────────────────────────────────────────
 
     @property
-    def Q_c(self) -> np.ndarray:
-        return self._Q_c.copy()
-
-    @property
-    def R(self) -> np.ndarray:
-        return self._R.copy()
+    def Rm(self) -> np.ndarray:
+        return self._Rm.copy()
 
     # ── Kinetics helper ──────────────────────────────────────────────────────
 
@@ -211,7 +226,7 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
         dP = alpha * mu * X_c - D * P
         return np.array([dS, dX, dP])
 
-    def g(
+    def sigma(
         self,
         x: np.ndarray,
         u: np.ndarray,
@@ -219,17 +234,28 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
         p: np.ndarray,
         t: float,
     ) -> np.ndarray:
-        """Identity diffusion: dx = f dt + I dw, w ~ N(0, Q_c dt)."""
-        return np.eye(3)
+        """Diagonal diffusion: dx = f dt + sigma dw, sigma sigmaᵀ = Q_c."""
+        return self._sigma.copy()
 
-    def h(
+    def hm(
         self,
         x: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
+        t: float = 0.0,
     ) -> np.ndarray:
-        return np.array([x[1]])   # y = X
+        return np.array([x[1]])   # ym = X
+
+    def gm(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray,
+        t: float,
+    ) -> np.ndarray:
+        return np.array([x[1]])   # z = X
 
     # ── Analytic Jacobians ───────────────────────────────────────────────────
 
@@ -301,30 +327,33 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
         # d = [S_in], ∂f/∂S_in
         return np.array([[D], [0.0], [0.0]])
 
-    def dhdx(
+    def dhmdx(
         self,
         x: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
+        t: float = 0.0,
     ) -> np.ndarray:
         return np.array([[0.0, 1.0, 0.0]])   # ∂(X)/∂[S,X,P]
 
-    def dhdu(
+    def dhmdu(
         self,
         x: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
+        t: float = 0.0,
     ) -> np.ndarray:
         return np.zeros((1, 1))
 
-    def dhdd(
+    def dhmdd(
         self,
         x: np.ndarray,
         u: np.ndarray,
         d: np.ndarray,
         p: np.ndarray,
+        t: float = 0.0,
     ) -> np.ndarray:
         return np.zeros((1, 1))
 
@@ -348,27 +377,26 @@ def simulate(
     Returns
     -------
     X_true  : (N+1, nx) true state trajectory (includes x0)
-    Y_meas  : (N, ny)   noisy measurements at each sample time
+    Y_meas  : (N, nym)  noisy measurements at each sample time
     U_arr   : (N, nu)   applied inputs
     D_arr   : (N, nd)   disturbances
     """
     N = len(times)
     nx = model.nx
-    ny = model.ny
+    nym = model.nym
     dt = float(times[1] - times[0])
     h_sub = dt / N_SUB
     sqrt_h = np.sqrt(h_sub)
-    G_diag = np.sqrt(np.diag(model.Q_c))   # diffusion std per state
 
     X_true = np.empty((N + 1, nx))
-    Y_meas = np.empty((N, ny))
+    Y_meas = np.empty((N, nym))
     U_arr = np.empty((N, 1))
     D_arr = np.empty((N, 1))
 
     x = x0.copy()
     X_true[0] = x
 
-    R_chol = np.sqrt(float(model.R[0, 0]))
+    R_chol = np.sqrt(float(model.Rm[0, 0]))
 
     for k, t_k in enumerate(times):
         S_in_k = sin_fn(t_k)
@@ -380,14 +408,15 @@ def simulate(
         # Euler-Maruyama substeps
         for _ in range(N_SUB):
             f_val = model.f(x, u_k, d_k, p, t_k)
-            noise = G_diag * rng.standard_normal(nx) * sqrt_h
+            sig = model.sigma(x, u_k, d_k, p, t_k)
+            noise = sig @ rng.standard_normal(model.nw) * sqrt_h
             x = x + h_sub * f_val + noise
             # Clamp to non-negative
             x = np.maximum(x, 0.0)
 
         # Measurement with noise
-        y_clean = model.h(x, u_k, d_k, p)
-        y_noisy = y_clean + R_chol * rng.standard_normal(ny)
+        y_clean = model.hm(x, u_k, d_k, p, t_k)
+        y_noisy = y_clean + R_chol * rng.standard_normal(nym)
 
         X_true[k + 1] = x
         Y_meas[k] = y_noisy
@@ -661,8 +690,8 @@ def main() -> None:
     # Stochastic filters (EnKF, PF) draw noise from the model's Q_c directly,
     # so they also get the inflated version to stay appropriately uncertain.
 
-    model_sim    = ProductInhibitionBioreactor(Q_c=Q_C_TRUE,   R=R_TRUE)
-    model_filter = ProductInhibitionBioreactor(Q_c=Q_C_FILTER, R=R)
+    model_sim    = ProductInhibitionBioreactor(Q_c=Q_C_TRUE, Rm=R_TRUE, Ts=DT)
+    model_filter = ProductInhibitionBioreactor(Q_c=Q_C_FILTER, Rm=R, Ts=DT)
 
     # ── Simulate true trajectory ─────────────────────────────────────────────
 
@@ -685,20 +714,25 @@ def main() -> None:
     filter_specs: list[tuple[str, type, dict]] = [
         ("EKF", ContinuousDiscreteEKF, dict(
             model=model_filter, x0=X0_EST.copy(), P0=P0_EST.copy(),
-            dt=DT, n_steps=N_SUB,
+            params=ContinuousDiscreteEKFParams(n_steps=N_SUB),
         )),
         ("UKF", ContinuousDiscreteUKF, dict(
             model=model_filter, x0=X0_EST.copy(), P0=P0_EST.copy(),
-            dt=DT, n_steps=N_SUB, alpha=1.0, kappa=0.0, beta=2.0,
+            params=ContinuousDiscreteUKFParams(
+                n_steps=N_SUB, alpha=1.0, kappa=0.0, beta=2.0,
+            ),
         )),
         ("EnKF", ContinuousDiscreteEnKF, dict(
             model=model_filter, x0=X0_EST.copy(), P0=P0_EST.copy(),
-            dt=DT, N=200, n_steps=N_SUB, seed=RNG_SEED + 1,
+            params=ContinuousDiscreteEnKFParams(
+                N=200, n_steps=N_SUB, seed=RNG_SEED + 1,
+            ),
         )),
-        ("PF", ContinuousDiscreteParticleFilter, dict(
+        ("PF", ContinuousDiscretePF, dict(
             model=model_filter, x0=X0_EST.copy(), P0=P0_EST.copy(),
-            dt=DT, N=500, n_steps=N_SUB,
-            resample_threshold=0.5, seed=RNG_SEED + 2,
+            params=ContinuousDiscretePFParams(
+                N=500, n_steps=N_SUB, seed=RNG_SEED + 2,
+            ),
         )),
     ]
 

@@ -49,40 +49,24 @@ from typing import Any
 
 import numpy as np
 
-from .._utils import _cholesky_psd
+from .._utils import _any_to_np1d, _any_to_np2d, _cholesky_psd
 
 
 # ── Internal helpers ─────────────────────────────────────────────────────────
 
 
-def _is_cvxopt(v) -> bool:
-    try:
-        from cvxopt import matrix as _cvx
-        return isinstance(v, _cvx)
-    except ImportError:
-        return False
-
-
 def _as_np1d(v) -> np.ndarray | None:
     if v is None:
         return None
-    if _is_cvxopt(v):
-        n = v.size[0] * v.size[1]
-        return np.array([float(v[i]) for i in range(n)])
-    return np.asarray(v, dtype=float).ravel().copy()
+    return _any_to_np1d(v).copy()
 
 
 def _as_np2d(M) -> np.ndarray:
-    if _is_cvxopt(M):
-        rows, cols = M.size
-        return np.array(list(M), dtype=float).reshape((rows, cols), order="F")
-    return np.asarray(M, dtype=float).copy()
+    return _any_to_np2d(M).copy()
 
 
 def _ny_of(y) -> int:
-    if _is_cvxopt(y):
-        return y.size[0]
-    return int(np.asarray(y).ravel().shape[0])
+    return int(_any_to_np1d(y).shape[0])
 
 
 # ── DelayedObservationFilter ─────────────────────────────────────────────────
@@ -304,9 +288,9 @@ class DelayedObservationFilter:
 
         Parameters
         ----------
-        ym    : (nym,) ndarray or cvxopt column — measurement at ``t_k``.
-        u     : (nu,) ndarray or cvxopt column  — input over the previous interval.
-        d     : (nd,) ndarray or cvxopt column  — disturbance over that interval.
+        ym    : (nym,) ndarray — measurement at ``t_k``.
+        u     : (nu,) ndarray  — input over the previous interval.
+        d     : (nd,) ndarray  — disturbance over that interval.
         p     : (np,) ndarray, optional          — parameter vector.
         t     : float, optional                  — current time.
         mask  : (nym,) bool array, optional      — active-channel mask.

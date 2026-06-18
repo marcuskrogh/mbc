@@ -392,10 +392,10 @@ def make_nlp_backend(
     key = solver.lower()
     options = dict(solver_options) if solver_options is not None else None
 
-    if key in {"ipopt", "cyipopt"}:
+    if key == "ipopt":
         return IpoptNLPBackend(options=options, scaling=scaling)
 
-    if key in {"scipy", "scipy-minimize"}:
+    if key == "scipy":
         method = "SLSQP"
         if options is not None and "method" in options:
             method = str(options.pop("method"))

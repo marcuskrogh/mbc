@@ -3,9 +3,7 @@ Shared utility functions for array conversion and discretisation.
 
 Provides helpers used across the mbc sub-packages:
 
-  - ``_any_to_np1d`` / ``_any_to_np2d``                   – coerce any array-like
-                                                            (numpy, list, or legacy
-                                                            cvxopt matrix) to numpy
+  - ``_any_to_np1d`` / ``_any_to_np2d``                   – coerce array-likes to numpy
   - ``_zoh_full``                                         – ZOH discretisation
   - ``_van_loan``                                         – exact discrete process-noise
                                                             covariance (Van Loan 1978)
@@ -33,32 +31,15 @@ from scipy.linalg import expm as _expm  # noqa: F401 — re-exported for callers
 
 
 # ── Array coercion ─────────────────────────────────────────────────────────
-#
-# The toolbox is numpy-native.  ``_any_to_np*`` additionally accept legacy
-# cvxopt matrices (if a caller still has cvxopt installed) so that external
-# code passing cvxopt columns keeps working; cvxopt itself is not a dependency.
 
 
 def _any_to_np1d(v) -> np.ndarray:
-    """Convert a cvxopt column vector, list, or numpy array to a 1-D float array."""
-    try:
-        from cvxopt import matrix as _cvx_matrix
-        if isinstance(v, _cvx_matrix):
-            return np.array(list(v), dtype=float)
-    except ImportError:
-        pass
+    """Convert a list or numpy array to a 1-D float array."""
     return np.asarray(v, dtype=float).ravel()
 
 
 def _any_to_np2d(v) -> np.ndarray:
-    """Convert a cvxopt matrix, list-of-lists, or numpy array to a 2-D float array."""
-    try:
-        from cvxopt import matrix as _cvx_matrix
-        if isinstance(v, _cvx_matrix):
-            rows, cols = v.size
-            return np.array(list(v), dtype=float).reshape((rows, cols), order="F")
-    except ImportError:
-        pass
+    """Convert a list-of-lists or numpy array to a 2-D float array."""
     return np.asarray(v, dtype=float)
 
 

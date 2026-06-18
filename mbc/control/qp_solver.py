@@ -369,7 +369,7 @@ def make_qp_backend(
         raise TypeError("solver must be a string key or a QP backend object.")
 
     key = solver.lower()
-    if key in {"highs", "highspy"}:
+    if key == "highs":
         return HighsQPBackend(options=solver_options)
     if key in {"osqp"}:
         return OSQPBackend(options=solver_options)

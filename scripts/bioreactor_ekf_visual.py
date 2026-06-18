@@ -40,7 +40,12 @@ import matplotlib.gridspec as gridspec
 import matplotlib.ticker as ticker
 
 from mbc.models import ContinuousDiscreteSDE
-from mbc.estimation import ContinuousDiscreteEKF
+from mbc.estimation import ContinuousDiscreteEKF, ContinuousDiscreteEKFParams
+
+
+# ── Timing (used by model Ts and simulation) ──────────────────────────────────
+
+DT     = 0.1    # measurement sampling interval (h)
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
@@ -62,10 +67,13 @@ class MonodBioreactor(ContinuousDiscreteSDE):
 
     _Y    = 0.5                        # yield  [g-biomass / g-substrate]
     _Qc   = np.diag([1e-4, 1e-4])     # continuous process-noise covariance
-    _R    = np.array([[0.01]])         # measurement noise variance  (g/L)²
+    _Rm   = np.array([[0.01]])         # measurement noise variance  (g/L)²
+    _Ts   = DT
 
     # ── ContinuousDiscreteSDE abstract interface ────────────────────────
 
+    @property
+    def Ts(self) -> float: return self._Ts
     @property
     def nx(self) -> int: return 2
     @property
@@ -73,13 +81,13 @@ class MonodBioreactor(ContinuousDiscreteSDE):
     @property
     def nd(self) -> int: return 1
     @property
-    def ny(self) -> int: return 1
+    def nym(self) -> int: return 1
+    @property
+    def nz(self) -> int: return 1
     @property
     def nw(self) -> int: return 2
     @property
-    def Q_c(self) -> np.ndarray: return self._Qc.copy()
-    @property
-    def R(self) -> np.ndarray: return self._R.copy()
+    def Rm(self) -> np.ndarray: return self._Rm.copy()
 
     def f(self, x, u, d, p, t):
         S, X = float(x[0]), float(x[1])
@@ -93,11 +101,14 @@ class MonodBioreactor(ContinuousDiscreteSDE):
              mu * X            - X          * FV,
         ])
 
-    def g(self, x, u, d, p, t):
-        return np.eye(2)
+    def sigma(self, x, u, d, p, t):
+        return np.diag(np.sqrt(np.diag(self._Qc)))
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p, t=0.0):
         return np.array([x[1]])          # observe biomass X
+
+    def gm(self, x, u, d, p, t):
+        return np.array([x[1]])
 
 
 # ── Simulation helper (Euler-Maruyama with process noise) ─────────────────────
@@ -120,8 +131,7 @@ def simulate_em(
     X : (T+1, nx) state trajectory  (X[0] = x0)
     """
     h      = dt / n_sub
-    Q_c    = model.Q_c
-    L_Q    = np.linalg.cholesky(Q_c)        # lower-triangular factor
+    L_Q    = np.linalg.cholesky(model._Qc)        # lower-triangular factor
     x      = np.array(x0, dtype=float)
     X_hist = [x.copy()]
     T      = U.shape[0]
@@ -144,7 +154,6 @@ def simulate_em(
 P_TRUE = np.array([0.5, 0.2])          # μ_max = 0.5 h⁻¹,  K_s = 0.2 g/L
 
 # Timing
-DT     = 0.1    # measurement sampling interval (h)
 T_END  = 20.0   # simulation horizon (h)
 N_SIM  = int(T_END / DT)              # number of measurement intervals = 200
 N_SUB  = 20                            # EM sub-steps per interval
@@ -177,7 +186,7 @@ def run():
     X_true = simulate_em(model, X0_TRUE, U, D, P_traj, DT, N_SUB, rng)
 
     # ── Noisy measurements (biomass only) ─────────────────────────────────
-    R_std  = float(np.sqrt(model.R[0, 0]))
+    R_std  = float(np.sqrt(model.Rm[0, 0]))
     Y_meas = X_true[1:, 1] + R_std * rng.standard_normal(N_SIM)
 
     # ── Open-loop trajectory from offset IC (no filter, for reference) ────
@@ -185,8 +194,10 @@ def run():
                        np.random.default_rng(0))   # different noise seed
 
     # ── CD-EKF ────────────────────────────────────────────────────────────
-    ekf = ContinuousDiscreteEKF(model, X0_EST.copy(), P0.copy(),
-                                 dt=DT, n_steps=N_SUB)
+    ekf = ContinuousDiscreteEKF(
+        model, X0_EST.copy(), P0.copy(),
+        params=ContinuousDiscreteEKFParams(n_steps=N_SUB),
+    )
 
     x_hist = np.zeros((N_SIM + 1, 2))
     p_diag = np.zeros((N_SIM + 1, 2))   # diagonal of P

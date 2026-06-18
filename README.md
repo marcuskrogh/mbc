@@ -46,7 +46,10 @@ class Plant(ContinuousDiscreteSDE):
 model = Plant()
 
 # 2) Estimator (defined by ContinuousDiscreteEstimator)
-ekf = ContinuousDiscreteEKF(model, x0, P0, dt=Ts)
+ekf = ContinuousDiscreteEKF(
+    model, x0, P0,
+    params=ContinuousDiscreteEKFParams(n_steps=10),
+)
 
 # 3) OCP (defined by OCP base; here a nonlinear CD OCP)
 ocp = ContinuousOCP(model, N=20, Q_z=Qz, z_ref=zref, dt=Ts)
@@ -376,10 +379,13 @@ u, U_seq, X_seq = ctrl.step(ym, D)
 **Usage with `CDNMPCController`** (nonlinear continuous-discrete):
 
 ```python
-from mbc.estimation import ContinuousDiscreteEKF, DelayedObservationFilter
+from mbc.estimation import ContinuousDiscreteEKF, ContinuousDiscreteEKFParams, DelayedObservationFilter
 from mbc.control import ContinuousOCP, CDNMPCController
 
-ekf  = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
+ekf  = ContinuousDiscreteEKF(
+    model, x0, P0,
+    params=ContinuousDiscreteEKFParams(n_steps=10),
+)
 filt = DelayedObservationFilter(ekf, lag_max=10)
 ocp  = ContinuousOCP(model, N=20, dt=1.0, lagrange=cost_fn)
 ctrl = CDNMPCController(estimator=filt, ocp=ocp)
@@ -1171,7 +1177,10 @@ masking logic.
 ```python
 from mbc.estimation import ContinuousDiscreteLinearKF
 
-kf = ContinuousDiscreteLinearKF(model, x0=x0, P0=P0, n_steps=10)
+kf = ContinuousDiscreteLinearKF(
+    model, x0=x0, P0=P0,
+    params=ContinuousDiscreteLinearKFParams(n_steps=10),
+)
 
 # Building blocks
 x_pred, P_pred = kf.predict(u_prev, d_prev)       # time update (ODE integration)
@@ -1196,7 +1205,7 @@ first two moments — mean and covariance — at all times.
 **Time update over [t_k, t_{k+1}]** — two propagation schemes available via
 the ``scheme`` parameter:
 
-*Explicit Euler* (`scheme="euler"`, default) — integrates the mean ODE and
+*Explicit Euler* (`IntegrationScheme.EXPLICIT_EULER`, default) — integrates the mean ODE and
 the Lyapunov-type covariance ODE with explicit Euler:
 
 ```
@@ -1218,7 +1227,7 @@ For n = 0, 1, …, n_steps − 1:
     P_{n+1} ← ½(P_{n+1} + P_{n+1}ᵀ)                  (symmetrise)
 ```
 
-*Implicit Euler* (`scheme="implicit-euler"`) — L-stable; suitable for stiff
+*Implicit Euler* (`IntegrationScheme.IMPLICIT_EULER`) — L-stable; suitable for stiff
 drift dynamics.  Uses Newton iteration for the mean and the one-step
 sensitivity matrix for the covariance:
 
@@ -1261,29 +1270,34 @@ with `scheme="IE"`; that choice is independent of the filter.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteSDE` | — | Nonlinear SDE model |
+| `model` | `ContinuousDiscreteSDE` | — | Nonlinear SDE model (must expose `Ts`) |
 | `x0` | `(nx,) ndarray` | — | Initial state estimate |
 | `P0` | `(nx,nx) ndarray` | — | Initial state covariance |
-| `dt` | `float` | — | Sampling interval |
-| `n_steps` | `int` | `10` | Integration sub-steps per interval (≥ 1) |
-| `scheme` | `str` | `"euler"` | `"euler"` or `"implicit-euler"` |
-| `newton_tol` | `float` | `1e-10` | Newton tolerance (implicit-Euler only) |
-| `newton_max_iter` | `int` | `50` | Max Newton iterations (implicit-Euler only) |
+| `params` | `ContinuousDiscreteEKFParams` | defaults | Algorithm settings (`n_steps`, `scheme`, Newton tolerances) |
 
 **Usage**:
 
 ```python
-from mbc.estimation import ContinuousDiscreteEKF
+from mbc.estimation import ContinuousDiscreteEKF, ContinuousDiscreteEKFParams, IntegrationScheme
 
 # Explicit Euler (default)
-ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0, n_steps=10)
+ekf = ContinuousDiscreteEKF(
+    model, x0, P0,
+    params=ContinuousDiscreteEKFParams(n_steps=10),
+)
 
 # Implicit Euler — suitable for stiff drift dynamics
-ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0, n_steps=10, scheme="implicit-euler")
+ekf = ContinuousDiscreteEKF(
+    model, x0, P0,
+    params=ContinuousDiscreteEKFParams(
+        n_steps=10,
+        scheme=IntegrationScheme.IMPLICIT_EULER,
+    ),
+)
 
-x_hat, P = ekf.step(y, u, d, t, mask=None)   # predict + update
+x_hat, P = ekf.step(ym, u, d, p, t, mask=None)   # predict + update
 x_hat, P = ekf.predict(u, d, t)              # prediction only
-x_hat, P = ekf.update(y, d, mask=None)       # update only
+x_hat, P = ekf.update(ym, u, d, p, mask=None)       # update only
 ```
 
 ---
@@ -1387,10 +1401,13 @@ P_{k|k} = P_{k|k-1} − K_k R_e K_kᵀ
 **Usage**:
 
 ```python
-from mbc.estimation import ContinuousDiscreteUKF
+from mbc.estimation import ContinuousDiscreteUKF, ContinuousDiscreteUKFParams
 
-ukf = ContinuousDiscreteUKF(model, x0, P0, dt=1.0, alpha=1.0, beta=2.0)
-x_hat, P = ukf.step(y, u, d, p, t, mask=None)
+ukf = ContinuousDiscreteUKF(
+    model, x0, P0,
+    params=ContinuousDiscreteUKFParams(n_steps=10, alpha=1.0, beta=2.0),
+)
+x_hat, P = ukf.step(ym, u, d, p, t, mask=None)
 ```
 
 ---
@@ -1467,15 +1484,18 @@ Bessel-corrected sample covariance over the updated ensemble.
 **Usage**:
 
 ```python
-from mbc.estimation import ContinuousDiscreteEnKF
+from mbc.estimation import ContinuousDiscreteEnKF, ContinuousDiscreteEnKFParams
 
-enkf = ContinuousDiscreteEnKF(model, x0, P0, dt=1.0, N=200, seed=0)
-x_hat, P = enkf.step(y, u, d, t, mask=None)
+enkf = ContinuousDiscreteEnKF(
+    model, x0, P0,
+    params=ContinuousDiscreteEnKFParams(N=200, n_steps=10, seed=0),
+)
+x_hat, P = enkf.step(ym, u, d, p, t, mask=None)
 ```
 
 ---
 
-#### `ContinuousDiscreteParticleFilter` — `mbc.estimation` *(ControlToolbox §SDE — CD-PF)*
+#### `ContinuousDiscretePF` — `mbc.estimation` *(ControlToolbox §SDE — CD-PF)*
 
 Sequential Monte Carlo (particle filter) for a nonlinear `ContinuousDiscreteSDE`.
 Represents the posterior `p(x[k] | y[1:k])` as a particle set of size `N_p`.
@@ -1545,10 +1565,13 @@ P_{k|k} = (1 / (N_p − 1)) Σ_i (x̂_{k|k}^(i) − x̂_{k|k})(…)ᵀ
 **Usage**:
 
 ```python
-from mbc.estimation import ContinuousDiscreteParticleFilter
+from mbc.estimation import ContinuousDiscretePF, ContinuousDiscretePFParams
 
-pf = ContinuousDiscreteParticleFilter(model, x0, P0, dt=1.0, N=1000, seed=0)
-x_hat, P = pf.step(y, u, d, t, mask=None)
+pf = ContinuousDiscretePF(
+    model, x0, P0,
+    params=ContinuousDiscretePFParams(N=1000, n_steps=10, seed=0),
+)
+x_hat, P = pf.step(ym, u, d, p, t, mask=None)
 ```
 
 ---
@@ -1667,12 +1690,12 @@ sub-step (M = N · n_steps) — multiple shooting, not single shooting.  The
 NLP is solved through a swappable backend interface:
 
 - **SciPy backend** (default) — `scipy.optimize.minimize`, method `"SLSQP"`.
-  Select with `solver="SLSQP"` (or `"scipy"` / `"scipy-minimize"`).
+  Select with `solver="SLSQP"` or `"scipy"`.
   Any `scipy.optimize.minimize` method is accepted directly
   (`"trust-constr"`, `"L-BFGS-B"`, `"CG"`, etc.).
 - **IPOPT backend** (optional) — `cyipopt.minimize_ipopt`, requires the
   `mbc[ipopt]` extra (`pip install -e ".[ipopt]"`).
-  Select with `solver="ipopt"` (alias: `"cyipopt"`).
+  Select with `solver="ipopt"`.
   By default the backend injects `hessian_approximation: "limited-memory"`
   (L-BFGS quasi-Newton Hessian) when no analytical Hessian is supplied —
   this avoids IPOPT's O(n) finite-difference Hessian loop and is strongly
@@ -1831,7 +1854,7 @@ by the L1 + L2 exact-penalty form `φ_pq` above.
 | `rho_z_1` | `float` | `0.0` | L1 weight on output slacks (exact penalty) |
 | `rho_z_2` | `float` | `1e4` | L2 weight on output slacks |
 | `n_steps` | `int` | `10` | Implicit-Euler sub-steps per control interval |
-| `solver` | `str` or backend object | `"SLSQP"` | `"scipy"` / `"scipy-minimize"` / `"ipopt"` / `"cyipopt"` backend key, or any SciPy method name (`"SLSQP"`, `"trust-constr"`, `"L-BFGS-B"`, …) |
+| `solver` | `str` or backend object | `"SLSQP"` | `"scipy"` / `"ipopt"` backend key, or any SciPy method name (`"SLSQP"`, `"trust-constr"`, `"L-BFGS-B"`, …) |
 | `solver_options` | `dict` or `None` | `None` | Forwarded to the solver. IPOPT users: `hessian_approximation: "limited-memory"` (L-BFGS) is injected automatically; override with `{"hessian_approximation": "exact"}` only when a full Hessian is available. Common IPOPT options: `max_iter`, `tol`, `print_level`. |
 | `solver_scaling` | `dict` or `NLPScalingPolicy` or `None` | `None` | Backend-agnostic scaling (`objective_scale`, `variable_scale`, `constraint_scale`) |
 | `dt` | `float` or `None` | `model.dt` or `1.0` | Sampling interval `T_s` |
@@ -1965,7 +1988,7 @@ u, U_seq, X_seq = ctrl.step(ym, D)   # D = (N·nd, 1) stacked disturbance foreca
 ```
         ┌──────────────────────────────────────────────────────────┐
         │                    CDMPCController                       │
-ym[k] ─┼─► ContinuousDiscreteLinearKF ── x̂[k|k] ── CDOptOCP ── U*[0] ── u[k] ┼─► Plant
+ym[k] ─┼─► ContinuousDiscreteLinearKF ── x̂[k|k] ── ContinuousLinearOCP ── U*[0] ── u[k] ┼─► Plant
         │  (continuous ODE              (ZOH-QP, lifted batch)    │
         │   integration on A, B, E)                               │
         │       ▲                                                 │
@@ -2027,7 +2050,7 @@ into a receding-horizon feedback controller.
 Any combination of:
 
 - **Estimators**: `ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`,
-  `ContinuousDiscreteEnKF`, `ContinuousDiscreteParticleFilter`,
+  `ContinuousDiscreteEnKF`, `ContinuousDiscretePF`,
   `ContinuousDiscreteDAEEKF`, `DelayedObservationFilter` (wrapping any of the above)
 - **OCPs**: `ContinuousOCP`, `CDTrackingDiscreteLinearOCP`
 
@@ -2086,7 +2109,10 @@ from mbc.control import (
     CDNMPCController,
 )
 
-ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
+ekf = ContinuousDiscreteEKF(
+    model, x0, P0,
+    params=ContinuousDiscreteEKFParams(n_steps=10),
+)
 
 # Tracking NMPC (convenience wrapper)
 ocp = CDTrackingDiscreteLinearOCP(

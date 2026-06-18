@@ -75,8 +75,7 @@ class CDNMPCController:
         p_ = np.array([], dtype=float) if p is None else np.asarray(p, dtype=float)
         d0 = d_trajectory[0]
 
-        est_out = self._estimator.step(y, self._u_prev, d0, p_, t)
-        x_hat = est_out[0]
+        x_hat, _ = self._estimator.step(y, self._u_prev, d0, p_, t)
 
         u_opt, _, info = self._ocp.solve(
             x_hat,
