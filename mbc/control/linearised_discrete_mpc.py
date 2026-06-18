@@ -103,8 +103,8 @@ class LinearisedDiscreteMPC(ModelPredictiveController):
     """Abstract successive-linearisation MPC for nonlinear discrete-time plants."""
 
     @abstractmethod
-    def step(self, ym: Any, d: Any | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Execute one closed-loop step."""
+    def compute(self, ym: Any, d: Any | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute and return the optimal closed-loop MPC action."""
 
 
 class StandardLinearisedDiscreteMPC(LinearisedDiscreteMPC):
@@ -133,7 +133,7 @@ class StandardLinearisedDiscreteMPC(LinearisedDiscreteMPC):
         self._u_prev = np.zeros(model.nu)
         self._d_prev = np.zeros(model.nd)
 
-    def step(self, ym: Any, d: Any | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def compute(self, ym: Any, d: Any | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         d_now = (
             np.zeros(self._model.nd) if d is None
             else np.asarray(d, dtype=float).reshape(self._model.nd)

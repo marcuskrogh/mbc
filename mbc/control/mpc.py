@@ -22,12 +22,12 @@ class LinearDiscreteMPC(ModelPredictiveController):
     """Abstract MPC for linear discrete-time plant + estimator + discrete OCP."""
 
     @abstractmethod
-    def step(
+    def compute(
         self,
         ym: Any,
         D: Any | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Execute one closed-loop MPC step."""
+        """Compute and return the optimal closed-loop MPC action."""
 
 
 class StandardLinearDiscreteMPC(LinearDiscreteMPC):
@@ -36,7 +36,7 @@ class StandardLinearDiscreteMPC(LinearDiscreteMPC):
 
     Combines :class:`~mbc.estimation.DiscreteLinearKF` and
     :class:`StandardLinearDiscreteOCP`.  Horizon-varying quantities are
-    configured on the controller (shared with the OCP) before :meth:`step`.
+    configured on the controller (shared with the OCP) before :meth:`compute`.
     """
 
     def __init__(
@@ -57,7 +57,7 @@ class StandardLinearDiscreteMPC(LinearDiscreteMPC):
         self._prev_U: np.ndarray | None = None
         self._prev_X: np.ndarray | None = None
 
-    def step(
+    def compute(
         self,
         ym: Any,
         D: Any | None = None,

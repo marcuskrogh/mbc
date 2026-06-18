@@ -15,14 +15,14 @@ class NonlinearContinuousMPC(ModelPredictiveController):
     """Abstract MPC for nonlinear CD plant + CD estimator + continuous OCP."""
 
     @abstractmethod
-    def step(
+    def compute(
         self,
         y: np.ndarray,
         d_trajectory: np.ndarray | None = None,
         p: np.ndarray | None = None,
         t: float = 0.0,
     ) -> np.ndarray:
-        """Execute one closed-loop NMPC step."""
+        """Compute and return the optimal closed-loop NMPC action."""
 
 
 class StandardNonlinearContinuousMPC(NonlinearContinuousMPC):
@@ -42,7 +42,7 @@ class StandardNonlinearContinuousMPC(NonlinearContinuousMPC):
         self._y_traj_prev: np.ndarray | None = None
         self._u_prev: np.ndarray = np.zeros(ocp.nu)
 
-    def step(
+    def compute(
         self,
         y: np.ndarray,
         d_trajectory: np.ndarray | None = None,
@@ -56,7 +56,7 @@ class StandardNonlinearContinuousMPC(NonlinearContinuousMPC):
         prof = self._horizon_profile
         if prof.disturbance_profile is None:
             raise ValueError(
-                "Disturbance forecast required: pass d_trajectory to step() or "
+                "Disturbance forecast required: pass d_trajectory to compute() or "
                 "call set_disturbance_profile()."
             )
         d_arr = np.asarray(prof.disturbance_profile, dtype=float)

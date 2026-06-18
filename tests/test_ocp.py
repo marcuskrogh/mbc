@@ -124,7 +124,7 @@ class TestHorizonProfiles:
         ctrl = StandardLinearDiscreteMPC(scalar_disc, kf, ocp)
         ctrl.set_output_tracking_weight_scale_profile(np.array([2.0, 2.0, 2.0]))
         ctrl.set_disturbance_profile(np.zeros(3))
-        u, U, X = ctrl.step(ym=[0.0])
+        u, U, X = ctrl.compute(ym=[0.0])
         assert u.shape == (1,)
         assert ocp.horizon_profile is ctrl.horizon_profile
 

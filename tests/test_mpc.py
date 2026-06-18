@@ -322,7 +322,7 @@ class TestMPCController:
         ctrl, model = self._make_ctrl(N=5)
         y = _cvx(np.array([0.5]))
         D = np.zeros((5 * model.nd, 1))
-        u, U_seq, X_seq = ctrl.step(y, D)
+        u, U_seq, X_seq = ctrl.compute(y, D)
         assert u.shape == (model.nu,)
         assert U_seq.shape == (5 * model.nu,)
         assert X_seq.shape == (5 * model.nx,)
@@ -331,7 +331,7 @@ class TestMPCController:
         ctrl, model = self._make_ctrl(N=10)
         y = _cvx(np.array([0.0]))
         D = np.zeros((10 * model.nd, 1))
-        u, _, _ = ctrl.step(y, D)
+        u, _, _ = ctrl.compute(y, D)
         u_val = float(list(u)[0])
         u_min, u_max = model.u_bounds
         assert u_val >= u_min[0] - 1e-6
@@ -342,7 +342,7 @@ class TestMPCController:
         D = np.zeros((5 * model.nd, 1))
         for k in range(10):
             y = _cvx(np.array([0.0 + 0.1 * k]))
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             assert u.shape == (model.nu,)
 
     def test_closed_loop_drives_toward_reference(self):
@@ -392,7 +392,7 @@ class TestMPCController:
         for _ in range(N_steps):
             y = _cvx(model.Cm @ x)
             D = np.zeros((10 * model.nd, 1))
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             u_np = np.array(list(u)).ravel()
             x = Ad @ x + Bd @ u_np
 
@@ -479,7 +479,7 @@ class TestCDMPCController:
         ctrl, model = self._make_ctrl(N=5)
         y = _cvx(np.array([0.5]))
         D = np.zeros((5 * model.nd, 1))
-        u, U_seq, X_seq = ctrl.step(y, D)
+        u, U_seq, X_seq = ctrl.compute(y, D)
         assert u.shape == (model.nu,)
         assert U_seq.shape == (5 * model.nu,)
         assert X_seq.shape == (5 * model.nx,)
@@ -488,7 +488,7 @@ class TestCDMPCController:
         ctrl, model = self._make_ctrl(N=10)
         y = _cvx(np.array([0.0]))
         D = np.zeros((10 * model.nd, 1))
-        u, _, _ = ctrl.step(y, D)
+        u, _, _ = ctrl.compute(y, D)
         u_val = float(list(u)[0])
         u_min, u_max = model.u_bounds
         assert u_val >= u_min[0] - 1e-6
@@ -499,7 +499,7 @@ class TestCDMPCController:
         D = np.zeros((5 * model.nd, 1))
         for k in range(8):
             y = _cvx(np.array([float(k) * 0.1]))
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             assert u.shape == (model.nu,)
 
     def test_closed_loop_drives_toward_reference(self):
@@ -519,7 +519,7 @@ class TestCDMPCController:
         for _ in range(N_steps):
             y = _cvx(model.Cm @ x)
             D = np.zeros((20 * model.nd, 1))
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             u_np = np.array(list(u)).ravel()
             x = Ad @ x + Bd @ u_np
 
@@ -1039,14 +1039,14 @@ class TestCDNMPCController:
         ctrl, model = self._make_ctrl(ocp_cls="tracking")
         ym = np.array([0.5])
         d_traj = np.zeros((5, model.nd))
-        u = ctrl.step(ym, d_traj, p=None, t=0.0)
+        u = ctrl.compute(ym, d_traj, p=None, t=0.0)
         assert u.shape == (model.nu,)
 
     def test_step_returns_correct_shape_economic(self):
         ctrl, model = self._make_ctrl(ocp_cls="economic")
         ym = np.array([0.5])
         d_traj = np.zeros((5, model.nd))
-        u = ctrl.step(ym, d_traj, p=None, t=0.0)
+        u = ctrl.compute(ym, d_traj, p=None, t=0.0)
         assert u.shape == (model.nu,)
 
     def test_repeated_steps_do_not_crash(self):
@@ -1054,7 +1054,7 @@ class TestCDNMPCController:
         d_traj = np.zeros((5, model.nd))
         for k in range(8):
             ym = np.array([0.1 * k])
-            u = ctrl.step(ym, d_traj, p=None, t=float(k))
+            u = ctrl.compute(ym, d_traj, p=None, t=float(k))
             assert u.shape == (model.nu,), f"Bad u shape at step {k}: {u.shape}"
 
     def test_closed_loop_tracking(self):
@@ -1080,7 +1080,7 @@ class TestCDNMPCController:
         for k in range(N_steps):
             ym = model.hm(x, np.zeros(1), np.zeros(1), p, float(k))
             d_traj = np.zeros((10, model.nd))
-            u = ctrl.step(ym, d_traj, p=None, t=float(k))
+            u = ctrl.compute(ym, d_traj, p=None, t=float(k))
             # Simple Euler step (mean dynamics, no noise)
             x = x + model.f(x, u, np.zeros(model.nd), p, float(k)) * dt
 
@@ -1094,7 +1094,7 @@ class TestCDNMPCController:
         d_traj = np.zeros((5, model.nd))
         for k in range(10):
             ym = np.array([float(k) * 0.2])
-            u = ctrl.step(ym, d_traj, p=None, t=float(k))
+            u = ctrl.compute(ym, d_traj, p=None, t=float(k))
             assert np.all(u >= -3.0 - 1e-6), f"u={u} below u_min at step {k}"
             assert np.all(u <= 3.0 + 1e-6), f"u={u} above u_max at step {k}"
 
@@ -1408,7 +1408,7 @@ class TestCDLinearizedMPCController:
     def test_step_returns_absolute_action_and_sequences(self):
         est = _DummyEstimator2([0.0])
         ctrl, model = self._make_ctrl(estimator=est)
-        u, U, X = ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        u, U, X = ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
         assert u.shape == (model.nu,)
         assert U.shape == (8, model.nu)
         assert X.shape == (8, model.nx)
@@ -1416,7 +1416,7 @@ class TestCDLinearizedMPCController:
     def test_step_respects_absolute_bounds(self):
         est = _DummyEstimator2([0.0])
         ctrl, _ = self._make_ctrl(estimator=est, x_ref=np.array([10.0]))
-        u, _, _ = ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        u, _, _ = ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
         assert np.all(u >= -1.0 - 1e-8)
         assert np.all(u <= 1.0 + 1e-8)
 
@@ -1432,9 +1432,9 @@ class TestCDLinearizedMPCController:
             u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([1.0]), y_offset=10.0,
         )
 
-        ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
         Ad_0 = ctrl._lin_model.Ad.copy()
-        ctrl.step(y=np.array([1.0]), d=np.array([0.5]), p=np.array([]), t=1.0)
+        ctrl.compute(y=np.array([1.0]), d=np.array([0.5]), p=np.array([]), t=1.0)
         Ad_1 = ctrl._lin_model.Ad.copy()
 
         assert not np.allclose(Ad_0, Ad_1), "Expected re-linearization to update local Ad"
@@ -1442,7 +1442,7 @@ class TestCDLinearizedMPCController:
     def test_disturbance_hold_assumption_uses_zero_deviation_trajectory(self):
         est = _DummyEstimator2([0.0])
         ctrl, model = self._make_ctrl(estimator=est)
-        ctrl.step(y=np.array([0.0]), d=np.array([0.7]), p=np.array([]), t=0.0)
+        ctrl.compute(y=np.array([0.0]), d=np.array([0.7]), p=np.array([]), t=0.0)
         D_dev = ctrl.last_disturbance_deviation_trajectory
         assert D_dev.shape == (8, model.nd)
         assert np.allclose(D_dev, 0.0)
@@ -1464,7 +1464,7 @@ class TestCDLinearizedMPCController:
         p = np.array([])
         for k in range(15):
             y = model.hm(x, np.zeros(model.nu), np.zeros(model.nd), p, float(k))
-            u, _, _ = ctrl.step(y=y, d=np.zeros(model.nd), p=p, t=float(k))
+            u, _, _ = ctrl.compute(y=y, d=np.zeros(model.nd), p=p, t=float(k))
             x = x + model.f(x, u, np.zeros(model.nd), p, float(k)) * 1.0
 
         assert abs(x[0] - 2.0) < 1.0
@@ -1570,7 +1570,7 @@ class TestWarmStartMPC:
         for k in range(n_steps):
             y = np.array([0.1 * k])
             D = np.zeros(N * model.nd)
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             us.append(np.asarray(u, dtype=float).copy())
         return np.array(us)
 
@@ -1594,7 +1594,7 @@ class TestWarmStartMPC:
             ctrl = StandardLinearContinuousMPC(model, estimator=kf, ocp=ocp, warm_start=warm)
             us = []
             for k in range(10):
-                u, _, _ = ctrl.step(np.array([0.1 * k]), np.zeros(10 * model.nd))
+                u, _, _ = ctrl.compute(np.array([0.1 * k]), np.zeros(10 * model.nd))
                 us.append(float(np.asarray(u).ravel()[0]))
             return np.array(us)
         np.testing.assert_allclose(run(True), run(False), atol=1e-5)

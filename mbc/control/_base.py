@@ -194,7 +194,7 @@ class ModelPredictiveController(_HorizonProfileSupport, ABC):
     Common abstract base for all MPC controllers.
 
     Horizon profiles configured on the controller are shared with the wrapped
-    OCP via :meth:`_bind_ocp` so that setters and :meth:`step` use one profile.
+    OCP via :meth:`_bind_ocp` so that setters and :meth:`compute` use one profile.
     """
 
     def _bind_ocp(self, ocp: OptimalControlProblem) -> None:

@@ -23,12 +23,12 @@ class LinearContinuousMPC(ModelPredictiveController):
     """Abstract MPC for linear CD plant + CD estimator + discrete-time OCP."""
 
     @abstractmethod
-    def step(
+    def compute(
         self,
         ym: Any,
         D: Any | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Execute one closed-loop MPC step."""
+        """Compute and return the optimal closed-loop MPC action."""
 
 
 class StandardLinearContinuousMPC(LinearContinuousMPC):
@@ -52,7 +52,7 @@ class StandardLinearContinuousMPC(LinearContinuousMPC):
         self._prev_U: np.ndarray | None = None
         self._prev_X: np.ndarray | None = None
 
-    def step(
+    def compute(
         self,
         ym: Any,
         D: Any | None = None,

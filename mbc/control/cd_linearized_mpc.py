@@ -241,14 +241,14 @@ class LinearisedContinuousMPC(ModelPredictiveController, ABC):
         """Most recent disturbance trajectory in deviation coordinates."""
 
     @abstractmethod
-    def step(
+    def compute(
         self,
         y: np.ndarray,
         d: np.ndarray,
         p: np.ndarray | None = None,
         t: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """Execute one closed-loop step."""
+        """Compute and return the optimal closed-loop MPC action."""
 
 
 class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
@@ -332,7 +332,7 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
         """Most recent disturbance trajectory in deviation coordinates."""
         return self._last_D_dev.copy()
 
-    def step(
+    def compute(
         self,
         y: np.ndarray,
         d: np.ndarray,
@@ -340,7 +340,7 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
         t: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Execute one closed-loop step.
+        Compute the optimal closed-loop action.
 
         Disturbance-hold assumption: the measured disturbance at the current
         interval start is used as operating disturbance (`d_ss`) and held

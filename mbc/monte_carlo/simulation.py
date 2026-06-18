@@ -10,11 +10,11 @@ state estimator.  Each trial proceeds as follows:
      a. Simulate the plant one step forward via the simulator.
      b. Collect the noisy observation y_k = h(x_k, d_k) + v_k.
      c. Update the estimator (if provided) with y_k to obtain x̂_k.
-     d. Query the controller for the next input u_k = controller.step(x̂_k, …).
+     d. Query the controller for the next input u_k = controller.compute(x̂_k, …).
   3. Record the full (x, y, u) trajectories and total cost.
 
 The framework is controller- and estimator-agnostic: any object with a
-``.step()`` method that matches the expected signature is accepted.
+``.compute()`` method that matches the expected signature is accepted.
 
 Reference:  Ph.D. thesis, Ch. 12.
 """
@@ -63,7 +63,7 @@ class MonteCarloSimulation:
         Plant model (used for generating noisy observations).
     simulator : SDESimulator or SDAESimulator
         Numerical integrator for the plant dynamics.
-    controller : object with ``.step(x_hat, d, ...)`` method
+    controller : object with ``.compute(x_hat, d, ...)`` method
         Feedback controller.  Must return a (nu,) input array.
     estimator : object with ``.step(y, u, d, t)`` method or None, optional
         State estimator.  When ``None`` the true state is fed to the
@@ -187,17 +187,17 @@ class MonteCarloSimulation:
                 # Query controller for input
                 # Controller interface is flexible - try common signatures
                 try:
-                    # Try full signature: step(x_hat, d_trajectory, p, t)
+                    # Try full signature: compute(x_hat, d_trajectory, p, t)
                     # Build d_trajectory for remaining horizon
                     d_trajectory = D[k:] if k < T else D[-1:].reshape(1, -1)
-                    u_k = self._controller.step(x_hat_k, d_trajectory, p=p, t=t)
+                    u_k = self._controller.compute(x_hat_k, d_trajectory, p=p, t=t)
                 except TypeError:
                     try:
-                        # Try simpler signature: step(x_hat, d)
-                        u_k = self._controller.step(x_hat_k, d_k)
+                        # Try simpler signature: compute(x_hat, d)
+                        u_k = self._controller.compute(x_hat_k, d_k)
                     except TypeError:
                         # Fallback: just x_hat
-                        u_k = self._controller.step(x_hat_k)
+                        u_k = self._controller.compute(x_hat_k)
 
                 U[i, k] = u_k
 
