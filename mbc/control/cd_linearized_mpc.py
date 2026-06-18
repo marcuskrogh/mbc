@@ -9,13 +9,15 @@ ZOH-discretises the local model, and solves a
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
 
 from .._utils import _fd_jacobian, _zoh_full, _van_loan
 from ..models import DiscreteLinearSDE, ContinuousDiscreteSDE
-from .discrete_linear_ocp import DiscreteLinearOCP
+from .discrete_linear_ocp import StandardLinearDiscreteOCP
+from .mpc_horizon import HorizonProfileMPC
 
 
 class _DeviationDiscreteLinearSDE(DiscreteLinearSDE):
@@ -225,12 +227,36 @@ def discretize_cd_linearization(
     }
 
 
-class CDLinearizedMPCController:
+class LinearisedContinuousMPC(ABC):
+    """Abstract successive-linearisation MPC for nonlinear CD plants."""
+
+    @property
+    @abstractmethod
+    def x_ref(self) -> np.ndarray:
+        """Absolute state reference used for tracking."""
+
+    @property
+    @abstractmethod
+    def last_disturbance_deviation_trajectory(self) -> np.ndarray:
+        """Most recent disturbance trajectory in deviation coordinates."""
+
+    @abstractmethod
+    def step(
+        self,
+        y: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None = None,
+        t: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Execute one closed-loop step."""
+
+
+class StandardLinearisedContinuousMPC(HorizonProfileMPC, LinearisedContinuousMPC):
     """
     Successive-linearisation MPC for nonlinear continuous-discrete models.
 
     The controller keeps existing nonlinear estimators unchanged and reuses
-    :class:`DiscreteLinearOCP` by updating a mutable deviation linear model
+    :class:`StandardLinearDiscreteOCP` by updating a mutable deviation linear model
     at each sampling instant.
     """
 
@@ -249,7 +275,10 @@ class CDLinearizedMPCController:
         S: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
+        du_min: np.ndarray | None = None,
+        du_max: np.ndarray | None = None,
     ) -> None:
+        super().__init__()
         self._model = model
         self._estimator = estimator
         self._N = int(N)
@@ -271,13 +300,15 @@ class CDLinearizedMPCController:
             u_max_abs=np.asarray(u_max, dtype=float),
         )
 
-        self._ocp = DiscreteLinearOCP(
+        self._ocp = StandardLinearDiscreteOCP(
             model=self._lin_model,
             N=self._N,
             Q=Q,
             R=R,
             P=P,
             S=S,
+            du_min=du_min,
+            du_max=du_max,
             rho=rho,
             y_offset=y_offset,
         )
@@ -321,9 +352,15 @@ class CDLinearizedMPCController:
         x_hat_np, _ = self._estimator.step(y, self._u_prev, self._d_prev, p_, t)
         x_hat = np.asarray(x_hat_np, dtype=float).reshape(self._model.nx)
 
-        x_ss = x_hat.copy()
-        u_ss = self._u_prev.copy()
-        d_ss = d_now.copy()
+        lp = self._horizon_profile.linearisation_point
+        if lp is not None:
+            x_ss = np.asarray(lp.x, dtype=float).reshape(self._model.nx)
+            u_ss = np.asarray(lp.u, dtype=float).reshape(self._model.nu)
+            d_ss = np.asarray(lp.d, dtype=float).reshape(self._model.nd)
+        else:
+            x_ss = x_hat.copy()
+            u_ss = self._u_prev.copy()
+            d_ss = d_now.copy()
 
         lin = linearize_cd_model(self._model, x_ss, u_ss, d_ss, p_, t)
         disc = discretize_cd_linearization(lin, self._dt)

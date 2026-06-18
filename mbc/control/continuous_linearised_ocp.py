@@ -20,14 +20,14 @@ from typing import Any, TYPE_CHECKING
 
 import numpy as np
 
-from .continuous_linear_ocp import ContinuousLinearOCP
+from .continuous_linear_ocp import StandardLinearContinuousDiscreteOCP
 from .qp_solver import QPSolverBackend
 
 if TYPE_CHECKING:
     from ..models import ContinuousDiscreteLinearisedSDE
 
 
-class ContinuousLinearisedOCP(ContinuousLinearOCP):
+class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOCP):
     """
     Receding-horizon QP for a linearised continuous-discrete system, with
     automatic steady-state coordinate shifting.

@@ -61,7 +61,7 @@ import numpy as np
 from scipy.linalg import block_diag
 
 from .._utils import _any_to_np1d, _any_to_np2d
-from ._base import OCP
+from ._base import DiscreteOptimalControlProblem
 from .qp_solver import QPProblem, QPSolverBackend, make_qp_backend
 
 if TYPE_CHECKING:
@@ -120,7 +120,7 @@ def _shift_warm_start(
 # ── Discrete-time linear OCP ─────────────────────────────────────────────────
 
 
-class DiscreteLinearOCP(OCP):
+class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
     """
     Receding-horizon QP with hard input and soft output box constraints for
     discrete-time linear systems.
@@ -144,6 +144,9 @@ class DiscreteLinearOCP(OCP):
         Terminal tracking cost ``‖z[N] − z_ref‖²_P``.  Default: ``Q``.
     S : (nu, nu) array-like, optional
         Input rate-of-movement cost ``‖Δu‖²_S``.  ``None`` disables.
+    du_min, du_max : (nu,) array-like, optional
+        Hard input rate-of-movement box ``du_min ≤ Δu ≤ du_max``.
+        ``None`` disables the corresponding bound.
     rho : float, optional
         Quadratic penalty on the soft-output slack variable ``ε``.
         Default: 1e4.
@@ -166,6 +169,8 @@ class DiscreteLinearOCP(OCP):
         R: Any,
         P: Any | None = None,
         S: Any | None = None,
+        du_min: Any | None = None,
+        du_max: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
         solver: str | QPSolverBackend = "osqp",
@@ -183,6 +188,12 @@ class DiscreteLinearOCP(OCP):
         self._R = _any_to_np2d(R)
         self._P = _any_to_np2d(P) if P is not None else self._Q.copy()
         self._S = _any_to_np2d(S) if S is not None else None
+        self._du_min = (
+            _any_to_np1d(du_min).reshape(-1) if du_min is not None else None
+        )
+        self._du_max = (
+            _any_to_np1d(du_max).reshape(-1) if du_max is not None else None
+        )
         self._rho = rho
         self._y_offset = y_offset
         self._backend = make_qp_backend(solver, solver_options=solver_options)
@@ -194,6 +205,10 @@ class DiscreteLinearOCP(OCP):
         if self._S is not None:
             self._D_diff = _build_D_diff(nu, N)
             self._S_bar = block_diag(*([self._S] * N))
+        elif self._du_min is not None or self._du_max is not None:
+            self._D_diff = _build_D_diff(nu, N)
+        else:
+            self._D_diff = None
 
     # ── OCP abstract properties ────────────────────────────────────────────
 
@@ -218,6 +233,13 @@ class DiscreteLinearOCP(OCP):
             return self._formulation
         from .qp_solver import OSQPBackend
         return "sparse" if isinstance(self._backend, OSQPBackend) else "condensed"
+
+    def _rate_offset(self, u_prev_np: np.ndarray | None, nu: int, N: int) -> np.ndarray:
+        """Affine offset ``d0`` in ``Δu = D_diff U + d0``."""
+        d0 = np.zeros(N * nu)
+        if u_prev_np is not None:
+            d0[:nu] = -u_prev_np
+        return d0
 
     # ── Public solve ────────────────────────────────────────────────────────
 
@@ -264,7 +286,7 @@ class DiscreteLinearOCP(OCP):
         Bd = _any_to_np2d(self._model.Bd)
         Ed = _any_to_np2d(self._model.Ed)
 
-        if self._S is not None:
+        if self._S is not None or self._du_min is not None or self._du_max is not None:
             u_prev_np = (
                 np.zeros(nu) if u_prev is None
                 else _any_to_np1d(u_prev).reshape(-1)
@@ -288,7 +310,7 @@ class DiscreteLinearOCP(OCP):
 
         if not result.success:
             warnings.warn(
-                f"DiscreteLinearOCP.solve: QP solver returned status "
+                f"StandardLinearDiscreteOCP.solve: QP solver returned status "
                 f"'{result.status}'; returning zero inputs as fallback.",
                 RuntimeWarning,
                 stacklevel=2,
@@ -424,6 +446,19 @@ class DiscreteLinearOCP(OCP):
         G = np.vstack([np.hstack([-CG, neg_I]), np.hstack([CG, neg_I])])
         h = np.concatenate([-z_min_t + Z_free, z_max_t - Z_free])
 
+        if self._du_min is not None or self._du_max is not None:
+            d0 = self._rate_offset(u_prev_np, nu, N)
+            G_rate: list[np.ndarray] = []
+            h_rate: list[np.ndarray] = []
+            if self._du_max is not None:
+                G_rate.append(np.hstack([self._D_diff, np.zeros((N * nu, n_eps))]))
+                h_rate.append(np.tile(self._du_max, N) - d0)
+            if self._du_min is not None:
+                G_rate.append(np.hstack([-self._D_diff, np.zeros((N * nu, n_eps))]))
+                h_rate.append(-np.tile(self._du_min, N) + d0)
+            G = np.vstack([G] + G_rate)
+            h = np.concatenate([h] + h_rate)
+
         def extract(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             U_flat = z[:n_U]
             X_flat = Psi @ x0 + Gamma @ U_flat + Lambda @ D
@@ -535,6 +570,31 @@ class DiscreteLinearOCP(OCP):
             _add_g(r_lo, es, neg_eye_nz)
             h[r_lo:r_lo + nz] = -z_min
         G = sp.csc_matrix((g_vals, (g_rows, g_cols)), shape=(2 * n_eps, n_Z))
+
+        if self._du_min is not None or self._du_max is not None:
+            d0 = self._rate_offset(u_prev_np, nu, N)
+            G_rate_list = []
+            h_rate_list: list[np.ndarray] = []
+            if self._du_max is not None:
+                G_rate_list.append(
+                    sp.hstack([
+                        sp.csc_matrix((N * nu, n_X)),
+                        self._D_diff,
+                        sp.csc_matrix((N * nu, n_eps)),
+                    ])
+                )
+                h_rate_list.append(np.tile(self._du_max, N) - d0)
+            if self._du_min is not None:
+                G_rate_list.append(
+                    sp.hstack([
+                        sp.csc_matrix((N * nu, n_X)),
+                        -self._D_diff,
+                        sp.csc_matrix((N * nu, n_eps)),
+                    ])
+                )
+                h_rate_list.append(-np.tile(self._du_min, N) + d0)
+            G = sp.vstack([G] + G_rate_list, format="csc")
+            h = np.concatenate([h] + h_rate_list)
 
         def extract(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             X_flat = z[:n_X]

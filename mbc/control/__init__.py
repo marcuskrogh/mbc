@@ -1,19 +1,31 @@
 """Optimal control sub-package for mbc."""
 
-from ._base import OCP
-from .discrete_linear_ocp import DiscreteLinearOCP, _shift_warm_start
-from .discrete_linearised_ocp import DiscreteLinearisedOCP
-from .continuous_linear_ocp import ContinuousLinearOCP
-from .continuous_ocp import ContinuousOCP
-from .continuous_linearised_ocp import ContinuousLinearisedOCP
-from .mpc import MPCController
-from .cd_mpc import CDMPCController
+from ._base import (
+    OptimalControlProblem,
+    DiscreteOptimalControlProblem,
+    ContinuousOptimalControlProblem,
+)
+from .discrete_linear_ocp import StandardLinearDiscreteOCP, _shift_warm_start
+from .discrete_linearised_ocp import StandardLinearisedDiscreteOCP
+from .continuous_linear_ocp import StandardLinearContinuousDiscreteOCP
+from .continuous_ocp import GeneralContinuousOCP, StandardContinuousOCP
+from .continuous_linearised_ocp import StandardLinearizedContinuousDiscreteOCP
+from .forecast_ocp import solve_forecast_qp
+from .mpc_horizon import MPCHorizonProfile, MPCLinearisationPoint, HorizonProfileMPC
+from .mpc import LinearDiscreteMPC, StandardLinearDiscreteMPC
+from .linearised_discrete_mpc import (
+    LinearisedDiscreteMPC,
+    StandardLinearisedDiscreteMPC,
+    linearize_discrete_model,
+)
+from .cd_mpc import LinearContinuousMPC, StandardLinearContinuousMPC
 from .cd_linearized_mpc import (
-    CDLinearizedMPCController,
+    LinearisedContinuousMPC,
+    StandardLinearisedContinuousMPC,
     linearize_cd_model,
     discretize_cd_linearization,
 )
-from .enmpc import CDNMPCController
+from .enmpc import NonlinearContinuousMPC, StandardNonlinearContinuousMPC
 from .nlp_solver import (
     NLPConstraint,
     NLPProblem,
@@ -32,21 +44,39 @@ from .qp_solver import (
 )
 
 __all__ = [
-    # Abstract base
-    "OCP",
-    # OCP canonical names
-    "DiscreteLinearOCP",
-    "DiscreteLinearisedOCP",
-    "ContinuousLinearOCP",
-    "ContinuousOCP",
-    "ContinuousLinearisedOCP",
-    # MPC controllers
-    "MPCController",
-    "CDMPCController",
-    "CDLinearizedMPCController",
+    # Abstract bases
+    "OptimalControlProblem",
+    "DiscreteOptimalControlProblem",
+    "ContinuousOptimalControlProblem",
+    # Standard OCP implementations
+    "StandardLinearDiscreteOCP",
+    "StandardLinearisedDiscreteOCP",
+    "StandardLinearContinuousDiscreteOCP",
+    "StandardLinearizedContinuousDiscreteOCP",
+    "GeneralContinuousOCP",
+    "StandardContinuousOCP",
+    # Forecast QP
+    "solve_forecast_qp",
+    # Horizon profiles
+    "MPCHorizonProfile",
+    "MPCLinearisationPoint",
+    "HorizonProfileMPC",
+    # MPC abstract bases
+    "LinearDiscreteMPC",
+    "LinearisedDiscreteMPC",
+    "LinearContinuousMPC",
+    "LinearisedContinuousMPC",
+    "NonlinearContinuousMPC",
+    # Standard MPC implementations
+    "StandardLinearDiscreteMPC",
+    "StandardLinearisedDiscreteMPC",
+    "StandardLinearContinuousMPC",
+    "StandardLinearisedContinuousMPC",
+    "StandardNonlinearContinuousMPC",
+    # CD linearisation helpers
     "linearize_cd_model",
     "discretize_cd_linearization",
-    "CDNMPCController",
+    "linearize_discrete_model",
     # NLP solver
     "NLPConstraint",
     "NLPProblem",

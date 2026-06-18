@@ -1,44 +1,41 @@
 """
-:class:`CDNMPCController` — generic closed-loop receding-horizon controller
-that composes any continuous-discrete state estimator with any OCP.
+Nonlinear continuous-time MPC for continuous-discrete plants.
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
+
 import numpy as np
 
-from .continuous_ocp import ContinuousOCP
+from .continuous_ocp import ContinuousOptimalControlProblem, GeneralContinuousOCP
+from .mpc_horizon import HorizonProfileMPC
 
 
-# ── Generic CD-NMPC Controller ────────────────────────────────────────────────
+class NonlinearContinuousMPC(ABC):
+    """Abstract MPC for nonlinear CD plant + CD estimator + continuous OCP."""
+
+    @abstractmethod
+    def step(
+        self,
+        y: np.ndarray,
+        d_trajectory: np.ndarray | None = None,
+        p: np.ndarray | None = None,
+        t: float = 0.0,
+    ) -> np.ndarray:
+        """Execute one closed-loop NMPC step."""
 
 
-class CDNMPCController:
+class StandardNonlinearContinuousMPC(HorizonProfileMPC, NonlinearContinuousMPC):
     """
-    Closed-loop continuous-discrete NMPC controller (ControlToolbox §EMPC —
-    *ENMPC Algorithm*).
+    Standard closed-loop NMPC for nonlinear continuous-discrete plants.
 
-    Composes any continuous-discrete state estimator with any OCP that
-    exposes ``solve(x0, d_trajectory, …) → (u_opt, cost, info)`` into a
-    receding-horizon controller.
-
-    At each measurement time t_k:
-
-      1. **Measure**   y^{m,s}_k  (passed in via :meth:`step`)
-      2. **Estimate**  z^c_k = κ(z^c_{k−1}, u_{k−1}, d_{k−1}, y^{m,s}_k, θ^c)
-                       (delegated to ``estimator.step``)
-      3. **Optimise**  u_k = λ(z^c_k, θ^c)  (delegated to ``ocp.solve``)
-      4. **Apply**     return ``u_k`` to the caller, who advances the plant.
-
-    Parameters
-    ----------
-    estimator : object with ``step(ym, u, d, p, t) → (x_hat, P)``
-        Continuous-discrete state estimator.
-    ocp : object with ``solve``, ``N``, ``nu``
-        Optimal control problem — typically a :class:`~mbc.control.ContinuousOCP`.
+    Composes a continuous-discrete state estimator with a
+    :class:`GeneralContinuousOCP` (or subclass).
     """
 
-    def __init__(self, estimator, ocp) -> None:
+    def __init__(self, estimator, ocp: ContinuousOptimalControlProblem) -> None:
+        super().__init__()
         self._estimator = estimator
         self._ocp = ocp
         self._u_seq_prev: np.ndarray | None = None
@@ -49,30 +46,23 @@ class CDNMPCController:
     def step(
         self,
         y: np.ndarray,
-        d_trajectory: np.ndarray,
+        d_trajectory: np.ndarray | None = None,
         p: np.ndarray | None = None,
         t: float = 0.0,
     ) -> np.ndarray:
-        """
-        Execute one closed-loop ENMPC step.
-
-        Parameters
-        ----------
-        y : (nym,) ndarray
-            Current measurement ``y^{m,s}_k``.
-        d_trajectory : (N, nd) ndarray
-            Disturbance forecast over the horizon; ``d_trajectory[0] = d_k``.
-        p : (nparams,) ndarray or None, optional
-            Parameter vector ``θ^c``.  ``None`` → empty vector.
-        t : float, optional
-            Current time ``t_k``.
-
-        Returns
-        -------
-        u_k : (nu,) ndarray
-            Optimal input ``u_k`` to apply over ``[t_k, t_{k+1}]``.
-        """
         p_ = np.array([], dtype=float) if p is None else np.asarray(p, dtype=float)
+        prof = self._horizon_profile
+        if d_trajectory is None:
+            if prof.disturbance_profile is None:
+                raise ValueError(
+                    "Provide d_trajectory via step(…) or set_disturbance_profile()."
+                )
+            d_arr = np.asarray(prof.disturbance_profile, dtype=float)
+            if d_arr.ndim == 1:
+                nd = d_arr.size // self._ocp._nd
+                d_trajectory = d_arr.reshape(-1, nd)
+            else:
+                d_trajectory = d_arr
         d0 = d_trajectory[0]
 
         x_hat, _ = self._estimator.step(y, self._u_prev, d0, p_, t)

@@ -1,122 +1,124 @@
 """
 Model Predictive Controller for linear discrete-time systems.
 
-Composes a :class:`~mbc.estimation.DiscreteLinearKF` and a
-:class:`~mbc.control.DiscreteLinearOCP` for any
-:class:`~mbc.models.DiscreteLinearSDE` and implements the receding-horizon
-policy described in ControlToolbox §EMPC — *ENMPC Algorithm*, specialised
-to the linear case.
-
-At each measurement time t_k:
-
-    1. **Measure**   ym[k]                                  (passed to ``step``)
-    2. **Estimate**  x̂[k|k] = κ(x̂[k-1|k-1], u[k-1], d[k-1], ym[k])
-                                                            (estimator.step)
-    3. **Optimise**  U* = λ(x̂[k|k], …)                       (ocp.solve)
-    4. **Apply**     u[k] = U*[0:nu]                          (returned to caller)
+Abstract :class:`LinearDiscreteMPC` defines the closed-loop interface;
+:class:`StandardLinearDiscreteMPC` composes
+:class:`~mbc.estimation.DiscreteLinearKF` with
+:class:`~mbc.control.StandardLinearDiscreteOCP`.
 """
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Any, Tuple, TYPE_CHECKING
 
 import numpy as np
 
 from .._utils import _any_to_np1d
 from ..estimation import DiscreteLinearKF
-from .discrete_linear_ocp import DiscreteLinearOCP, _shift_warm_start
+from .discrete_linear_ocp import StandardLinearDiscreteOCP, _shift_warm_start
+from .forecast_ocp import solve_forecast_qp
+from .mpc_horizon import HorizonProfileMPC
 
 if TYPE_CHECKING:
     from ..models import DiscreteLinearSDE
 
 
-class MPCController:
+class LinearDiscreteMPC(ABC):
+    """Abstract MPC for linear discrete-time plant + estimator + discrete OCP."""
+
+    @abstractmethod
+    def step(
+        self,
+        ym: Any,
+        D: Any | None = None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Execute one closed-loop MPC step."""
+
+
+class StandardLinearDiscreteMPC(HorizonProfileMPC, LinearDiscreteMPC):
     """
-    Model predictive controller for a linear discrete-time plant.
+    Standard MPC for a linear discrete-time plant.
 
-    Combines a :class:`~mbc.estimation.DiscreteLinearKF` (estimator) and a
-    :class:`DiscreteLinearOCP` (OCP) into a closed-loop controller.
-
-    The previously-applied input ``u_{k-1}`` and disturbance ``d_{k-1}``
-    are tracked internally so that the estimator's predict step has the
-    correct ZOH inputs over the just-completed interval.
-
-    Parameters
-    ----------
-    model     : DiscreteLinearSDE
-    estimator : DiscreteLinearKF
-    ocp       : DiscreteLinearOCP
-    warm_start : bool, optional
-        Re-use the previous horizon solution (shifted one step) as the QP
-        warm start on each call.  Default: ``False``.  Warm-starting never
-        changes the optimiser; it only seeds the solver's initial iterate.
-        With the current per-solve setup it gives little measurable speedup
-        (the primal-only start is rebuilt each step); substantial
-        receding-horizon gains require solver-level factorisation reuse
-        (persistent OSQP ``update`` with primal+dual starts) — planned future
-        work.  Left available and correct for that path and for HiGHS.
+    Combines :class:`~mbc.estimation.DiscreteLinearKF` and
+    :class:`StandardLinearDiscreteOCP`.  Horizon-varying quantities are
+    configured via the profile setters before :meth:`step`.
     """
 
     def __init__(
         self,
         model: "DiscreteLinearSDE",
         estimator: DiscreteLinearKF,
-        ocp: DiscreteLinearOCP,
+        ocp: StandardLinearDiscreteOCP,
         warm_start: bool = False,
     ) -> None:
+        super().__init__()
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
         self._warm_start = bool(warm_start)
-        # Previous applied (u, d) — used by the estimator's predict step.
         self._u_prev_np: np.ndarray = np.zeros(model.nu)
         self._d_prev_np: np.ndarray = np.zeros(model.nd)
-        # Previous horizon solution — used to warm-start the next QP.
         self._prev_U: np.ndarray | None = None
         self._prev_X: np.ndarray | None = None
 
     def step(
         self,
         ym: Any,
-        D: Any,
+        D: Any | None = None,
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """
-        Execute one closed-loop MPC step.
-
-        Parameters
-        ----------
-        ym : (nym,) array-like  — measurement ``ym[k]``.
-        D  : (N · nd,) array-like  — stacked disturbance forecast
-             ``[d[k]; d[k+1]; …; d[k + N − 1]]``.
-
-        Returns
-        -------
-        u     : (nu,) ndarray — optimal input ``u_k``.
-        U_seq : (N · nu,) ndarray — full optimal input sequence.
-        X_seq : (N · nx,) ndarray — predicted state trajectory.
-        """
         nu = self._model.nu
         nd = self._model.nd
 
-        # Step 2: estimate using the previously-applied (u, d)
         ym_np = _any_to_np1d(ym)
         x_hat_np, _ = self._estimator.step(
             ym_np, self._u_prev_np, self._d_prev_np,
         )
 
-        # Step 3: optimise (OCP returns numpy 1-D arrays)
-        D_np = _any_to_np1d(D)
+        prof = self._horizon_profile
+        if D is not None:
+            D_np = _any_to_np1d(D)
+        elif prof.disturbance_profile is not None:
+            D_np = _any_to_np1d(prof.disturbance_profile)
+        else:
+            raise ValueError(
+                "Provide disturbance forecast via step(D=…) or set_disturbance_profile()."
+            )
+
         x_ref_np = np.asarray(self._model.x_ref, dtype=float).reshape(-1)
+        if prof.output_reference_deviation_profile is not None:
+            ref_dev = np.asarray(prof.output_reference_deviation_profile, dtype=float)
+            if ref_dev.ndim == 1 and ref_dev.size == x_ref_np.size:
+                x_ref_np = x_ref_np + ref_dev
+
         warm = None
         if self._warm_start and self._prev_U is not None:
             warm = _shift_warm_start(
                 self._prev_U, self._prev_X, nu, self._model.nx
             )
-        U_seq, X_seq = self._ocp.solve(
-            x_hat_np, D_np, x_ref_np, u_prev=self._u_prev_np, warm_start=warm,
-        )
 
-        # Step 4: extract the first action; cache state for the next step
+        if prof.disturbance_profile is not None or any(
+            getattr(prof, n) is not None
+            for n in (
+                "output_tracking_weight_scale_profile",
+                "input_regularisation_weight_scale_profile",
+                "soft_output_band_half_width_profile",
+                "input_min_profile",
+                "input_max_profile",
+                "input_linear_cost_coefficient_profile",
+            )
+        ):
+            if prof.disturbance_profile is None:
+                prof.disturbance_profile = D_np
+            U_seq, X_seq = solve_forecast_qp(
+                self._ocp, x_hat_np, prof,
+                x_ref=x_ref_np, u_prev=self._u_prev_np, warm_start=warm,
+            )
+        else:
+            U_seq, X_seq = self._ocp.solve(
+                x_hat_np, D_np, x_ref_np, u_prev=self._u_prev_np, warm_start=warm,
+            )
+
         u = U_seq[:nu]
         self._u_prev_np = np.asarray(u, dtype=float).copy()
         self._d_prev_np = D_np[:nd].copy()

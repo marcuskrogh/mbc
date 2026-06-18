@@ -5,7 +5,7 @@ approximation in nonlinear CD systems.
 Jacobian benchmarks
 -------------------
 These tests verify that the analytical constraint and objective Jacobians
-added to ``ContinuousOCP`` produce a
+added to ``GeneralContinuousOCP`` produce a
 measurable reduction in the number of NLP function evaluations (``nfev``)
 compared to the numerical finite-difference baseline.
 
@@ -19,10 +19,10 @@ Background
 ----------
 The analytical Jacobians are available in:
 
-* ``ContinuousOCP._equality_constraint_jac``   — dynamics
-* ``ContinuousOCP._inequality_constraint_jac`` — ROM/soft constraints
-* ``ContinuousOCP._objective_jac``             — tracking + penalties
-* ``ContinuousOCP`` R_stage + P_terminal         — analytical Lagrange/Mayer Jacs
+* ``GeneralContinuousOCP._equality_constraint_jac``   — dynamics
+* ``GeneralContinuousOCP._inequality_constraint_jac`` — ROM/soft constraints
+* ``GeneralContinuousOCP._objective_jac``             — tracking + penalties
+* ``GeneralContinuousOCP`` R_stage + P_terminal         — analytical Lagrange/Mayer Jacs
 
 All tests compare ``nfev`` between two modes:
 
@@ -59,7 +59,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from mbc.control import ContinuousOCP
+from mbc.control import GeneralContinuousOCP
 from mbc.control.nlp_solver import (
     IpoptNLPBackend,
     NLPConstraint,
@@ -189,9 +189,9 @@ class _IsomerisationReactor(ContinuousDiscreteSDAE):
 # ── Shared fixture helpers ────────────────────────────────────────────────────
 
 
-def _make_sde_eocp(N: int, n_steps: int, strip_jac: bool) -> ContinuousOCP:
+def _make_sde_eocp(N: int, n_steps: int, strip_jac: bool) -> GeneralContinuousOCP:
     model = _ScalarNonlinear()
-    ocp = ContinuousOCP(
+    ocp = GeneralContinuousOCP(
         model, N,
         Q_z=np.eye(1) * 2.0,
         z_ref=np.array([1.5]),
@@ -210,9 +210,9 @@ def _make_sde_eocp(N: int, n_steps: int, strip_jac: bool) -> ContinuousOCP:
     return ocp
 
 
-def _make_sdae_eocp(N: int, n_steps: int, strip_jac: bool) -> ContinuousOCP:
+def _make_sdae_eocp(N: int, n_steps: int, strip_jac: bool) -> GeneralContinuousOCP:
     model = _IsomerisationReactor()
-    ocp = ContinuousOCP(
+    ocp = GeneralContinuousOCP(
         model, N,
         Q_z=np.eye(1) * 2.0,
         z_ref=np.array([1.5]),
@@ -228,9 +228,9 @@ def _make_sdae_eocp(N: int, n_steps: int, strip_jac: bool) -> ContinuousOCP:
     return ocp
 
 
-def _make_cdtracking(N: int, n_steps: int, strip_jac: bool) -> ContinuousOCP:
+def _make_cdtracking(N: int, n_steps: int, strip_jac: bool) -> GeneralContinuousOCP:
     model = _ScalarNonlinear()
-    ocp = ContinuousOCP(
+    ocp = GeneralContinuousOCP(
         model, N,
         Q_z=np.eye(1) * 2.0,
         R_stage=np.eye(1) * 0.1,
@@ -274,7 +274,7 @@ class TestAnalyticalJacobiansAreWired:
                 )
 
         model = _ScalarNonlinear()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=3, Q_z=np.eye(1), z_ref=np.array([1.0]),
             n_steps=2, dt=1.0,
         )
@@ -296,7 +296,7 @@ class TestAnalyticalJacobiansAreWired:
     def test_eocp_objective_has_analytical_jac_for_pure_tracking(self):
         """EOCP with only Q_z tracking must provide an objective Jacobian."""
         model = _ScalarNonlinear()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=3, Q_z=np.eye(1) * 2.0, z_ref=np.array([1.5]),
             n_steps=2, dt=1.0,
         )
@@ -305,21 +305,21 @@ class TestAnalyticalJacobiansAreWired:
         )
 
     def test_cdtracking_always_has_analytical_objective_jac(self):
-        """ContinuousOCP with R_stage/P_terminal always provides analytical Jacs."""
+        """GeneralContinuousOCP with R_stage/P_terminal always provides analytical Jacs."""
         model = _ScalarNonlinear()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=3,
             Q_z=np.eye(1) * 2.0, R_stage=np.eye(1) * 0.1, P_terminal=np.eye(1) * 5.0,
             z_ref=np.array([1.5]), dt=1.0,
         )
         assert ocp._can_use_analytical_objective_jac(), (
-            "ContinuousOCP with R_stage/P_terminal should provide analytical objective Jacobian"
+            "GeneralContinuousOCP with R_stage/P_terminal should provide analytical objective Jacobian"
         )
 
     def test_eocp_with_user_lagrange_no_jac_disables_analytical_obj_grad(self):
         """If lagrange_jac is not provided, analytical obj grad must be disabled."""
         model = _ScalarNonlinear()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=3,
             lagrange=lambda t, x, y, u, p: float(u @ u),
             n_steps=2, dt=1.0,
@@ -331,7 +331,7 @@ class TestAnalyticalJacobiansAreWired:
     def test_eocp_with_user_lagrange_and_jac_enables_analytical_obj_grad(self):
         """If both lagrange and lagrange_jac are provided, analytical grad is enabled."""
         model = _ScalarNonlinear()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=3,
             lagrange=lambda t, x, y, u, p: float(u @ u),
             lagrange_jac=lambda t, x, y, u, p: (np.zeros_like(x), np.zeros_like(y), 2.0 * u),
@@ -615,7 +615,7 @@ def _make_sde_eocp_ipopt(N: int, n_steps: int, *, strip_jac: bool = False):
     IPOPT falls back to finite-difference Jacobians, establishing the baseline.
     """
     model = _ScalarNonlinear()
-    ocp = ContinuousOCP(
+    ocp = GeneralContinuousOCP(
         model, N,
         Q_z=np.eye(1) * 2.0,
         z_ref=np.array([1.5]),
@@ -636,9 +636,9 @@ def _make_sde_eocp_ipopt(N: int, n_steps: int, *, strip_jac: bool = False):
 
 
 def _make_cdtracking_ipopt(N: int, n_steps: int, *, strip_jac: bool = False):
-    """Build a ContinuousOCP (tracking) using IPOPT with L-BFGS."""
+    """Build a GeneralContinuousOCP (tracking) using IPOPT with L-BFGS."""
     model = _ScalarNonlinear()
-    ocp = ContinuousOCP(
+    ocp = GeneralContinuousOCP(
         model, N,
         Q_z=np.eye(1) * 2.0,
         R_stage=np.eye(1) * 0.1,

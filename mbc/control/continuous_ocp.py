@@ -53,7 +53,7 @@ import numpy as np
 
 from ..models import ContinuousDiscreteSDAE, ContinuousDiscreteSDE
 from ..estimation._base import IntegrationScheme
-from ._base import OCP
+from ._base import ContinuousOptimalControlProblem
 from .nlp_solver import (
     NLPConstraint,
     NLPProblem,
@@ -150,7 +150,7 @@ class _DecisionLayout:
 # ── Continuous-discrete nonlinear OCP ─────────────────────────────────────────
 
 
-class ContinuousOCP(OCP):
+class GeneralContinuousOCP(ContinuousOptimalControlProblem):
     """
     Continuous-discrete nonlinear OCP for SDE / SDAE plants
     (ControlToolbox §EMPC direct-simultaneous formulation).
@@ -1102,3 +1102,13 @@ class ContinuousOCP(OCP):
             p=p, t0=t0,
         )
         return u_opt[0]
+
+
+class StandardContinuousOCP(GeneralContinuousOCP):
+    """
+    Standard continuous-time OCP for nonlinear continuous-discrete plants.
+
+    Alias of :class:`GeneralContinuousOCP` with the canonical name for the
+    standard tracking / constraint vocabulary (setpoint tracking, input box,
+    soft output bands, ROM penalty and hard ROM limits, linear input cost).
+    """
