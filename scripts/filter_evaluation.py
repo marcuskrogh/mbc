@@ -35,7 +35,12 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
 
-from mbc.estimation import ContinuousDiscreteEKF, ContinuousDiscreteUKF
+from mbc.estimation import (
+    ContinuousDiscreteEKF,
+    ContinuousDiscreteEKFParams,
+    ContinuousDiscreteUKF,
+    ContinuousDiscreteUKFParams,
+)
 from mbc.models import ContinuousDiscreteSDE
 
 # ── Scenario (identical to bioreactor_comparative.py) ─────────────────────────
@@ -67,9 +72,14 @@ def _sin_schedule(t: float) -> float:
 class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
     """3-state product-inhibition CSTR (identical to comparative script)."""
 
-    def __init__(self, Q_c: np.ndarray, R: np.ndarray) -> None:
+    def __init__(self, Q_c: np.ndarray, Rm: np.ndarray, Ts: float = DT) -> None:
         self._Q_c = Q_c
-        self._R   = R
+        self._Rm = Rm
+        self._Ts = Ts
+        self._sigma = np.diag(np.sqrt(np.diag(Q_c)))
+
+    @property
+    def Ts(self) -> float: return self._Ts
 
     @property
     def nx(self) -> int: return 3
@@ -81,16 +91,16 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
     def nd(self) -> int: return 1
 
     @property
-    def ny(self) -> int: return 1
+    def nym(self) -> int: return 1
+
+    @property
+    def nz(self) -> int: return 1
 
     @property
     def nw(self) -> int: return 3
 
     @property
-    def Q_c(self) -> np.ndarray: return self._Q_c.copy()
-
-    @property
-    def R(self) -> np.ndarray: return self._R.copy()
+    def Rm(self) -> np.ndarray: return self._Rm.copy()
 
     @staticmethod
     def _mu(S, P, mu_max, K_s, K_I):
@@ -108,10 +118,13 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
             alpha * mu * X - D * P,
         ])
 
-    def g(self, x, u, d, p, t):
-        return np.eye(3)   # identity — Q_c is the direct noise covariance
+    def sigma(self, x, u, d, p, t):
+        return self._sigma.copy()
 
-    def h(self, x, u, d, p):
+    def hm(self, x, u, d, p, t=0.0):
+        return np.array([x[1]])
+
+    def gm(self, x, u, d, p, t):
         return np.array([x[1]])
 
     def dfdx(self, x, u, d, p, t):
@@ -129,13 +142,13 @@ class ProductInhibitionBioreactor(ContinuousDiscreteSDE):
             [alpha * mu_S * X,       alpha * mu,        alpha * mu_P * X - D],
         ])
 
-    def dhdx(self, x, u, d, p):
+    def dhmdx(self, x, u, d, p, t=0.0):
         return np.array([[0.0, 1.0, 0.0]])
 
-    def dhdu(self, x, u, d, p):
+    def dhmdu(self, x, u, d, p, t=0.0):
         return np.zeros((1, 1))
 
-    def dhdd(self, x, u, d, p):
+    def dhmdd(self, x, u, d, p, t=0.0):
         return np.zeros((1, 1))
 
 
@@ -156,7 +169,7 @@ def _simulate(rng: np.random.Generator):
 
     x = X0_TRUE.copy()
     X_true[0] = x
-    model_sim = ProductInhibitionBioreactor(Q_C_TRUE, R_TRUE)
+    model_sim = ProductInhibitionBioreactor(Q_C_TRUE, R_TRUE, Ts=DT)
 
     for k, t_k in enumerate(t_meas):
         u_k = np.array([D_CONST]); d_k = np.array([_sin_schedule(t_k)])
@@ -164,7 +177,7 @@ def _simulate(rng: np.random.Generator):
         for _ in range(N_SUB):
             x = np.maximum(x + h * model_sim.f(x, u_k, d_k, P_TRUE, t_k)
                            + G_std * rng.standard_normal(3) * sh, 0.0)
-        Y_meas[k] = model_sim.h(x, u_k, d_k, P_TRUE) + R_std * rng.standard_normal(1)
+        Y_meas[k] = model_sim.hm(x, u_k, d_k, P_TRUE, t_k) + R_std * rng.standard_normal(1)
         X_true[k + 1] = x
 
     return X_true, Y_meas, U_arr, D_arr, t_meas
@@ -174,8 +187,11 @@ def _simulate(rng: np.random.Generator):
 
 def _run_ekf(q_scale: float, X_true, Y_meas, U_arr, D_arr, t_meas):
     """Run CD-EKF with the given Q_c scale.  Return (errors (N+1,3), nis (N,))."""
-    model = ProductInhibitionBioreactor(q_scale * Q_C_TRUE, R_TRUE)
-    filt  = ContinuousDiscreteEKF(model, X0_EST.copy(), P0_EST.copy(), DT, n_steps=N_SUB)
+    model = ProductInhibitionBioreactor(q_scale * Q_C_TRUE, R_TRUE, Ts=DT)
+    filt  = ContinuousDiscreteEKF(
+        model, X0_EST.copy(), P0_EST.copy(),
+        params=ContinuousDiscreteEKFParams(n_steps=N_SUB),
+    )
 
     N   = len(t_meas)
     err = np.empty((N + 1, 3)); err[0] = filt.x_hat - X_true[0]
@@ -186,9 +202,9 @@ def _run_ekf(q_scale: float, X_true, Y_meas, U_arr, D_arr, t_meas):
         x_pred, P_pred = filt.predict(u_k, d_k, P_TRUE, t_k)
 
         # NIS before update
-        H    = model.dhdx(x_pred, u_k, d_k, P_TRUE)
-        y_hat = model.h(x_pred, u_k, d_k, P_TRUE)
-        S    = H @ P_pred @ H.T + model.R
+        H    = model.dhmdx(x_pred, u_k, d_k, P_TRUE, t_k)
+        y_hat = model.hm(x_pred, u_k, d_k, P_TRUE, t_k)
+        S    = H @ P_pred @ H.T + model.Rm
         innov = y_k - y_hat
         nis[k] = float(innov @ np.linalg.solve(S, innov))
 
@@ -200,9 +216,11 @@ def _run_ekf(q_scale: float, X_true, Y_meas, U_arr, D_arr, t_meas):
 
 def _run_ukf(alpha: float, q_scale: float, X_true, Y_meas, U_arr, D_arr, t_meas):
     """Run CD-UKF with the given alpha and Q_c scale.  Return (errors, nis)."""
-    model = ProductInhibitionBioreactor(q_scale * Q_C_TRUE, R_TRUE)
-    filt  = ContinuousDiscreteUKF(model, X0_EST.copy(), P0_EST.copy(), DT,
-                                   n_steps=N_SUB, alpha=alpha)
+    model = ProductInhibitionBioreactor(q_scale * Q_C_TRUE, R_TRUE, Ts=DT)
+    filt  = ContinuousDiscreteUKF(
+        model, X0_EST.copy(), P0_EST.copy(),
+        params=ContinuousDiscreteUKFParams(n_steps=N_SUB, alpha=alpha),
+    )
 
     N   = len(t_meas)
     err = np.empty((N + 1, 3)); err[0] = filt.x_hat - X_true[0]
@@ -213,9 +231,9 @@ def _run_ukf(alpha: float, q_scale: float, X_true, Y_meas, U_arr, D_arr, t_meas)
         x_pred, P_pred = filt.predict(u_k, d_k, P_TRUE, t_k)
 
         # NIS before update (using EKF linearisation as approximation)
-        H     = model.dhdx(x_pred, u_k, d_k, P_TRUE)
-        y_hat = model.h(x_pred, u_k, d_k, P_TRUE)
-        S     = H @ P_pred @ H.T + model.R
+        H     = model.dhmdx(x_pred, u_k, d_k, P_TRUE, t_k)
+        y_hat = model.hm(x_pred, u_k, d_k, P_TRUE, t_k)
+        S     = H @ P_pred @ H.T + model.Rm
         innov = y_k - y_hat
         nis[k] = float(innov @ np.linalg.solve(S, innov))
 

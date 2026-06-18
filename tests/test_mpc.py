@@ -22,20 +22,6 @@ import numpy as np
 import pytest
 
 
-def matrix(data, size=None, tc=None):
-    """numpy-backed stand-in for the former cvxopt ``matrix`` constructor.
-
-    Supports the two call patterns used in this test module:
-    ``matrix(array)`` (cost matrices) and ``matrix(value_or_seq, (rows, cols))``
-    (column vectors / filled matrices).
-    """
-    arr = np.asarray(data, dtype=float)
-    if size is None:
-        return arr
-    rows, cols = size
-    if arr.ndim == 0:
-        return np.full((rows, cols), float(arr))
-    return arr.reshape(rows, cols)
 
 from mbc.models import (
     DiscreteLinearSDE,
@@ -234,15 +220,15 @@ class TestDiscreteLinearOCP:
 
     def _make_ocp(self, N=10, **kw):
         model = DoubleIntegrator()
-        Q = matrix(np.eye(1))
-        R = matrix(np.eye(1) * 0.1)
+        Q = np.eye(1)
+        R = np.eye(1) * 0.1
         return DiscreteLinearOCP(model, N=N, Q=Q, R=R, y_offset=20.0, **kw)
 
     def test_solve_returns_correct_shapes(self):
         ocp = self._make_ocp(N=5)
         model = DoubleIntegrator()
         x0 = _cvx(np.array([0.0, 0.0]))
-        D = matrix(0.0, (5 * model.nd, 1))
+        D = np.zeros((5 * model.nd, 1))
         x_ref = _cvx(model.x_ref)
         U, X = ocp.solve(x0, D, x_ref)
         assert U.shape == (5 * model.nu,), f"U shape {U.size}"
@@ -253,7 +239,7 @@ class TestDiscreteLinearOCP:
         ocp = self._make_ocp(N=5)
         model = DoubleIntegrator()
         x0 = np.array([0.0, 0.0])
-        D = matrix(0.0, (5 * model.nd, 1))
+        D = np.zeros((5 * model.nd, 1))
         x_ref = model.x_ref
         U, X = ocp.solve(x0, D, x_ref)
         assert U.shape == (5 * model.nu,)
@@ -264,7 +250,7 @@ class TestDiscreteLinearOCP:
         model = DoubleIntegrator()
         x0 = np.array([0.0, 0.0])
         x_ref = model.x_ref
-        D = matrix(0.0, (20 * model.nd, 1))
+        D = np.zeros((20 * model.nd, 1))
         _, X = ocp.solve(x0, D, x_ref)
         X_np = _np(X).reshape(20, model.nx)
         # Position at end of horizon should be closer to reference than start
@@ -280,7 +266,7 @@ class TestDiscreteLinearOCP:
         ocp = self._make_ocp(N=10)
         model = DoubleIntegrator()
         x0 = np.array([0.0, 0.0])
-        D = matrix(0.0, (10 * model.nd, 1))
+        D = np.zeros((10 * model.nd, 1))
         x_ref = model.x_ref
         U, _ = ocp.solve(x0, D, x_ref)
         u_vals = _np(U)
@@ -291,17 +277,17 @@ class TestDiscreteLinearOCP:
     def test_rate_penalty_reduces_variation(self):
         """Adding rate-of-movement penalty S should reduce input variation."""
         model = DoubleIntegrator()
-        Q = matrix(np.eye(1))
-        R = matrix(np.eye(1) * 0.01)
+        Q = np.eye(1)
+        R = np.eye(1) * 0.01
         N = 10
         x0 = np.array([0.0, 0.0])
-        D = matrix(0.0, (N * model.nd, 1))
+        D = np.zeros((N * model.nd, 1))
         x_ref = model.x_ref
 
         ocp_no_rom = DiscreteLinearOCP(model, N=N, Q=Q, R=R, y_offset=20.0)
         ocp_rom = DiscreteLinearOCP(
             model, N=N, Q=Q, R=R, y_offset=20.0,
-            S=matrix(np.eye(1) * 10.0),
+            S=np.eye(1) * 10.0,
         )
         U_no_rom, _ = ocp_no_rom.solve(x0, D, x_ref)
         U_rom, _ = ocp_rom.solve(x0, D, x_ref)
@@ -326,8 +312,8 @@ class TestMPCController:
         # Qd, Rm read directly from the model (DiscreteLinearSDE
         # provides them as abstract properties).
         kf = DiscreteLinearKF(model)
-        Q_ocp = matrix(np.eye(1))
-        R_ocp = matrix(np.eye(1) * 0.1)
+        Q_ocp = np.eye(1)
+        R_ocp = np.eye(1) * 0.1
         ocp = DiscreteLinearOCP(model, N=N, Q=Q_ocp, R=R_ocp, y_offset=20.0)
         ctrl = MPCController(model, estimator=kf, ocp=ocp)
         return ctrl, model
@@ -335,7 +321,7 @@ class TestMPCController:
     def test_step_returns_correct_shapes(self):
         ctrl, model = self._make_ctrl(N=5)
         y = _cvx(np.array([0.5]))
-        D = matrix(0.0, (5 * model.nd, 1))
+        D = np.zeros((5 * model.nd, 1))
         u, U_seq, X_seq = ctrl.step(y, D)
         assert u.shape == (model.nu,)
         assert U_seq.shape == (5 * model.nu,)
@@ -344,7 +330,7 @@ class TestMPCController:
     def test_step_input_within_bounds(self):
         ctrl, model = self._make_ctrl(N=10)
         y = _cvx(np.array([0.0]))
-        D = matrix(0.0, (10 * model.nd, 1))
+        D = np.zeros((10 * model.nd, 1))
         u, _, _ = ctrl.step(y, D)
         u_val = float(list(u)[0])
         u_min, u_max = model.u_bounds
@@ -353,7 +339,7 @@ class TestMPCController:
 
     def test_repeated_steps_do_not_crash(self):
         ctrl, model = self._make_ctrl(N=5)
-        D = matrix(0.0, (5 * model.nd, 1))
+        D = np.zeros((5 * model.nd, 1))
         for k in range(10):
             y = _cvx(np.array([0.0 + 0.1 * k]))
             u, _, _ = ctrl.step(y, D)
@@ -393,8 +379,8 @@ class TestMPCController:
 
         model = ScalarLinearDiscrete()
         kf = DiscreteLinearKF(model)
-        Q_ocp = matrix(np.eye(1) * 5.0)
-        R_ocp = matrix(np.eye(1) * 0.1)
+        Q_ocp = np.eye(1) * 5.0
+        R_ocp = np.eye(1) * 0.1
         ocp = DiscreteLinearOCP(model, N=10, Q=Q_ocp, R=R_ocp, y_offset=20.0)
         ctrl = MPCController(model, estimator=kf, ocp=ocp)
 
@@ -405,7 +391,7 @@ class TestMPCController:
         N_steps = 30
         for _ in range(N_steps):
             y = _cvx(model.Cm @ x)
-            D = matrix(0.0, (10 * model.nd, 1))
+            D = np.zeros((10 * model.nd, 1))
             u, _, _ = ctrl.step(y, D)
             u_np = np.array(list(u)).ravel()
             x = Ad @ x + Bd @ u_np
@@ -425,15 +411,15 @@ class TestContinuousLinearOCP:
 
     def _make_ocp(self, N=10):
         model = SimpleLinearCD()
-        Q = matrix(np.eye(1))
-        R = matrix(np.eye(1) * 0.1)
+        Q = np.eye(1)
+        R = np.eye(1) * 0.1
         return ContinuousLinearOCP(model, N=N, Q=Q, R=R, y_offset=10.0), model
 
     def test_solve_returns_correct_shapes(self):
         ocp, model = self._make_ocp(N=5)
         x0 = np.array([0.0])
-        D = matrix(0.0, (5 * model.nd, 1))
-        x_ref = matrix(model.x_ref, (model.nx, 1))
+        D = np.zeros((5 * model.nd, 1))
+        x_ref = np.asarray(model.x_ref).ravel()
         U, X = ocp.solve(x0, D, x_ref)
         assert U.shape == (5 * model.nu,)
         assert X.shape == (5 * model.nx,)
@@ -441,8 +427,8 @@ class TestContinuousLinearOCP:
     def test_solve_input_within_bounds(self):
         ocp, model = self._make_ocp(N=8)
         x0 = np.array([0.0])
-        D = matrix(0.0, (8 * model.nd, 1))
-        x_ref = matrix(model.x_ref, (model.nx, 1))
+        D = np.zeros((8 * model.nd, 1))
+        x_ref = np.asarray(model.x_ref).ravel()
         U, _ = ocp.solve(x0, D, x_ref)
         u_vals = _np(U)
         u_min, u_max = model.u_bounds
@@ -452,8 +438,8 @@ class TestContinuousLinearOCP:
     def test_solve_drives_toward_reference(self):
         ocp, model = self._make_ocp(N=20)
         x0 = np.array([0.0])
-        D = matrix(0.0, (20 * model.nd, 1))
-        x_ref = matrix(model.x_ref, (model.nx, 1))
+        D = np.zeros((20 * model.nd, 1))
+        x_ref = np.asarray(model.x_ref).ravel()
         _, X = ocp.solve(x0, D, x_ref)
         X_np = _np(X)
         # Final predicted state should be closer to reference than initial
@@ -465,11 +451,11 @@ class TestContinuousLinearOCP:
         )
 
     def test_numpy_x0_accepted(self):
-        """solve() must accept a numpy x0 (not only cvxopt)."""
+        """solve() must accept a numpy x0 (as numpy arrays)."""
         ocp, model = self._make_ocp(N=5)
-        x0 = np.array([0.5])   # numpy, not cvxopt
-        D = matrix(0.0, (5 * model.nd, 1))
-        x_ref = matrix(model.x_ref, (model.nx, 1))
+        x0 = np.array([0.5])   # numpy array
+        D = np.zeros((5 * model.nd, 1))
+        x_ref = np.asarray(model.x_ref).ravel()
         U, X = ocp.solve(x0, D, x_ref)
         assert U.shape == (5 * model.nu,)
 
@@ -478,13 +464,13 @@ class TestContinuousLinearOCP:
 
 
 class TestCDMPCController:
-    """Tests for the linear CD-MPC controller (ContinuousDiscreteLinearKF + CDOptOCP)."""
+    """Tests for the linear CD-MPC controller (ContinuousDiscreteLinearKF + ContinuousLinearOCP)."""
 
     def _make_ctrl(self, N=10):
         model = SimpleLinearCD()
         kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
-        Q = matrix(np.eye(1))
-        R = matrix(np.eye(1) * 0.1)
+        Q = np.eye(1)
+        R = np.eye(1) * 0.1
         ocp = ContinuousLinearOCP(model, N=N, Q=Q, R=R, y_offset=10.0)
         ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
         return ctrl, model
@@ -492,7 +478,7 @@ class TestCDMPCController:
     def test_step_returns_correct_shapes(self):
         ctrl, model = self._make_ctrl(N=5)
         y = _cvx(np.array([0.5]))
-        D = matrix(0.0, (5 * model.nd, 1))
+        D = np.zeros((5 * model.nd, 1))
         u, U_seq, X_seq = ctrl.step(y, D)
         assert u.shape == (model.nu,)
         assert U_seq.shape == (5 * model.nu,)
@@ -501,7 +487,7 @@ class TestCDMPCController:
     def test_step_input_within_bounds(self):
         ctrl, model = self._make_ctrl(N=10)
         y = _cvx(np.array([0.0]))
-        D = matrix(0.0, (10 * model.nd, 1))
+        D = np.zeros((10 * model.nd, 1))
         u, _, _ = ctrl.step(y, D)
         u_val = float(list(u)[0])
         u_min, u_max = model.u_bounds
@@ -510,7 +496,7 @@ class TestCDMPCController:
 
     def test_repeated_steps_do_not_crash(self):
         ctrl, model = self._make_ctrl(N=5)
-        D = matrix(0.0, (5 * model.nd, 1))
+        D = np.zeros((5 * model.nd, 1))
         for k in range(8):
             y = _cvx(np.array([float(k) * 0.1]))
             u, _, _ = ctrl.step(y, D)
@@ -520,8 +506,8 @@ class TestCDMPCController:
         """CD-MPC should drive the system output toward x_ref."""
         model = SimpleLinearCD(x0=[0.0])
         kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
-        Q = matrix(np.eye(1) * 5.0)
-        R = matrix(np.eye(1) * 0.01)
+        Q = np.eye(1) * 5.0
+        R = np.eye(1) * 0.01
         ocp = ContinuousLinearOCP(model, N=20, Q=Q, R=R, y_offset=10.0)
         ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
 
@@ -532,7 +518,7 @@ class TestCDMPCController:
         N_steps = 30
         for _ in range(N_steps):
             y = _cvx(model.Cm @ x)
-            D = matrix(0.0, (20 * model.nd, 1))
+            D = np.zeros((20 * model.nd, 1))
             u, _, _ = ctrl.step(y, D)
             u_np = np.array(list(u)).ravel()
             x = Ad @ x + Bd @ u_np
@@ -1347,16 +1333,6 @@ class _DummyEstimator2:
         return self._x.copy(), np.eye(self._x.shape[0])
 
 
-class _DummyEstimator3:
-    """Estimator stub returning (x_hat, y_hat, P) to mimic DAE-EKF output."""
-
-    def __init__(self, x0):
-        self._x = np.asarray(x0, dtype=float)
-
-    def step(self, y, u, d, p, t):
-        self._x = np.asarray(y, dtype=float).copy()
-        return self._x.copy(), self._x.copy(), np.eye(self._x.shape[0])
-
 
 class TestCDLinearizationUtilities:
     def test_linearize_dimensions(self):
@@ -1413,8 +1389,8 @@ class TestCDLinearizationUtilities:
 class TestCDLinearizedMPCController:
     def _make_ctrl(self, estimator, x_ref=np.array([2.0])):
         model = _ScalarBoundedNonlinear()
-        Q = matrix(np.eye(1) * 5.0)
-        R = matrix(np.eye(1) * 0.05)
+        Q = np.eye(1) * 5.0
+        R = np.eye(1) * 0.05
         ctrl = CDLinearizedMPCController(
             model=model,
             estimator=estimator,
@@ -1449,8 +1425,8 @@ class TestCDLinearizedMPCController:
         P0 = np.eye(1)
         model = _ScalarBoundedNonlinear()
         ekf = ContinuousDiscreteEKF(model, x0=x0, P0=P0)
-        Q = matrix(np.eye(1) * 2.0)
-        R = matrix(np.eye(1) * 0.1)
+        Q = np.eye(1) * 2.0
+        R = np.eye(1) * 0.1
         ctrl = CDLinearizedMPCController(
             model=model, estimator=ekf, N=5, Q=Q, R=R, dt=1.0,
             u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([1.0]), y_offset=10.0,
@@ -1477,8 +1453,8 @@ class TestCDLinearizedMPCController:
         P0 = np.eye(1)
         ekf = ContinuousDiscreteEKF(model, x0=x0.copy(), P0=P0, params=ContinuousDiscreteEKFParams(n_steps=8))
 
-        Q = matrix(np.eye(1) * 8.0)
-        R = matrix(np.eye(1) * 0.05)
+        Q = np.eye(1) * 8.0
+        R = np.eye(1) * 0.05
         ctrl = CDLinearizedMPCController(
             model=model, estimator=ekf, N=10, Q=Q, R=R, dt=1.0,
             u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([2.0]), y_offset=10.0,
@@ -1493,15 +1469,6 @@ class TestCDLinearizedMPCController:
 
         assert abs(x[0] - 2.0) < 1.0
 
-    def test_estimator_return_tuple_compatibility_regression(self):
-        ctrl2, _ = self._make_ctrl(estimator=_DummyEstimator2([0.0]))
-        u2, _, _ = ctrl2.step(y=np.array([0.2]), d=np.array([0.0]), p=np.array([]), t=0.0)
-
-        ctrl3, _ = self._make_ctrl(estimator=_DummyEstimator3([0.0]))
-        u3, _, _ = ctrl3.step(y=np.array([0.2]), d=np.array([0.0]), p=np.array([]), t=0.0)
-
-        assert u2.shape == (1,)
-        assert u3.shape == (1,)
 
 
 # ── Tests: condensed vs sparse formulation equivalence ───────────────────────

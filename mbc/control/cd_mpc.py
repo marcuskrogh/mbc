@@ -19,7 +19,7 @@ At each measurement time t_k:
 The estimator integrates the continuous-time matrices ``A``, ``B``, ``E``
 directly via ODE integration; the OCP uses ZOH-discretised matrices
 ``(Ad, Bd, Ed)`` computed once at construction time inside
-:class:`CDOptimalControlProblem`.
+:class:`~mbc.control.ContinuousLinearOCP`.
 """
 
 from __future__ import annotations

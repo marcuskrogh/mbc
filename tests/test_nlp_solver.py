@@ -137,21 +137,25 @@ def test_scipy_backend_falls_back_to_numerical_derivatives_for_trust_constr():
     assert result.nfev is not None and result.nfev > 0
 
 
-def test_make_nlp_backend_solver_selection_keys_and_aliases():
+def test_make_nlp_backend_solver_selection_keys():
     ipopt_backend = make_nlp_backend("ipopt")
-    ipopt_alias_backend = make_nlp_backend("cyipopt")
     scipy_backend = make_nlp_backend("scipy")
-    scipy_alias_backend = make_nlp_backend("scipy-minimize", solver_options={"method": "trust-constr"})
     scipy_method_backend = make_nlp_backend("SLSQP")
 
     assert isinstance(ipopt_backend, IpoptNLPBackend)
-    assert isinstance(ipopt_alias_backend, IpoptNLPBackend)
     assert isinstance(scipy_backend, ScipyNLPBackend)
-    assert isinstance(scipy_alias_backend, ScipyNLPBackend)
     assert isinstance(scipy_method_backend, ScipyNLPBackend)
     assert scipy_backend._method == "SLSQP"
-    assert scipy_alias_backend._method == "trust-constr"
     assert scipy_method_backend._method == "SLSQP"
+
+
+def test_make_nlp_backend_rejects_legacy_solver_aliases():
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError, match="Unknown solver"):
+        make_nlp_backend("cyipopt")
+    with _pytest.raises(ValueError, match="Unknown solver"):
+        make_nlp_backend("scipy-minimize")
 
 
 def test_make_nlp_backend_raises_for_unknown_solver():

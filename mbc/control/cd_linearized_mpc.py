@@ -318,8 +318,8 @@ class CDLinearizedMPCController:
         d_now = np.asarray(d, dtype=float).reshape(self._model.nd)
         p_ = np.array([], dtype=float) if p is None else np.asarray(p, dtype=float)
 
-        est_out = self._estimator.step(y, self._u_prev, self._d_prev, p_, t)
-        x_hat = np.asarray(est_out[0], dtype=float).reshape(self._model.nx)
+        x_hat_np, _ = self._estimator.step(y, self._u_prev, self._d_prev, p_, t)
+        x_hat = np.asarray(x_hat_np, dtype=float).reshape(self._model.nx)
 
         x_ss = x_hat.copy()
         u_ss = self._u_prev.copy()

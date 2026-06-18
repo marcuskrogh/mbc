@@ -1,8 +1,8 @@
 """
 Model Predictive Controller for linear discrete-time systems.
 
-Composes a :class:`~mbc.estimation.DiscreteLinearKF` and an
-:class:`OptimalControlProblem` for any
+Composes a :class:`~mbc.estimation.DiscreteLinearKF` and a
+:class:`~mbc.control.DiscreteLinearOCP` for any
 :class:`~mbc.models.DiscreteLinearSDE` and implements the receding-horizon
 policy described in ControlToolbox §EMPC — *ENMPC Algorithm*, specialised
 to the linear case.
