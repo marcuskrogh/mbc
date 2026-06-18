@@ -1447,6 +1447,50 @@ class TestCDLinearizedMPCController:
         assert D_dev.shape == (8, model.nd)
         assert np.allclose(D_dev, 0.0)
 
+    def test_disturbance_profile_converted_to_deviation_coordinates(self):
+        est = _DummyEstimator2([0.0])
+        ctrl, model = self._make_ctrl(estimator=est)
+        d_ss = 0.4
+        D_abs = np.linspace(0.4, 1.2, 8).reshape(8, 1)
+        ctrl.set_linearisation_point(x=np.array([0.0]), u=np.array([0.0]), d=np.array([d_ss]))
+        ctrl.set_disturbance_profile(D_abs)
+        ctrl.compute(y=np.array([0.0]), d=np.array([d_ss]), p=np.array([]), t=0.0)
+        D_dev = ctrl.last_disturbance_deviation_trajectory
+        np.testing.assert_allclose(D_dev, D_abs - d_ss)
+
+    def test_equilibrium_linearisation_uses_state_deviation_initial_condition(self):
+        est = _DummyEstimator2([0.5])
+        ctrl, _ = self._make_ctrl(estimator=est, x_ref=np.array([2.0]))
+        ctrl.set_linearisation_point(
+            x=np.array([0.0]), u=np.array([0.0]), d=np.array([0.0]),
+        )
+
+        captured: dict[str, np.ndarray] = {}
+        orig_solve = ctrl._ocp.solve
+
+        def spy_solve(x0, *args, **kwargs):
+            captured["x0"] = np.asarray(x0, dtype=float).copy()
+            return orig_solve(x0, *args, **kwargs)
+
+        ctrl._ocp.solve = spy_solve  # type: ignore[method-assign]
+        ctrl.compute(y=np.array([0.5]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        np.testing.assert_allclose(captured["x0"], np.array([0.5]))
+
+    def test_input_bound_profiles_stay_absolute_across_steps(self):
+        est = _DummyEstimator2([0.0])
+        ctrl, model = self._make_ctrl(estimator=est)
+        u_min_abs = np.full((8, model.nu), -0.8)
+        u_max_abs = np.full((8, model.nu), 0.8)
+        ctrl.set_input_bound_profiles(u_min_abs, u_max_abs)
+
+        ctrl.set_linearisation_point(x=np.array([0.0]), u=np.array([0.2]), d=np.array([0.0]))
+        ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        ctrl.set_linearisation_point(x=np.array([0.0]), u=np.array([0.5]), d=np.array([0.0]))
+        ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=1.0)
+
+        np.testing.assert_allclose(ctrl.horizon_profile.input_min_profile, u_min_abs)
+        np.testing.assert_allclose(ctrl.horizon_profile.input_max_profile, u_max_abs)
+
     def test_closed_loop_moves_toward_reference(self):
         model = _ScalarBoundedNonlinear()
         x0 = np.array([0.0])

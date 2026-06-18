@@ -100,7 +100,13 @@ class _MutableDiscreteLinearSDE:
 
 
 class LinearisedDiscreteMPC(ModelPredictiveController):
-    """Abstract successive-linearisation MPC for nonlinear discrete-time plants."""
+    """
+    Abstract MPC with mixed nonlinear estimation and linearised control.
+
+    State estimation runs on the full nonlinear discrete-time plant; the OCP
+    linearises at each sample and solves a discrete-time QP in deviation
+    coordinates.
+    """
 
     @abstractmethod
     def compute(self, ym: Any, d: Any | None = None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
