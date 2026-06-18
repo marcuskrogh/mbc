@@ -132,8 +132,11 @@ class _HorizonProfileSupport:
             Optional ``(N, n_slack)`` asymmetric coefficients on ``s`` and
             ``t``.  Omit for symmetric magnitude penalisation ``c·(s + t)``.
         input_equilibrium
-            Reserved for deviation-coordinate linearisation (unused in the
-            absolute-coordinate QP).
+            Absolute input offset ``u_eq`` when the QP optimises deviation inputs
+            ``δu``.  Quadratic regularisation ``‖u‖²_R`` and signed-magnitude
+            slacks ``u = s − t`` are then expressed relative to ``u = u_eq + δu``.
+            Linearised OCPs set this automatically from the operating-point
+            input ``u_s``.
         """
         idx = signed_magnitude_input_indices if signed_magnitude_input_indices is not None else slack_input_indices
         self._horizon_profile.input_linear_cost_coefficient_profile = np.asarray(
@@ -150,9 +153,15 @@ class _HorizonProfileSupport:
             None if negative_slack_coefficient_profile is None
             else np.asarray(negative_slack_coefficient_profile, dtype=float)
         )
-        self._horizon_profile.input_equilibrium = (
-            None if input_equilibrium is None
-            else np.asarray(input_equilibrium, dtype=float)
+        if input_equilibrium is not None:
+            self._horizon_profile.input_equilibrium = np.asarray(
+                input_equilibrium, dtype=float
+            )
+
+    def set_input_equilibrium(self, u_equilibrium: np.ndarray) -> None:
+        """Set absolute input offset for deviation-coordinate regularisation."""
+        self._horizon_profile.input_equilibrium = np.asarray(
+            u_equilibrium, dtype=float
         )
 
     def set_linearisation_point(

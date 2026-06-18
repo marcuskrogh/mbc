@@ -49,7 +49,9 @@ class StandardLinearisedDiscreteOCP(StandardLinearDiscreteOCP):
     Q : (nz, nz) array-like
         Stage output tracking cost  ‖δz − δz_ref‖²_Q  (deviation space).
     R : (nu, nu) array-like
-        Stage input cost  ‖δu‖²_R  (deviation space).
+        Stage input cost  ``‖u‖²_R``  on **absolute** inputs.  In the deviation
+        QP this is implemented via :attr:`horizon_profile.input_equilibrium`
+        (set automatically from ``u_s``).
     P : (nz, nz) array-like, optional
         Terminal output tracking cost.  Default: Q.
     S : (nu, nu) array-like, optional
@@ -139,10 +141,15 @@ class StandardLinearisedDiscreteOCP(StandardLinearDiscreteOCP):
             if X_ws is not None:
                 ws_dev["X"] = (np.asarray(X_ws, dtype=float).reshape(N, nx) - x_s).reshape(-1)
 
-        # Solve in deviation space
-        U_dev, X_dev = super().solve(
-            delta_x0, delta_D, delta_x_ref, delta_u_prev, ws_dev
-        )
+        # Solve in deviation space with absolute input regularisation.
+        saved_ue = self._horizon_profile.input_equilibrium
+        self._horizon_profile.input_equilibrium = u_s
+        try:
+            U_dev, X_dev = super().solve(
+                delta_x0, delta_D, delta_x_ref, delta_u_prev, ws_dev
+            )
+        finally:
+            self._horizon_profile.input_equilibrium = saved_ue
 
         # Convert back to absolute space
         U_abs = (U_dev.reshape(N, nu) + u_s).reshape(-1)
