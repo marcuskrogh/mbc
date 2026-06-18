@@ -63,6 +63,13 @@ from scipy.linalg import block_diag
 from .._utils import _any_to_np1d, _any_to_np2d
 from ._base import DiscreteOptimalControlProblem
 from .qp_solver import QPProblem, QPSolverBackend, make_qp_backend
+from .input_linear_cost import (
+    InputLinearCostMode,
+    augment_condensed_qp,
+    augment_sparse_qp,
+    infer_signed_magnitude_input_indices,
+    resolve_input_linear_cost,
+)
 
 if TYPE_CHECKING:
     from ..models import DiscreteLinearSDE
@@ -295,6 +302,20 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             return (np.tile(z_ref, N) + dev).reshape(-1)
         return np.tile(z_ref, N)
 
+    def _resolve_linear_cost_layout(self):
+        prof = self._horizon_profile
+        u_min, u_max = self._model.u_bounds
+        return resolve_input_linear_cost(
+            coefficient_profile=prof.input_linear_cost_coefficient_profile,
+            N=self._N,
+            nu=self._model.nu,
+            u_min=_any_to_np1d(u_min),
+            u_max=_any_to_np1d(u_max),
+            slack_input_indices=prof.slack_input_indices,
+            positive_slack_coefficient_profile=prof.positive_slack_coefficient_profile,
+            negative_slack_coefficient_profile=prof.negative_slack_coefficient_profile,
+        )
+
     def _per_step_band_half_width(self, N: int) -> np.ndarray:
         prof = self._horizon_profile.soft_output_band_half_width_profile
         if prof is None:
@@ -387,8 +408,8 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
 
     # ── Warm-start assembly ────────────────────────────────────────────────
 
-    @staticmethod
     def _assemble_warm(
+        self,
         formulation: str,
         warm_start: dict[str, np.ndarray] | None,
         N: int,
@@ -399,6 +420,8 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         """Map a physical ``{"U", "X"}`` warm start to the decision vector."""
         if warm_start is None:
             return None
+        layout = self._resolve_linear_cost_layout()
+        n_slack_st = 2 * layout.n_st if layout is not None and layout.has_slack else 0
         n_U = N * nu
         n_eps = N * nz
         n_X = N * nx
@@ -408,15 +431,16 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         U_w = np.asarray(U_w, dtype=float).reshape(-1)
         if U_w.shape[0] != n_U:
             return None
+        slack_pad = np.zeros(n_slack_st)
         if formulation == "condensed":
-            return np.concatenate([U_w, np.zeros(n_eps)])
+            return np.concatenate([U_w, slack_pad, np.zeros(n_eps)])
         X_w = warm_start.get("X")
         if X_w is None:
             return None
         X_w = np.asarray(X_w, dtype=float).reshape(-1)
         if X_w.shape[0] != n_X:
             return None
-        return np.concatenate([X_w, U_w, np.zeros(n_eps)])
+        return np.concatenate([X_w, U_w, slack_pad, np.zeros(n_eps)])
 
     # ── Forward simulation (fallback X reconstruction) ─────────────────────
 
@@ -544,7 +568,13 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             X_flat = Psi @ x0 + Gamma @ U_flat + Lambda @ D
             return U_flat, X_flat
 
-        return {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h}, extract
+        qp = {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h}
+        layout = self._resolve_linear_cost_layout()
+        if layout is not None and layout.has_any:
+            qp = augment_condensed_qp(
+                qp, layout=layout, N=N, nu=nu, n_eps=n_eps,
+            )
+        return qp, extract
 
     # ── Sparse (simultaneous, banded) builder ──────────────────────────────
 
@@ -693,7 +723,12 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             U_flat = z[oU:oU + n_U]
             return U_flat, X_flat
 
-        return (
-            {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h, "A": A_eq, "b": b_eq},
-            extract,
-        )
+        qp = {
+            "P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h, "A": A_eq, "b": b_eq,
+        }
+        layout = self._resolve_linear_cost_layout()
+        if layout is not None and layout.has_any:
+            qp = augment_sparse_qp(
+                qp, layout=layout, N=N, nu=nu, nx=nx, nz=nz,
+            )
+        return qp, extract

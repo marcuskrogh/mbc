@@ -109,16 +109,38 @@ class _HorizonProfileSupport:
         coefficient_profile: np.ndarray,
         *,
         slack_input_indices: np.ndarray | None = None,
+        signed_magnitude_input_indices: np.ndarray | None = None,
         positive_slack_coefficient_profile: np.ndarray | None = None,
         negative_slack_coefficient_profile: np.ndarray | None = None,
         input_equilibrium: np.ndarray | None = None,
     ) -> None:
+        """
+        Configure a linear Mayer penalty ``cᵀu`` on inputs over the horizon.
+
+        Parameters
+        ----------
+        coefficient_profile : (N, nu) or (nu,) array
+            Mayer coefficient per input.  For **direct** inputs this is the
+            coefficient on ``u``.  For **signed-magnitude** inputs it is the
+            default coefficient on both slacks when asymmetric profiles are
+            omitted (penalising ``|u|`` when ``c⁺ = c⁻ = c``).
+        slack_input_indices, signed_magnitude_input_indices
+            Input indices that use ``u = s − t``, ``s, t ≥ 0``.  When both are
+            omitted, defaults to inputs whose bounds span zero
+            (:func:`~mbc.control.infer_signed_magnitude_input_indices`).
+        positive_slack_coefficient_profile, negative_slack_coefficient_profile
+            Optional ``(N, n_slack)`` asymmetric coefficients on ``s`` and
+            ``t``.  Omit for symmetric magnitude penalisation ``c·(s + t)``.
+        input_equilibrium
+            Reserved for deviation-coordinate linearisation (unused in the
+            absolute-coordinate QP).
+        """
+        idx = signed_magnitude_input_indices if signed_magnitude_input_indices is not None else slack_input_indices
         self._horizon_profile.input_linear_cost_coefficient_profile = np.asarray(
             coefficient_profile, dtype=float
         )
         self._horizon_profile.slack_input_indices = (
-            None if slack_input_indices is None
-            else np.asarray(slack_input_indices, dtype=int)
+            None if idx is None else np.asarray(idx, dtype=int)
         )
         self._horizon_profile.positive_slack_coefficient_profile = (
             None if positive_slack_coefficient_profile is None

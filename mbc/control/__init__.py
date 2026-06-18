@@ -27,6 +27,11 @@ from .cd_linearized_mpc import (
     discretize_cd_linearization,
 )
 from .enmpc import NonlinearContinuousMPC, StandardNonlinearContinuousMPC
+from .input_linear_cost import (
+    InputLinearCostMode,
+    infer_signed_magnitude_input_indices,
+    resolve_input_linear_cost,
+)
 from .nlp_solver import (
     NLPConstraint,
     NLPProblem,
@@ -90,6 +95,10 @@ __all__ = [
     "HighsQPBackend",
     "OSQPBackend",
     "make_qp_backend",
+    # Input linear cost
+    "InputLinearCostMode",
+    "infer_signed_magnitude_input_indices",
+    "resolve_input_linear_cost",
     # Helpers
     "_shift_warm_start",
 ]
