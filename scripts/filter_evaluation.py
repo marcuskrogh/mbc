@@ -35,8 +35,7 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import numpy as np
 
-from mbc.estimation.ekf import ContinuousDiscreteEKF
-from mbc.estimation.ukf import ContinuousDiscreteUKF
+from mbc.estimation import ContinuousDiscreteEKF, ContinuousDiscreteUKF
 from mbc.models import ContinuousDiscreteSDE
 
 # ── Scenario (identical to bioreactor_comparative.py) ─────────────────────────
