@@ -4,18 +4,18 @@ Successive-linearisation MPC for nonlinear discrete-time models.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, TYPE_CHECKING
 
 import numpy as np
 
 from .._utils import _fd_jacobian
 from ..estimation import DiscreteLinearKF
+from ._base import ModelPredictiveController
 from .discrete_linear_ocp import StandardLinearDiscreteOCP
-from .mpc_horizon import HorizonProfileMPC
 
 if TYPE_CHECKING:
-    from ..models import DiscreteLinearSDE
+    pass
 
 
 def linearize_discrete_model(
@@ -58,10 +58,6 @@ class _MutableDiscreteLinearSDE:
         self.u_ss = np.zeros(nu)
         self.d_ss = np.zeros(nd)
 
-    def update(self, **kwargs: np.ndarray) -> None:
-        for key, val in kwargs.items():
-            setattr(self, f"_{key}" if key in ("Ad", "Bd", "Ed", "Cm", "Cz") else key, np.asarray(val))
-
     @property
     def nx(self) -> int:
         return self._nx
@@ -103,7 +99,7 @@ class _MutableDiscreteLinearSDE:
         return self._u_min - self.u_ss, self._u_max - self.u_ss
 
 
-class LinearisedDiscreteMPC(ABC):
+class LinearisedDiscreteMPC(ModelPredictiveController):
     """Abstract successive-linearisation MPC for nonlinear discrete-time plants."""
 
     @abstractmethod
@@ -111,7 +107,7 @@ class LinearisedDiscreteMPC(ABC):
         """Execute one closed-loop step."""
 
 
-class StandardLinearisedDiscreteMPC(HorizonProfileMPC, LinearisedDiscreteMPC):
+class StandardLinearisedDiscreteMPC(LinearisedDiscreteMPC):
     """Standard linearised discrete-time MPC using :class:`StandardLinearDiscreteOCP`."""
 
     def __init__(
@@ -133,6 +129,7 @@ class StandardLinearisedDiscreteMPC(HorizonProfileMPC, LinearisedDiscreteMPC):
         self._x_ref = np.zeros(model.nx) if x_ref is None else np.asarray(x_ref, dtype=float)
         self._lin = _MutableDiscreteLinearSDE(model.nx, model.nu, model.nd, u_min, u_max)
         self._ocp = StandardLinearDiscreteOCP(model=self._lin, N=N, Q=Q, R=R, **ocp_kwargs)
+        self._bind_ocp(self._ocp)
         self._u_prev = np.zeros(model.nu)
         self._d_prev = np.zeros(model.nd)
 
@@ -144,8 +141,7 @@ class StandardLinearisedDiscreteMPC(HorizonProfileMPC, LinearisedDiscreteMPC):
         x_hat, _ = self._estimator.step(ym, self._u_prev, self._d_prev)
         x_hat = np.asarray(x_hat, dtype=float).reshape(self._model.nx)
 
-        prof = self._horizon_profile
-        lp = prof.linearisation_point
+        lp = self._horizon_profile.linearisation_point
         x_ss = lp.x if lp is not None else x_hat
         u_ss = lp.u if lp is not None else self._u_prev
         d_ss = lp.d if lp is not None else d_now
@@ -161,9 +157,9 @@ class StandardLinearisedDiscreteMPC(HorizonProfileMPC, LinearisedDiscreteMPC):
         self._lin.d_ss = d_ss
         self._lin._x_ref = self._x_ref - x_ss
 
-        D_dev = np.zeros(self._N * self._model.nd)
+        self.set_disturbance_profile(np.zeros(self._N * self._model.nd))
         U_dev, X_dev = self._ocp.solve(
-            np.zeros(self._model.nx), D_dev, self._x_ref - x_ss, u_prev=np.zeros(self._model.nu),
+            np.zeros(self._model.nx), u_prev=np.zeros(self._model.nu),
         )
         U = U_dev.reshape(self._N, self._model.nu) + u_ss
         X = X_dev.reshape(self._N, self._model.nx) + x_ss

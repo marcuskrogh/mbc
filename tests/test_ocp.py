@@ -94,7 +94,40 @@ class TestStandardLinearContinuousDiscreteOCP:
         assert X.shape == (4,)
 
 
-class TestGeneralContinuousOCP:
+class TestHorizonProfiles:
+    def test_ocp_reads_disturbance_from_profile(self, scalar_disc):
+        ocp = StandardLinearDiscreteOCP(scalar_disc, N=3, Q=np.eye(1), R=np.eye(1) * 0.1)
+        ocp.set_disturbance_profile(np.zeros(3))
+        U, X = ocp.solve(x0=[0.0], x_ref=[1.0])
+        assert U.shape == (3,)
+
+    def test_ocp_time_varying_input_bounds(self, scalar_disc):
+        ocp = StandardLinearDiscreteOCP(
+            scalar_disc, N=3, Q=np.eye(1), R=np.eye(1) * 0.01,
+        )
+        ocp.set_disturbance_profile(np.zeros(3))
+        ocp.set_input_bound_profiles(
+            np.array([[-0.1], [-0.2], [-0.3]]),
+            np.array([[0.1], [0.2], [0.3]]),
+        )
+        U, _ = ocp.solve(x0=[0.0], x_ref=[5.0])
+        U_mat = U.reshape(3, 1)
+        assert U_mat[0, 0] <= 0.1 + 1e-6
+        assert U_mat[2, 0] <= 0.3 + 1e-6
+
+    def test_mpc_shares_profile_with_ocp(self, scalar_disc):
+        from mbc.estimation import DiscreteLinearKF
+        from mbc.control import StandardLinearDiscreteMPC
+
+        kf = DiscreteLinearKF(scalar_disc)
+        ocp = StandardLinearDiscreteOCP(scalar_disc, N=3, Q=np.eye(1), R=np.eye(1) * 0.1)
+        ctrl = StandardLinearDiscreteMPC(scalar_disc, kf, ocp)
+        ctrl.set_output_tracking_weight_scale_profile(np.array([2.0, 2.0, 2.0]))
+        ctrl.set_disturbance_profile(np.zeros(3))
+        u, U, X = ctrl.step(ym=[0.0])
+        assert u.shape == (1,)
+        assert ocp.horizon_profile is ctrl.horizon_profile
+
     def test_tracking_and_bounds(self, scalar_cd):
         model = scalar_cd.nonlinear_model
         ocp = StandardContinuousOCP(

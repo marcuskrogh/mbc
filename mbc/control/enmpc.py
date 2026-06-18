@@ -4,15 +4,14 @@ Nonlinear continuous-time MPC for continuous-discrete plants.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 
 import numpy as np
 
-from .continuous_ocp import ContinuousOptimalControlProblem, GeneralContinuousOCP
-from .mpc_horizon import HorizonProfileMPC
+from ._base import ContinuousOptimalControlProblem, ModelPredictiveController
 
 
-class NonlinearContinuousMPC(ABC):
+class NonlinearContinuousMPC(ModelPredictiveController):
     """Abstract MPC for nonlinear CD plant + CD estimator + continuous OCP."""
 
     @abstractmethod
@@ -26,18 +25,18 @@ class NonlinearContinuousMPC(ABC):
         """Execute one closed-loop NMPC step."""
 
 
-class StandardNonlinearContinuousMPC(HorizonProfileMPC, NonlinearContinuousMPC):
+class StandardNonlinearContinuousMPC(NonlinearContinuousMPC):
     """
     Standard closed-loop NMPC for nonlinear continuous-discrete plants.
 
-    Composes a continuous-discrete state estimator with a
-    :class:`GeneralContinuousOCP` (or subclass).
+    Composes a continuous-discrete state estimator with a continuous OCP.
     """
 
     def __init__(self, estimator, ocp: ContinuousOptimalControlProblem) -> None:
         super().__init__()
         self._estimator = estimator
         self._ocp = ocp
+        self._bind_ocp(ocp)
         self._u_seq_prev: np.ndarray | None = None
         self._x_traj_prev: np.ndarray | None = None
         self._y_traj_prev: np.ndarray | None = None
@@ -51,18 +50,21 @@ class StandardNonlinearContinuousMPC(HorizonProfileMPC, NonlinearContinuousMPC):
         t: float = 0.0,
     ) -> np.ndarray:
         p_ = np.array([], dtype=float) if p is None else np.asarray(p, dtype=float)
+        if d_trajectory is not None:
+            self.set_disturbance_profile(np.asarray(d_trajectory, dtype=float))
+
         prof = self._horizon_profile
-        if d_trajectory is None:
-            if prof.disturbance_profile is None:
-                raise ValueError(
-                    "Provide d_trajectory via step(…) or set_disturbance_profile()."
-                )
-            d_arr = np.asarray(prof.disturbance_profile, dtype=float)
-            if d_arr.ndim == 1:
-                nd = d_arr.size // self._ocp._nd
-                d_trajectory = d_arr.reshape(-1, nd)
-            else:
-                d_trajectory = d_arr
+        if prof.disturbance_profile is None:
+            raise ValueError(
+                "Disturbance forecast required: pass d_trajectory to step() or "
+                "call set_disturbance_profile()."
+            )
+        d_arr = np.asarray(prof.disturbance_profile, dtype=float)
+        if d_arr.ndim == 1:
+            nd = d_arr.size // self._ocp._nd
+            d_trajectory = d_arr.reshape(-1, nd)
+        else:
+            d_trajectory = d_arr
         d0 = d_trajectory[0]
 
         x_hat, _ = self._estimator.step(y, self._u_prev, d0, p_, t)

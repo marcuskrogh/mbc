@@ -4,23 +4,22 @@ Model Predictive Controller for linear continuous-discrete systems.
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import abstractmethod
 from typing import Any, Tuple, TYPE_CHECKING
 
 import numpy as np
 
 from .._utils import _any_to_np1d
 from ..estimation.continuous_discrete_linear_kf import ContinuousDiscreteLinearKF
+from ._base import ModelPredictiveController
 from .continuous_linear_ocp import StandardLinearContinuousDiscreteOCP
 from .discrete_linear_ocp import _shift_warm_start
-from .forecast_ocp import solve_forecast_qp
-from .mpc_horizon import HorizonProfileMPC
 
 if TYPE_CHECKING:
     from ..models import ContinuousDiscreteLinearSDE
 
 
-class LinearContinuousMPC(ABC):
+class LinearContinuousMPC(ModelPredictiveController):
     """Abstract MPC for linear CD plant + CD estimator + discrete-time OCP."""
 
     @abstractmethod
@@ -32,7 +31,7 @@ class LinearContinuousMPC(ABC):
         """Execute one closed-loop MPC step."""
 
 
-class StandardLinearContinuousMPC(HorizonProfileMPC, LinearContinuousMPC):
+class StandardLinearContinuousMPC(LinearContinuousMPC):
     """Standard MPC for linear continuous-discrete plants."""
 
     def __init__(
@@ -46,6 +45,7 @@ class StandardLinearContinuousMPC(HorizonProfileMPC, LinearContinuousMPC):
         self._model = model
         self._estimator = estimator
         self._ocp = ocp
+        self._bind_ocp(ocp)
         self._warm_start = bool(warm_start)
         self._u_prev_np: np.ndarray = np.zeros(model.nu)
         self._d_prev_np: np.ndarray = np.zeros(model.nd)
@@ -65,47 +65,23 @@ class StandardLinearContinuousMPC(HorizonProfileMPC, LinearContinuousMPC):
             ym_np, self._u_prev_np, self._d_prev_np,
         )
 
-        prof = self._horizon_profile
         if D is not None:
-            D_np = _any_to_np1d(D)
-        elif prof.disturbance_profile is not None:
-            D_np = _any_to_np1d(prof.disturbance_profile)
-        else:
-            raise ValueError(
-                "Provide disturbance forecast via step(D=…) or set_disturbance_profile()."
-            )
+            self.set_disturbance_profile(np.asarray(D, dtype=float))
 
-        x_ref_np = np.asarray(self._model.x_ref, dtype=float).reshape(-1)
         warm = None
         if self._warm_start and self._prev_U is not None:
             warm = _shift_warm_start(
                 self._prev_U, self._prev_X, nu, self._model.nx
             )
 
-        if prof.disturbance_profile is not None or any(
-            getattr(prof, n) is not None
-            for n in (
-                "output_tracking_weight_scale_profile",
-                "input_regularisation_weight_scale_profile",
-                "soft_output_band_half_width_profile",
-                "input_min_profile",
-                "input_max_profile",
-            )
-        ):
-            if prof.disturbance_profile is None:
-                prof.disturbance_profile = D_np
-            U_seq, X_seq = solve_forecast_qp(
-                self._ocp, x_hat_np, prof,
-                x_ref=x_ref_np, u_prev=self._u_prev_np, warm_start=warm,
-            )
-        else:
-            U_seq, X_seq = self._ocp.solve(
-                x_hat_np, D_np, x_ref_np, u_prev=self._u_prev_np, warm_start=warm,
-            )
+        U_seq, X_seq = self._ocp.solve(
+            x_hat_np, u_prev=self._u_prev_np, warm_start=warm,
+        )
 
         u = U_seq[:nu]
+        D_np = self._horizon_profile.disturbance_profile
         self._u_prev_np = np.asarray(u, dtype=float).copy()
-        self._d_prev_np = D_np[:nd].copy()
+        self._d_prev_np = _any_to_np1d(D_np)[:nd].copy()
         self._prev_U, self._prev_X = U_seq, X_seq
 
         return u, U_seq, X_seq

@@ -16,8 +16,8 @@ import numpy as np
 
 from .._utils import _fd_jacobian, _zoh_full, _van_loan
 from ..models import DiscreteLinearSDE, ContinuousDiscreteSDE
+from ._base import ModelPredictiveController
 from .discrete_linear_ocp import StandardLinearDiscreteOCP
-from .mpc_horizon import HorizonProfileMPC
 
 
 class _DeviationDiscreteLinearSDE(DiscreteLinearSDE):
@@ -227,7 +227,7 @@ def discretize_cd_linearization(
     }
 
 
-class LinearisedContinuousMPC(ABC):
+class LinearisedContinuousMPC(ModelPredictiveController, ABC):
     """Abstract successive-linearisation MPC for nonlinear CD plants."""
 
     @property
@@ -251,7 +251,7 @@ class LinearisedContinuousMPC(ABC):
         """Execute one closed-loop step."""
 
 
-class StandardLinearisedContinuousMPC(HorizonProfileMPC, LinearisedContinuousMPC):
+class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
     """
     Successive-linearisation MPC for nonlinear continuous-discrete models.
 
@@ -312,6 +312,7 @@ class StandardLinearisedContinuousMPC(HorizonProfileMPC, LinearisedContinuousMPC
             rho=rho,
             y_offset=y_offset,
         )
+        self._bind_ocp(self._ocp)
 
         self._u_prev = np.zeros(model.nu, dtype=float)
         self._d_prev = np.zeros(model.nd, dtype=float)

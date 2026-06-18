@@ -84,6 +84,10 @@ class _CDModelAdapter:
     def u_bounds(self) -> Tuple[np.ndarray, np.ndarray]:
         return self._m.u_bounds
 
+    @property
+    def x_ref(self) -> np.ndarray:
+        return self._m.x_ref
+
 
 class StandardLinearContinuousDiscreteOCP(StandardLinearDiscreteOCP):
     """

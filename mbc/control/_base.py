@@ -1,25 +1,161 @@
 """
-Abstract base classes for optimal control problems.
+Abstract base classes for optimal control problems and MPC controllers.
 
-OCPs are named by optimisation *time domain* only:
-
-* **Discrete-time** — finite-horizon QP over a discrete prediction model.
-* **Continuous-time** — NLP with continuous-time dynamics discretised inside
-  the solver (direct simultaneous transcription).
+Horizon-varying references, bounds, weights, and disturbances are configured
+via :class:`HorizonProfile` setters on every OCP and MPC base class — there
+are no separate forecast-aware implementations.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
+from typing import Any
+
+import numpy as np
 
 
-class OptimalControlProblem(ABC):
+@dataclass
+class LinearisationPoint:
+    """Operating point for successive linearisation MPC."""
+
+    x: np.ndarray
+    u: np.ndarray
+    d: np.ndarray
+
+
+@dataclass
+class HorizonProfile:
+    """
+    Optional horizon-varying control quantities.
+
+    Array fields use shape ``(N, ·)`` unless noted.  ``None`` means use the
+    static OCP / model default for that quantity.
+    """
+
+    disturbance_profile: np.ndarray | None = None
+    output_reference_deviation_profile: np.ndarray | None = None
+    soft_output_band_half_width_profile: np.ndarray | None = None
+    output_tracking_weight_scale_profile: np.ndarray | None = None
+    input_regularisation_weight_scale_profile: np.ndarray | None = None
+    input_min_profile: np.ndarray | None = None
+    input_max_profile: np.ndarray | None = None
+    input_linear_cost_coefficient_profile: np.ndarray | None = None
+    slack_input_indices: np.ndarray | None = None
+    positive_slack_coefficient_profile: np.ndarray | None = None
+    negative_slack_coefficient_profile: np.ndarray | None = None
+    input_equilibrium: np.ndarray | None = None
+    linearisation_point: LinearisationPoint | None = None
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+class _HorizonProfileSupport:
+    """Shared horizon-profile state and setters for OCPs and MPC controllers."""
+
+    def __init__(self) -> None:
+        self._horizon_profile = HorizonProfile()
+
+    @property
+    def horizon_profile(self) -> HorizonProfile:
+        return self._horizon_profile
+
+    def clear_horizon_profile(self) -> None:
+        self._horizon_profile = HorizonProfile()
+
+    def set_horizon_profile(self, **kwargs: Any) -> None:
+        for key, value in kwargs.items():
+            if hasattr(self._horizon_profile, key):
+                setattr(self._horizon_profile, key, value)
+            else:
+                self._horizon_profile.extra[key] = value
+
+    def set_disturbance_profile(self, profile: np.ndarray) -> None:
+        self._horizon_profile.disturbance_profile = np.asarray(profile, dtype=float)
+
+    def set_output_reference_profile(self, profile: np.ndarray) -> None:
+        self._horizon_profile.output_reference_deviation_profile = np.asarray(
+            profile, dtype=float
+        )
+
+    def set_soft_output_band_half_width_profile(self, profile: np.ndarray) -> None:
+        self._horizon_profile.soft_output_band_half_width_profile = np.asarray(
+            profile, dtype=float
+        )
+
+    def set_output_tracking_weight_scale_profile(self, profile: np.ndarray) -> None:
+        self._horizon_profile.output_tracking_weight_scale_profile = np.asarray(
+            profile, dtype=float
+        )
+
+    def set_input_regularisation_weight_scale_profile(self, profile: np.ndarray) -> None:
+        self._horizon_profile.input_regularisation_weight_scale_profile = np.asarray(
+            profile, dtype=float
+        )
+
+    def set_input_bound_profiles(
+        self,
+        input_min_profile: np.ndarray,
+        input_max_profile: np.ndarray,
+    ) -> None:
+        self._horizon_profile.input_min_profile = np.asarray(
+            input_min_profile, dtype=float
+        )
+        self._horizon_profile.input_max_profile = np.asarray(
+            input_max_profile, dtype=float
+        )
+
+    def set_input_linear_cost_profile(
+        self,
+        coefficient_profile: np.ndarray,
+        *,
+        slack_input_indices: np.ndarray | None = None,
+        positive_slack_coefficient_profile: np.ndarray | None = None,
+        negative_slack_coefficient_profile: np.ndarray | None = None,
+        input_equilibrium: np.ndarray | None = None,
+    ) -> None:
+        self._horizon_profile.input_linear_cost_coefficient_profile = np.asarray(
+            coefficient_profile, dtype=float
+        )
+        self._horizon_profile.slack_input_indices = (
+            None if slack_input_indices is None
+            else np.asarray(slack_input_indices, dtype=int)
+        )
+        self._horizon_profile.positive_slack_coefficient_profile = (
+            None if positive_slack_coefficient_profile is None
+            else np.asarray(positive_slack_coefficient_profile, dtype=float)
+        )
+        self._horizon_profile.negative_slack_coefficient_profile = (
+            None if negative_slack_coefficient_profile is None
+            else np.asarray(negative_slack_coefficient_profile, dtype=float)
+        )
+        self._horizon_profile.input_equilibrium = (
+            None if input_equilibrium is None
+            else np.asarray(input_equilibrium, dtype=float)
+        )
+
+    def set_linearisation_point(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        d: np.ndarray,
+    ) -> None:
+        self._horizon_profile.linearisation_point = LinearisationPoint(
+            x=np.asarray(x, dtype=float),
+            u=np.asarray(u, dtype=float),
+            d=np.asarray(d, dtype=float),
+        )
+
+    def _share_horizon_profile_with(self, other: _HorizonProfileSupport) -> None:
+        """Bind another host to this object's horizon profile."""
+        other._horizon_profile = self._horizon_profile
+
+
+class OptimalControlProblem(_HorizonProfileSupport, ABC):
     """
     Common abstract base for all optimal control problems.
 
-    Every concrete OCP must expose the prediction horizon ``N`` and the input
-    dimension ``nu`` so that closed-loop controller wrappers can query them
-    without knowing the concrete OCP type.
+    Every concrete OCP exposes the prediction horizon ``N`` and input dimension
+    ``nu``, and supports horizon profiles for time-varying parameters.
     """
 
     @property
@@ -37,8 +173,9 @@ class DiscreteOptimalControlProblem(OptimalControlProblem):
     """
     Abstract base for discrete-time optimal control problems.
 
-    Concrete subclasses solve a finite-horizon QP (or equivalent convex program)
-    over a discrete prediction model.
+    Concrete subclasses solve a finite-horizon QP over a discrete prediction
+    model.  :meth:`solve` reads disturbances and other horizon quantities from
+    the configured :attr:`horizon_profile` when call-time arguments are omitted.
     """
 
 
@@ -47,5 +184,19 @@ class ContinuousOptimalControlProblem(OptimalControlProblem):
     Abstract base for continuous-time optimal control problems.
 
     Concrete subclasses formulate a finite-horizon NLP whose dynamics are
-    discretised internally (e.g. direct simultaneous transcription).
+    discretised internally.  :meth:`solve` reads horizon quantities from
+    :attr:`horizon_profile` when call-time arguments are omitted.
     """
+
+
+class ModelPredictiveController(_HorizonProfileSupport, ABC):
+    """
+    Common abstract base for all MPC controllers.
+
+    Horizon profiles configured on the controller are shared with the wrapped
+    OCP via :meth:`_bind_ocp` so that setters and :meth:`step` use one profile.
+    """
+
+    def _bind_ocp(self, ocp: OptimalControlProblem) -> None:
+        """Share this controller's horizon profile with ``ocp``."""
+        self._share_horizon_profile_with(ocp)

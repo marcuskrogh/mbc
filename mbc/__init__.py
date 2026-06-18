@@ -107,6 +107,9 @@ from .control import (
     OptimalControlProblem,
     DiscreteOptimalControlProblem,
     ContinuousOptimalControlProblem,
+    ModelPredictiveController,
+    HorizonProfile,
+    LinearisationPoint,
     StandardLinearDiscreteOCP,
     StandardLinearisedDiscreteOCP,
     StandardLinearContinuousDiscreteOCP,
@@ -123,8 +126,6 @@ from .control import (
     StandardLinearContinuousMPC,
     StandardLinearisedContinuousMPC,
     StandardNonlinearContinuousMPC,
-    MPCHorizonProfile,
-    HorizonProfileMPC,
     linearize_cd_model,
     discretize_cd_linearization,
 )
@@ -175,6 +176,9 @@ __all__ = [
     "OptimalControlProblem",
     "DiscreteOptimalControlProblem",
     "ContinuousOptimalControlProblem",
+    "ModelPredictiveController",
+    "HorizonProfile",
+    "LinearisationPoint",
     # Control — standard OCP implementations
     "StandardLinearDiscreteOCP",
     "StandardLinearisedDiscreteOCP",
@@ -194,9 +198,6 @@ __all__ = [
     "StandardLinearContinuousMPC",
     "StandardLinearisedContinuousMPC",
     "StandardNonlinearContinuousMPC",
-    # Horizon profiles
-    "MPCHorizonProfile",
-    "HorizonProfileMPC",
     # CD linearisation helpers
     "linearize_cd_model",
     "discretize_cd_linearization",

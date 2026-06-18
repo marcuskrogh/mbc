@@ -4,14 +4,15 @@ from ._base import (
     OptimalControlProblem,
     DiscreteOptimalControlProblem,
     ContinuousOptimalControlProblem,
+    ModelPredictiveController,
+    HorizonProfile,
+    LinearisationPoint,
 )
 from .discrete_linear_ocp import StandardLinearDiscreteOCP, _shift_warm_start
 from .discrete_linearised_ocp import StandardLinearisedDiscreteOCP
 from .continuous_linear_ocp import StandardLinearContinuousDiscreteOCP
 from .continuous_ocp import GeneralContinuousOCP, StandardContinuousOCP
 from .continuous_linearised_ocp import StandardLinearizedContinuousDiscreteOCP
-from .forecast_ocp import solve_forecast_qp
-from .mpc_horizon import MPCHorizonProfile, MPCLinearisationPoint, HorizonProfileMPC
 from .mpc import LinearDiscreteMPC, StandardLinearDiscreteMPC
 from .linearised_discrete_mpc import (
     LinearisedDiscreteMPC,
@@ -48,6 +49,10 @@ __all__ = [
     "OptimalControlProblem",
     "DiscreteOptimalControlProblem",
     "ContinuousOptimalControlProblem",
+    "ModelPredictiveController",
+    # Horizon profile types
+    "HorizonProfile",
+    "LinearisationPoint",
     # Standard OCP implementations
     "StandardLinearDiscreteOCP",
     "StandardLinearisedDiscreteOCP",
@@ -55,12 +60,6 @@ __all__ = [
     "StandardLinearizedContinuousDiscreteOCP",
     "GeneralContinuousOCP",
     "StandardContinuousOCP",
-    # Forecast QP
-    "solve_forecast_qp",
-    # Horizon profiles
-    "MPCHorizonProfile",
-    "MPCLinearisationPoint",
-    "HorizonProfileMPC",
     # MPC abstract bases
     "LinearDiscreteMPC",
     "LinearisedDiscreteMPC",

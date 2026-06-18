@@ -258,6 +258,7 @@ class GeneralContinuousOCP(ContinuousOptimalControlProblem):
         solver_scaling: NLPScalingPolicy | dict | None = None,
         dt: float | None = None,
     ) -> None:
+        super().__init__()
         if not isinstance(scheme, IntegrationScheme):
             raise TypeError(
                 f"scheme must be an IntegrationScheme member, got {scheme!r}."
@@ -968,7 +969,7 @@ class GeneralContinuousOCP(ContinuousOptimalControlProblem):
     def solve(
         self,
         x0: np.ndarray,
-        d_trajectory: np.ndarray,
+        d_trajectory: np.ndarray | None = None,
         u_prev: np.ndarray | None = None,
         x_prev: np.ndarray | None = None,
         y_prev: np.ndarray | None = None,
@@ -982,8 +983,9 @@ class GeneralContinuousOCP(ContinuousOptimalControlProblem):
         ----------
         x0 : (nx,) ndarray
             Filtered initial state ``x̂_{0|0}``.
-        d_trajectory : (N, nd) ndarray
-            ZOH disturbance per control interval.
+        d_trajectory : (N, nd) ndarray, optional
+            ZOH disturbance per control interval.  Falls back to
+            :attr:`horizon_profile.disturbance_profile`.
         u_prev : (N, nu) ndarray, optional
             Previous optimal input sequence for warm-starting.
         x_prev : (M+1, nx) ndarray, optional
@@ -1006,6 +1008,18 @@ class GeneralContinuousOCP(ContinuousOptimalControlProblem):
         """
         L = self._layout
         x_hat = np.asarray(x0, dtype=float)
+        if d_trajectory is None:
+            prof = self._horizon_profile.disturbance_profile
+            if prof is None:
+                raise ValueError(
+                    "Disturbance forecast required: pass d_trajectory to solve() or "
+                    "call set_disturbance_profile()."
+                )
+            d_arr = np.asarray(prof, dtype=float)
+            if d_arr.ndim == 1:
+                d_trajectory = d_arr.reshape(self._N, self._nd)
+            else:
+                d_trajectory = d_arr
         d_traj = np.asarray(d_trajectory, dtype=float)
         if d_traj.shape != (self._N, self._nd):
             raise ValueError(
