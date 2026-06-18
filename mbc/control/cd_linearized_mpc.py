@@ -449,10 +449,12 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
 
         prof = self._horizon_profile
         saved_u_min, saved_u_max = prof.input_min_profile, prof.input_max_profile
+        saved_ue = prof.input_equilibrium
         u_min_dev, u_max_dev = self._deviation_input_bound_profiles(u_ss)
         if u_min_dev is not None:
             prof.input_min_profile = u_min_dev
             prof.input_max_profile = u_max_dev
+        prof.input_equilibrium = u_ss
         try:
             U_dev, X_dev = self._ocp.solve(
                 x0=x0_dev,
@@ -463,6 +465,7 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
         finally:
             prof.input_min_profile = saved_u_min
             prof.input_max_profile = saved_u_max
+            prof.input_equilibrium = saved_ue
 
         U_dev_np = np.asarray(U_dev, dtype=float).reshape(self._N, self._model.nu)
         X_dev_np = np.asarray(X_dev, dtype=float).reshape(self._N, self._model.nx)

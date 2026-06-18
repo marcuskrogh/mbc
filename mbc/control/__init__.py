@@ -29,6 +29,7 @@ from .cd_linearized_mpc import (
 from .enmpc import NonlinearContinuousMPC, StandardNonlinearContinuousMPC
 from .input_linear_cost import (
     InputLinearCostMode,
+    absolute_quadratic_input_regularisation_linear_term,
     infer_signed_magnitude_input_indices,
     resolve_input_linear_cost,
 )
@@ -97,6 +98,7 @@ __all__ = [
     "make_qp_backend",
     # Input linear cost
     "InputLinearCostMode",
+    "absolute_quadratic_input_regularisation_linear_term",
     "infer_signed_magnitude_input_indices",
     "resolve_input_linear_cost",
     # Helpers

@@ -181,6 +181,29 @@ def _slack_flat_index(k: int, m: int, n_slack: int) -> int:
     return k * n_slack + m
 
 
+def absolute_quadratic_input_regularisation_linear_term(
+    R: np.ndarray,
+    u_equilibrium: np.ndarray,
+    N: int,
+    nu: int,
+    r_scales: np.ndarray,
+) -> np.ndarray:
+    """
+    Linear QP term so ``½δuᵀRδu + fᵀδu`` matches ``½(u_eq+δu)ᵀR(u_eq+δu)`` up to constant.
+
+    When the QP optimises deviation inputs ``δu`` but ``R`` should penalise
+  absolute inputs ``u = u_eq + δu``, the cross term ``2 u_eqᵀ R δu`` belongs in
+    ``f``.
+    """
+    u_eq = np.asarray(u_equilibrium, dtype=float).reshape(nu)
+    R = np.asarray(R, dtype=float)
+    scales = np.asarray(r_scales, dtype=float).reshape(N)
+    f = np.zeros(N * nu)
+    for k in range(N):
+        f[k * nu:(k + 1) * nu] = 2.0 * float(scales[k]) * (R @ u_eq)
+    return f
+
+
 def augment_condensed_qp(
     qp: dict[str, Any],
     *,
@@ -188,6 +211,7 @@ def augment_condensed_qp(
     N: int,
     nu: int,
     n_eps: int,
+    input_equilibrium: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Append signed slack variables and linking equalities to a condensed QP."""
     H = np.asarray(qp["P"], dtype=float)
@@ -199,6 +223,10 @@ def augment_condensed_qp(
 
     n_U = N * nu
     n_base = n_U + n_eps
+    u_eq = (
+        None if input_equilibrium is None
+        else np.asarray(input_equilibrium, dtype=float).reshape(nu)
+    )
 
     for k in range(N):
         for j in layout.direct_indices:
@@ -242,7 +270,8 @@ def augment_condensed_qp(
             row[oS + st] = -1.0
             row[oT + st] = 1.0
             A_rows.append(row)
-            b_rows.append(0.0)
+            rhs = 0.0 if u_eq is None else -float(u_eq[int(j)])
+            b_rows.append(rhs)
 
     A_link = np.vstack(A_rows)
     b_link = np.asarray(b_rows, dtype=float)
@@ -282,6 +311,7 @@ def augment_sparse_qp(
     nu: int,
     nx: int,
     nz: int,
+    input_equilibrium: np.ndarray | None = None,
 ) -> dict[str, Any]:
     """Append signed slack variables and linking equalities to a sparse QP."""
     import scipy.sparse as sp
@@ -296,6 +326,10 @@ def augment_sparse_qp(
     f = np.asarray(qp["q"], dtype=float).reshape(-1)
     lb = np.asarray(qp["lb"], dtype=float).reshape(-1)
     ub = np.asarray(qp["ub"], dtype=float).reshape(-1)
+    u_eq = (
+        None if input_equilibrium is None
+        else np.asarray(input_equilibrium, dtype=float).reshape(nu)
+    )
 
     for k in range(N):
         for j in layout.direct_indices:
@@ -340,7 +374,8 @@ def augment_sparse_qp(
             cols.extend([oU + k * nu + int(j), oS + st, oT + st])
             rows.extend([r, r, r])
             vals.extend([1.0, -1.0, 1.0])
-            b_link.append(0.0)
+            rhs = 0.0 if u_eq is None else -float(u_eq[int(j)])
+            b_link.append(rhs)
 
     A_link = sp.csc_matrix((vals, (rows, cols)), shape=(len(b_link), n_Z))
 

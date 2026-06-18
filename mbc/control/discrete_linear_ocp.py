@@ -65,6 +65,7 @@ from ._base import DiscreteOptimalControlProblem
 from .qp_solver import QPProblem, QPSolverBackend, make_qp_backend
 from .input_linear_cost import (
     InputLinearCostMode,
+    absolute_quadratic_input_regularisation_linear_term,
     augment_condensed_qp,
     augment_sparse_qp,
     infer_signed_magnitude_input_indices,
@@ -302,6 +303,12 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             return (np.tile(z_ref, N) + dev).reshape(-1)
         return np.tile(z_ref, N)
 
+    def _resolve_input_equilibrium(self, nu: int) -> np.ndarray | None:
+        prof = self._horizon_profile
+        if prof.input_equilibrium is None:
+            return None
+        return np.asarray(prof.input_equilibrium, dtype=float).reshape(nu)
+
     def _resolve_linear_cost_layout(self):
         prof = self._horizon_profile
         u_min, u_max = self._model.u_bounds
@@ -516,6 +523,12 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             H_uu = H_uu + self._D_diff.T @ self._S_bar @ self._D_diff
             f_u = f_u + self._D_diff.T @ self._S_bar @ d0
 
+        u_eq = self._resolve_input_equilibrium(nu)
+        if u_eq is not None:
+            f_u = f_u + absolute_quadratic_input_regularisation_linear_term(
+                self._R, u_eq, N, nu, r_scales,
+            )
+
         n_U = N * nu
         n_eps = N * nz
         n_Z = n_U + n_eps
@@ -573,6 +586,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         if layout is not None and layout.has_any:
             qp = augment_condensed_qp(
                 qp, layout=layout, N=N, nu=nu, n_eps=n_eps,
+                input_equilibrium=u_eq,
             )
         return qp, extract
 
@@ -617,6 +631,12 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             f[oU:oU + n_U] = self._D_diff.T @ self._S_bar @ d0
         else:
             H_uu = R_bar
+
+        u_eq = self._resolve_input_equilibrium(nu)
+        if u_eq is not None:
+            f[oU:oU + n_U] += absolute_quadratic_input_regularisation_linear_term(
+                self._R, u_eq, N, nu, r_scales,
+            )
 
         H = sp.block_diag(
             x_blocks + [H_uu, self._rho * sp.eye(n_eps)],
@@ -730,5 +750,6 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         if layout is not None and layout.has_any:
             qp = augment_sparse_qp(
                 qp, layout=layout, N=N, nu=nu, nx=nx, nz=nz,
+                input_equilibrium=u_eq,
             )
         return qp, extract

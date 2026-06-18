@@ -164,9 +164,14 @@ class StandardLinearisedDiscreteMPC(LinearisedDiscreteMPC):
         self._lin._x_ref = self._x_ref - x_ss
 
         self.set_disturbance_profile(np.zeros(self._N * self._model.nd))
-        U_dev, X_dev = self._ocp.solve(
-            np.zeros(self._model.nx), u_prev=np.zeros(self._model.nu),
-        )
+        saved_ue = self._horizon_profile.input_equilibrium
+        self._horizon_profile.input_equilibrium = u_ss
+        try:
+            U_dev, X_dev = self._ocp.solve(
+                np.zeros(self._model.nx), u_prev=self._u_prev - u_ss,
+            )
+        finally:
+            self._horizon_profile.input_equilibrium = saved_ue
         U = U_dev.reshape(self._N, self._model.nu) + u_ss
         X = X_dev.reshape(self._N, self._model.nx) + x_ss
         u = U[0].copy()
