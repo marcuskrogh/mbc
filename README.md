@@ -1,12 +1,25 @@
 # mbc — Model-Based Control Toolbox
 
 A Python toolbox for linear and nonlinear model-based control, state estimation,
-system identification, and realization. The toolbox supports both discrete-discrete
+system identification, and realization. The toolbox supports both discrete-time
 and continuous-discrete stochastic systems.
+
+**Core design principle.** The modelling abstractions are the single source of
+truth for the rest of the library:
+
+* `DiscreteLinearSDE` / `DiscreteLinearisedSDE` — linear discrete-time dynamics
+* `ContinuousDiscreteSDE` / `ContinuousDiscreteLinearSDE` / `ContinuousDiscreteLinearisedSDE` — continuous-discrete SDE dynamics
+* `ContinuousDiscreteSDAE` — continuous-discrete SDAE (differential-algebraic) dynamics
+
+All state estimators (`DiscreteEstimator`, `ContinuousDiscreteEstimator`,
+`ContinuousDiscreteDAEEstimator`), OCPs (`OCP` and its concrete forms), simulators,
+and Monte Carlo infrastructure are defined in terms of these model interfaces.
+Controllers are thin compositions of an estimator and an OCP; they do not
+duplicate dynamics logic.
 
 Matrix types: `numpy.ndarray` is used throughout for all model interfaces,
 estimator computations, and solver inputs/outputs. The QP-based MPC solvers
-(`OptimalControlProblem`, `CDOptimalControlProblem`, …) assemble their problem
+(`DiscreteLinearOCP`, `ContinuousLinearOCP`, …) assemble their problem
 data in numpy and solve it through a pluggable convex-QP backend — by default
 the Apache-2.0 [OSQP](https://osqp.org) solver (sparse, warm-startable);
 the MIT-licensed [HiGHS](https://highs.dev) solver (`highspy`) is also
@@ -14,9 +27,51 @@ available via `solver="highs"`.
 
 ---
 
+## Quick Start — Abstraction Flow
+
+The modelling abstractions define the rest of the system.  A typical
+closed-loop application composes:
+
+```python
+from mbc.models import ContinuousDiscreteSDE
+from mbc.estimation import ContinuousDiscreteEKF
+from mbc.control import ContinuousOCP, CDNMPCController
+from mbc.simulation import SDESimulator
+
+# 1) Model (user implements the dynamics)
+class Plant(ContinuousDiscreteSDE):
+    # ... implement nx, nu, nd, nw, nym, nz, Rm, f, sigma, gm, hm
+    pass
+
+model = Plant()
+
+# 2) Estimator (defined by ContinuousDiscreteEstimator)
+ekf = ContinuousDiscreteEKF(model, x0, P0, dt=Ts)
+
+# 3) OCP (defined by OCP base; here a nonlinear CD OCP)
+ocp = ContinuousOCP(model, N=20, Q_z=Qz, z_ref=zref, dt=Ts)
+
+# 4) Controller (thin composition; estimator + OCP)
+ctrl = CDNMPCController(estimator=ekf, ocp=ocp)
+
+# 5) Closed loop (simulator is independent of controller)
+sim = SDESimulator(model, dt=Ts)
+for k in range(T):
+    ym = ...                    # measurement
+    d_traj = ...                # (N, nd) disturbance forecast
+    u = ctrl.step(ym, d_traj, p=None, t=k*Ts)
+    x = sim.step(x, u, d, p=None, t=k*Ts)
+```
+
+Linear paths are analogous: `DiscreteLinearSDE` → `DiscreteLinearKF` →
+`DiscreteLinearOCP` → `MPCController`, or the continuous-discrete linear
+equivalents.
+
+---
+
 ## Contents
 
-- [Part I — Discrete-Discrete Systems](#part-i--discrete-discrete-systems)
+- [Part I — Discrete-Time Systems](#part-i--discrete-time-systems)
   - [1.1 Models](#11-models)
   - [1.2 State Estimators](#12-state-estimators)
     - [DelayedObservationFilter (wraps any estimator)](#delayedobservationfilter--mbcestimation)
@@ -38,16 +93,16 @@ available via `solver="highs"`.
 
 ---
 
-## Part I — Discrete-Discrete Systems
+## Part I — Discrete-Time Systems
 
 ### 1.1 Models
 
-#### `LinearDiscreteModel` — `mbc.models`
+#### `DiscreteLinearSDE` — `mbc.models`
 
-Abstract base class for a linear discrete-time stochastic state-space model
-— the discrete-time analogue of
-:class:`~mbc.models.LinearContinuousDiscreteModel`, using the same
-ControlToolbox notation:
+Abstract base for a linear discrete-time stochastic state-space model
+(the discrete-time analogue of :class:`~mbc.models.ContinuousDiscreteLinearSDE`).
+All higher-level discrete-time components — `DiscreteLinearKF`, `DiscreteLinearOCP`,
+`MPCController` — are defined in terms of this interface.
 
 ```
 x[k+1] = Ad x[k] + Bd u[k] + Ed d[k] + Gd w[k],   w[k] ~ N(0, Qd)
@@ -57,8 +112,8 @@ ym[k]  = Cm x[k] + Dm u[k] + Fm d[k] + v[k],       v[k] ~ N(0, Rm)
 ```
 
 where `x ∈ ℝⁿˣ` is the state, `u ∈ ℝⁿᵘ` is the control input,
-`d ∈ ℝⁿᵈ` is a measured disturbance, `z ∈ ℝⁿᶻ` is the (continuous-output
-analogue) ``g^m``, and `ym ∈ ℝⁿʸᵐ` is the discrete noisy measurement
+`d ∈ ℝⁿᵈ` is a measured disturbance, `z ∈ ℝⁿᶻ` is the output
+(analogue of continuous ``g^m``), and `ym ∈ ℝⁿʸᵐ` is the discrete noisy measurement
 ``h^m``.  All system matrices are constant (LTI).
 
 **Abstract interface** — subclasses must implement:
@@ -74,9 +129,6 @@ analogue) ``g^m``, and `ym ∈ ℝⁿʸᵐ` is the discrete noisy measurement
 | `Cm` | `(nym, nx) ndarray` | Measurement output matrix |
 | `Qd` | `(nw, nw) ndarray` | Discrete process-noise covariance |
 | `Rm` | `(nym, nym) ndarray` | Measurement noise covariance |
-| `x` | `list[float]` | Current state (read/write) |
-| `x_ref` | `(nx,) ndarray` | State setpoint / reference |
-| `u_bounds` | `(ndarray, ndarray)` | Input box `(u_min, u_max)`, each `(nu,)` |
 
 **Concrete members** (overridable — sensible defaults are provided):
 
@@ -91,54 +143,74 @@ analogue) ``g^m``, and `ym ∈ ℝⁿʸᵐ` is the discrete noisy measurement
 | `nym` | `Cm.shape[0]` | Measurement dimension (derived) |
 | `nz` | `Cz.shape[0]` | Output dimension (derived) |
 | `nw` | `Gd.shape[1]` | Process-noise dimension (derived) |
-| `predict_offset(d)` | zeros | Additive prediction bias `offset(d)` |
+| `Ts` | (raises) | Sampling interval; override when fixed |
+| `predict_offset(d)` | zeros | Additive prediction bias |
 | `params` | `array([])` | Flat parameter vector for identification |
 | `with_params(theta)` | raises | Construct new model from parameter vector |
+
+**Usage contract for control.** `MPCController` and `DiscreteLinearOCP` expect
+concrete subclasses to also expose `x_ref` (state reference) and `u_bounds`
+(input box).  These are **not** part of the modelling abstraction; they are
+control-layer conventions consumed by the OCP layer.
 
 **Example**:
 
 ```python
 import numpy as np
-from mbc.models import LinearDiscreteModel
+from mbc.models import DiscreteLinearSDE
 
-class ThermalRoom(LinearDiscreteModel):
+class DoubleIntegrator(DiscreteLinearSDE):
+    def __init__(self):
+        self._x = [0.0, 0.0]
+
     @property
     def nx(self): return 2
     @property
     def nu(self): return 1
     @property
-    def nd(self): return 1
+    def nd(self): return 0
     @property
-    def Ad(self): return np.array([[0.95, 0.0], [0.0, 1.0]])
+    def Ad(self): return np.array([[1., 1.], [0., 1.]])
     @property
-    def Bd(self): return np.array([[0.03], [0.0]])
+    def Bd(self): return np.array([[0.5], [1.0]])
     @property
-    def Ed(self): return np.array([[0.02], [0.0]])
+    def Ed(self): return np.zeros((2, 0))
     @property
-    def Cm(self): return np.array([[1.0, 0.0]])      # measure state 0
+    def Cm(self): return np.array([[1., 0.]])
     @property
-    def Qd(self): return np.diag([1e-4, 1e-4])
+    def Qd(self): return np.eye(2) * 1e-4
     @property
-    def Rm(self): return np.array([[0.05]])
+    def Rm(self): return np.array([[0.01]])
     @property
-    def x(self): return [20.0, 15.0]
-    @x.setter
-    def x(self, val): ...
+    def Ts(self): return 1.0
+    # Control-layer conveniences (optional for pure modelling):
     @property
-    def x_ref(self): return np.array([21.0, 0.0])
+    def x_ref(self): return np.array([0., 0.])
     @property
-    def u_bounds(self): return np.array([0.0]), np.array([1.0])
+    def u_bounds(self): return np.array([-1.]), np.array([1.])
 
-m = ThermalRoom()
-print(m.nym)  # 1  (= Cm.shape[0])
-print(m.nz)   # 1  (= Cz.shape[0]; Cz defaults to Cm)
+m = DoubleIntegrator()
+print(m.nym, m.nz, m.nw)  # 1 1 2
 ```
 
 ---
 
 ### 1.2 State Estimators
 
-#### `KalmanFilter` — `mbc.estimation`
+All discrete-time estimators implement :class:`~mbc.estimation.DiscreteEstimator`:
+
+```python
+class DiscreteEstimator(ABC):
+    @property
+    def x_hat(self) -> np.ndarray: ...
+    @property
+    def P(self) -> np.ndarray: ...
+    def predict(self, u, d) -> tuple[np.ndarray, np.ndarray]: ...
+    def update(self, ym, mask=None) -> tuple[np.ndarray, np.ndarray]: ...
+    def step(self, ym, u, d, p=None, t=None, mask=None) -> tuple[np.ndarray, np.ndarray]: ...
+```
+
+#### `DiscreteLinearKF` — `mbc.estimation`
 
 Discrete-time Kalman filter with Joseph-stabilised covariance update — the
 linear specialisation of the continuous-discrete EKF
@@ -155,7 +227,7 @@ ControlToolbox §SDE / §SDAE state-estimation conventions:
 | ``R_e``        | innovation covariance ``Cm P_{k\|k-1} Cmᵀ + Rm`` |
 | ``K_k``        | Kalman gain |
 
-**Model**: :class:`~mbc.models.LinearDiscreteModel`.  ``Qd``, ``Rm``, and ``Gd``
+**Model**: :class:`~mbc.models.DiscreteLinearSDE`.  ``Qd``, ``Rm``, and ``Gd``
 are read directly from the model — there is no separate constructor knob.
 
 **Time update over ``[t_{k-1}, t_k]``**
@@ -191,7 +263,8 @@ channels are used in the measurement update.  When ``mask[i] = False`` channel
 ``i`` is excluded; if every entry is ``False`` the update step is skipped
 entirely (prediction-only).
 
-**Delayed observations** — wrap any estimator in
+**Delayed observations** — wrap any estimator (implementing `DiscreteEstimator`
+or `ContinuousDiscreteEstimator`) in
 :class:`~mbc.estimation.DelayedObservationFilter` and pass an integer
 ``delay`` array (one entry per output channel) to :meth:`step`.
 
@@ -199,17 +272,17 @@ entirely (prediction-only).
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `LinearDiscreteModel` | — | Plant model — provides ``Ad``, ``Bd``, ``Ed``, ``Gd``, ``Cm``, ``Qd``, ``Rm``. |
-| `x0` | `(nx,) ndarray` | `np.array(model.x)` | Initial state estimate ``x̂_{0\|0}``. |
+| `model` | `DiscreteLinearSDE` | — | Plant model — provides ``Ad``, ``Bd``, ``Ed``, ``Gd``, ``Cm``, ``Qd``, ``Rm``. |
+| `x0` | `(nx,) ndarray` | `np.zeros(nx)` | Initial state estimate ``x̂_{0\|0}``. |
 | `P0` | `(nx, nx) ndarray` | `I_{nx}` | Initial state error covariance ``P_{0\|0}``. |
 
 **Methods** (all signatures match
 :class:`~mbc.estimation.ContinuousDiscreteEKF`):
 
 ```python
-from mbc.estimation import KalmanFilter
+from mbc.estimation import DiscreteLinearKF
 
-kf = KalmanFilter(model, x0=x0, P0=P0)
+kf = DiscreteLinearKF(model, x0=x0, P0=P0)
 
 # Building blocks
 x_pred, P_pred = kf.predict(u_prev, d_prev)         # time update
@@ -288,12 +361,12 @@ If ``delay[i] > lag_max`` (or exceeds the current buffer depth), channel
 **Usage with `MPCController`** (linear discrete-time):
 
 ```python
-from mbc.estimation import KalmanFilter, DelayedObservationFilter
-from mbc.control import OptimalControlProblem, MPCController
+from mbc.estimation import DiscreteLinearKF, DelayedObservationFilter
+from mbc.control import DiscreteLinearOCP, MPCController
 
-kf   = KalmanFilter(model, x0=x0, P0=P0)
+kf   = DiscreteLinearKF(model, x0=x0, P0=P0)
 filt = DelayedObservationFilter(kf, lag_max=10)
-ocp  = OptimalControlProblem(model, N=20, Q=Q_z, R=R_u)
+ocp  = DiscreteLinearOCP(model, N=20, Q=Q_z, R=R_u)
 ctrl = MPCController(model, estimator=filt, ocp=ocp)
 
 # MPC step (delay handling is internal to the wrapper):
@@ -304,11 +377,11 @@ u, U_seq, X_seq = ctrl.step(ym, D)
 
 ```python
 from mbc.estimation import ContinuousDiscreteEKF, DelayedObservationFilter
-from mbc.control import EconomicOptimalControlProblem, CDNMPCController
+from mbc.control import ContinuousOCP, CDNMPCController
 
 ekf  = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
 filt = DelayedObservationFilter(ekf, lag_max=10)
-ocp  = EconomicOptimalControlProblem(model, N=20, dt=1.0, lagrange=cost_fn)
+ocp  = ContinuousOCP(model, N=20, dt=1.0, lagrange=cost_fn)
 ctrl = CDNMPCController(estimator=filt, ocp=ocp)
 
 u = ctrl.step(ym, d_traj, p, t)                          # no lab result this step
@@ -320,7 +393,17 @@ x_hat, P = filt.step(ym, u_prev, d, p, t, delay=np.array([0, 3]))
 
 ### 1.3 Optimal Control Problems
 
-#### `OptimalControlProblem` — `mbc.control`
+All OCPs implement :class:`~mbc.control.OCP`:
+
+```python
+class OCP(ABC):
+    @property
+    def N(self) -> int: ...   # prediction horizon
+    @property
+    def nu(self) -> int: ...  # input dimension
+```
+
+#### `DiscreteLinearOCP` — `mbc.control`
 
 Finite-horizon quadratic OCP with hard input and soft *output* constraints —
 the linear specialisation of the ControlToolbox §EMPC formulation.  When
@@ -329,12 +412,12 @@ costs and box / soft-box constraints, the entire NLP reduces to a single
 finite-horizon **quadratic program** that the lifted (batch) form solves
 directly with a convex-QP backend (OSQP by default; HiGHS available) — strictly more efficient
 than the direct-simultaneous formulation used by
-:class:`~mbc.control.EconomicOptimalControlProblem` for nonlinear plants.
+:class:`~mbc.control.ContinuousOCP` for nonlinear plants.
 
 The OCP tracks the **output** ``z[k] = Cz x[k] + Dz u[k] + Fz d[k]`` —
 the discrete analogue of the continuous output ``g^m`` from
-:class:`~mbc.models.ContinuousDiscreteModel`.  When the plant has
-``Cz = Cm`` (the default of :class:`~mbc.models.LinearDiscreteModel`) the
+:class:`~mbc.models.ContinuousDiscreteSDE`.  When the plant has
+``Cz = Cm`` (the default of :class:`~mbc.models.DiscreteLinearSDE`) the
 output and the measurement coincide and the OCP tracks the measured channel
 directly.
 
@@ -428,7 +511,7 @@ OSQP `update` with primal+dual starts), which is planned future work.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `LinearDiscreteModel` | — | Plant model |
+| `model` | `DiscreteLinearSDE` | — | Plant model |
 | `N` | `int` | — | Prediction horizon |
 | `Q` | `(nz, nz) matrix` | — | Stage output tracking cost ``‖z − z_ref‖²_Q`` |
 | `R` | `(nu, nu) matrix` | — | Stage input cost ``‖u‖²_R`` |
@@ -440,9 +523,9 @@ OSQP `update` with primal+dual starts), which is planned future work.
 **Usage**:
 
 ```python
-from mbc.control import OptimalControlProblem
+from mbc.control import DiscreteLinearOCP
 
-ocp = OptimalControlProblem(model, N=20, Q=Q_z, R=R_u, P=P_terminal, S=S_rate)
+ocp = DiscreteLinearOCP(model, N=20, Q=Q_z, R=R_u, P=P_terminal, S=S_rate)
 
 # D is the stacked disturbance forecast [d[0]; d[1]; ...; d[N-1]], shape (N*nd, 1)
 U_seq, X_seq = ocp.solve(x0=x_hat, D=D_forecast, x_ref=model.x_ref, u_prev=u_prev)
@@ -459,8 +542,8 @@ infeasibility.
 
 #### `MPCController` — `mbc.control`
 
-Combines a :class:`~mbc.estimation.KalmanFilter` and an
-:class:`OptimalControlProblem` into a receding-horizon feedback controller —
+Combines a :class:`~mbc.estimation.DiscreteLinearKF` and a
+:class:`DiscreteLinearOCP` into a receding-horizon feedback controller —
 the linear-discrete-time specialisation of the ControlToolbox §EMPC ENMPC
 algorithm.
 
@@ -469,7 +552,7 @@ algorithm.
 ```
         ┌────────────────────────────────────────────────────────┐
         │                    MPCController                       │
-ym[k] ─┼─► KalmanFilter ── x̂[k|k] ── OCP ── U*[0] ── u[k] ────┼─► Plant
+ym[k] ─┼─► DiscreteLinearKF ── x̂[k|k] ── OCP ── U*[0] ── u[k] ────┼─► Plant
         │   (predict u[k-1], d[k-1];   (lifted batch QP)        │
         │    update with ym[k])                                  │
         │       ▲                                                │
@@ -492,18 +575,18 @@ Steps 1–5 are performed by ``step(ym, D)`` which returns
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `model` | `LinearDiscreteModel` | Plant model |
-| `estimator` | `KalmanFilter` | State estimator |
-| `ocp` | `OptimalControlProblem` | Optimal control problem |
+| `model` | `DiscreteLinearSDE` | Plant model |
+| `estimator` | `DiscreteLinearKF` | State estimator |
+| `ocp` | `DiscreteLinearOCP` | Optimal control problem |
 
 **Usage**:
 
 ```python
-from mbc.control import MPCController, OptimalControlProblem
-from mbc.estimation import KalmanFilter
+from mbc.control import MPCController, DiscreteLinearOCP
+from mbc.estimation import DiscreteLinearKF
 
-kf   = KalmanFilter(model)                                # Qd, Rm read from model
-ocp  = OptimalControlProblem(model, N=20, Q=Q_z, R=R_u)
+kf   = DiscreteLinearKF(model)                                # Qd, Rm read from model
+ocp  = DiscreteLinearOCP(model, N=20, Q=Q_z, R=R_u)
 ctrl = MPCController(model, estimator=kf, ocp=ocp)
 
 # At each measurement time:
@@ -516,10 +599,11 @@ u, U_seq, X_seq = ctrl.step(ym, D)   # D = stacked disturbance forecast (N·nd, 
 
 ### 2.1 Models
 
-#### `ContinuousDiscreteModel` — `mbc.models`
+#### `ContinuousDiscreteSDE` — `mbc.models`
 
-Abstract base class for a nonlinear continuous-discrete stochastic SDE system
-(ControlToolbox §SDE):
+Abstract base for a nonlinear continuous-discrete stochastic SDE system
+(ControlToolbox §SDE).  This is the "nonlinear" model interface accepted by
+all nonlinear CD estimators, `SDESimulator`, and `ContinuousOCP`.
 
 ```
 dx(t)   = f(x, u, d, p, t) dt + sigma(x, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
@@ -529,13 +613,12 @@ ym(tk)  = hm(x, u, d, p, tk) + v(tk),                         v(tk) ~ N(0, Rm)
 
 where `x ∈ ℝⁿˣ` is the state, `u ∈ ℝⁿᵘ` is the control input, `d ∈ ℝⁿᵈ` is a
 measured disturbance, `p` is a parameter vector, `z ∈ ℝⁿᶻ` is the continuous
-output (`g^m` in the ControlToolbox notation), `ym ∈ ℝⁿʸᵐ` is the discrete
-noisy measurement (`h^m`), and `dw(t) ~ N(0, I dt)` is standard Brownian
-motion.  The instantaneous noise covariance is `sigma sigma^T dt`.
+output (`g^m`), `ym ∈ ℝⁿʸᵐ` is the discrete noisy measurement (`h^m`), and
+`dw(t) ~ N(0, I dt)` is standard Brownian motion.
 
-All arrays use `numpy.ndarray`.  This ABC is accepted by all nonlinear estimators
-(`ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`, `ContinuousDiscreteEnKF`,
-`ContinuousDiscreteParticleFilter`) and by `SDESimulator` and `EconomicOptimalControlProblem`.
+All arrays use `numpy.ndarray`.  This ABC is accepted by
+`ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`, `ContinuousDiscreteEnKF`,
+`ContinuousDiscretePF`, `SDESimulator`, and `ContinuousOCP`.
 
 **Abstract interface** — subclasses must implement:
 
@@ -554,7 +637,7 @@ All arrays use `numpy.ndarray`.  This ABC is accepted by all nonlinear estimator
 | `nw` | `int` | Process-noise / diffusion dimension (columns of `sigma`) |
 
 **Optional analytic Jacobians** — subclasses may override these to avoid
-finite-difference computation in the EKF and DAE-EKF:
+finite-difference computation in the EKF:
 
 | Member | Signature | Default |
 |--------|-----------|---------|
@@ -566,14 +649,23 @@ finite-difference computation in the EKF and DAE-EKF:
 | `dhmdu` | `(x, u, d, p, t) → (nym, nu)` | Forward FD |
 | `dhmdd` | `(x, u, d, p, t) → (nym, nd)` | Forward FD |
 | `dhmdp` | `(x, u, d, p, t) → (nym, np)` | Forward FD |
+| `dgmdx` | `(x, u, d, p, t) → (nz, nx)` | Forward FD |
+| `dgmdu` | `(x, u, d, p, t) → (nz, nu)` | Forward FD |
+| `dgmdd` | `(x, u, d, p, t) → (nz, nd)` | Forward FD |
+
+**Linearisation.** `ContinuousDiscreteSDE` provides `linearise(u_s, d_s, p, t)`
+which returns a `ContinuousDiscreteLinearisedSDE` at the steady state found
+by Newton iteration on `f(x_s, u_s, d_s, p, t) = 0`.  The returned object
+carries `Ts` (if present on the source) so that `.discretize()` works
+without arguments.
 
 **Example** — van de Vusse CSTR (A → B → C, 2A → D):
 
 ```python
 import numpy as np
-from mbc.models import ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDE
 
-class VanDeVusseCSTR(ContinuousDiscreteModel):
+class VanDeVusseCSTR(ContinuousDiscreteSDE):
     """
     Van de Vusse CSTR: states [c_A, c_B] (mol/L), input [D] (dilution rate 1/h).
     No disturbance, no parameters — all kinetics fixed.
@@ -581,17 +673,17 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
     _k1, _k2, _k3, _c_Af = 50.0, 100.0, 10.0, 10.0   # kinetic constants
 
     @property
-    def nx(self): return 2   # c_A, c_B
+    def nx(self): return 2
     @property
-    def nu(self): return 1   # dilution rate D = F/V
+    def nu(self): return 1
     @property
-    def nd(self): return 0   # no measured disturbance
+    def nd(self): return 0
     @property
-    def nw(self): return 2   # noise on both states
+    def nw(self): return 2
     @property
-    def nym(self): return 1  # measure c_B only
+    def nym(self): return 1
     @property
-    def nz(self): return 1   # output c_B
+    def nz(self): return 1
     @property
     def Rm(self): return np.array([[0.05]])
 
@@ -603,30 +695,22 @@ class VanDeVusseCSTR(ContinuousDiscreteModel):
         ])
 
     def sigma(self, x, u, d, p, t):
-        return np.diag([0.1, np.sqrt(0.005)])  # constant diffusion; sigma @ sigma.T = diag([0.01, 0.005])
+        return np.diag([0.1, np.sqrt(0.005)])
 
     def hm(self, x, u, d, p, t):
-        return np.array([x[1]])   # measure c_B
+        return np.array([x[1]])
 
     def gm(self, x, u, d, p, t):
-        return np.array([x[1]])   # output c_B
+        return np.array([x[1]])
 
 m = VanDeVusseCSTR()
-print(m.nx, m.nu, m.nd, m.nw, m.nym, m.nz)  # 2  1  0  2  1  1
-
-# Evaluate model functions at a nominal operating point
-x0  = np.array([3.0, 1.1])          # [c_A, c_B] mol/L
-u0  = np.array([0.5])               # dilution rate 1/h
-d0  = np.zeros(m.nd)                # no disturbance
-p0  = np.zeros(0)                   # no parameters
-print(m.f(x0, u0, d0, p0, t=0.0))  # (2,) drift vector
-print(m.hm(x0, u0, d0, p0, t=0.0)) # (1,) predicted measurement
-print(m.gm(x0, u0, d0, p0, t=0.0)) # (1,) output
+lin = m.linearise(u_s=np.array([0.5]), d_s=np.zeros(0))
+dm = lin.discretize()   # DiscreteLinearSDE via ZOH + Van Loan
 ```
 
-#### `LinearContinuousDiscreteModel` — `mbc.models`
+#### `LinearContinuousDiscreteSDE` — `mbc.models`
 
-Extends `ContinuousDiscreteModel` for linear systems.  The state evolves
+Extends `ContinuousDiscreteSDE` for linear systems.  The state evolves
 continuously according to the Itô SDE
 
 ```
@@ -725,19 +809,18 @@ expm(M) = [[expm(-A dt),  expm(-A dt) Qd],
 ⟹  Qd = Ad · expm(M)[:nx, nx:]
 ```
 
-These utility methods are used for analysis and for initialising discrete filters
-from continuous model parameters.  They are **not** called internally by
-`CDKalmanFilter`, which integrates the ODEs directly.  They **are** called
-internally by `CDOptimalControlProblem`, which uses ZOH-discretised matrices
-for the QP.
+**Discretisation contract.** `ContinuousDiscreteLinearSDE` provides
+`discretize() → DiscreteLinearSDE` (ZOH + Van Loan).  This is the bridge used
+by `ContinuousLinearOCP` (internally) and by users who want a discrete-time
+estimator/OCP from a continuous-time linear model.
 
 **Example**:
 
 ```python
 import numpy as np
-from mbc.models import LinearContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteLinearSDE
 
-class CSTRLinear(LinearContinuousDiscreteModel):
+class CSTRLinear(ContinuousDiscreteLinearSDE):
     @property
     def nx(self): return 2
     @property
@@ -753,33 +836,25 @@ class CSTRLinear(LinearContinuousDiscreteModel):
     @property
     def G(self): return np.eye(2)
     @property
-    def Cz(self): return np.array([[1.0, 0.0]])    # output: state 0
+    def Cz(self): return np.array([[1.0, 0.0]])
     @property
-    def Cm(self): return np.array([[1.0, 0.0]])    # measurement: state 0
+    def Cm(self): return np.array([[1.0, 0.0]])
     @property
     def Rm(self): return np.array([[0.05]])
     @property
-    def dt(self): return 60.0                      # 1-minute sampling
-    @property
-    def x(self): return [0.0, 0.0]
-    @x.setter
-    def x(self, v): ...
-    @property
-    def x_ref(self): return np.array([1.0, 0.0])
-    @property
-    def u_bounds(self): return np.array([0.0]), np.array([2.0])
+    def Ts(self): return 60.0
 
 m = CSTRLinear()
-print(m.nym)  # 1  (= Cm.shape[0])
-print(m.nz)   # 1  (= Cz.shape[0])
-print(m.nw)   # 2  (= G.shape[1])
-print(isinstance(m, LinearContinuousDiscreteModel))  # True
+dm = m.discretize()   # DiscreteLinearSDE
+print(isinstance(dm, DiscreteLinearSDE))  # True
 ```
 
-#### `ContinuousDiscreteDAEModel` — `mbc.models`
+#### `ContinuousDiscreteSDAE` — `mbc.models`
 
-Extends `ContinuousDiscreteModel` with an algebraic constraint and algebraic
-states `y` (ControlToolbox §SDAE):
+Standalone abstract base for continuous-discrete SDAE systems
+(ControlToolbox §SDAE).  Note: `ContinuousDiscreteSDAE` does **not** inherit
+from `ContinuousDiscreteSDE`; the algebraic constraint `g` and algebraic
+state `y` are first-class.
 
 ```
 dx(t)   = f(x, y, u, d, p, t) dt + sigma(x, y, u, d, p, t) dw(t),  dw(t) ~ N(0, I dt)
@@ -789,9 +864,7 @@ ym(tk)  = hm(x, y, u, d, p, tk) + v(tk),                            v(tk) ~ N(0,
 ```
 
 where `y ∈ ℝⁿʸ` is the algebraic state vector, kept consistent with the
-differential state `x` at all times by enforcing `g = 0`.  The `nw` property
-is inherited from `ContinuousDiscreteModel` and must be implemented by
-concrete subclasses.
+differential state `x` at all times by enforcing `g = 0`.
 
 **Additional abstract members**:
 
@@ -824,9 +897,9 @@ which is enforced as an algebraic constraint.
 
 ```python
 import numpy as np
-from mbc.models import ContinuousDiscreteDAEModel
+from mbc.models import ContinuousDiscreteSDAE
 
-class IsomerisationReactor(ContinuousDiscreteDAEModel):
+class IsomerisationReactor(ContinuousDiscreteSDAE):
     """
     Fast isomerisation A ⇌ B with equilibrium constant K_eq.
 
@@ -895,103 +968,60 @@ print(m.hm(C_tot, C_A, u0, d0, p0, t=0.0))  # predicted measurement C_A
 
 #### `SDESimulator` — `mbc.simulation`
 
-Numerical integrator for `ContinuousDiscreteModel` (ControlToolbox §SDE —
+Numerical integrator for `ContinuousDiscreteSDE` (ControlToolbox §SDE —
 *Numerical Integration*).  Simulates the continuous SDE from `t_k` to
 `t_{k+1} = t_k + dt` using `n_steps` equidistant sub-steps of size
 `Δt = dt / n_steps`.  Inputs `u` and disturbances `d` are held constant
-(zero-order hold) over each measurement interval.  The discrete Wiener
-increment is `Δω_n = z_n √Δt` with `z_n ~ N(0, I)`.
+(zero-order hold) over each measurement interval.
 
 **Explicit-Explicit Euler-Maruyama (EE)** — both drift and diffusion
-evaluated at the current sub-step:
-
-```
-x_{n+1} = x_n + Δt · f(x_n, u_k, d_k, p, t_n) + sigma(x_n, u_k, d_k, p, t_n) · Δω_n
-```
-
-This is the standard Euler-Maruyama discretisation.  Use when drift
-dynamics are non-stiff.
+evaluated at the current sub-step.  Use when drift dynamics are non-stiff.
 
 **Implicit-Explicit (IE) scheme** — drift evaluated at the *next*
-sub-step (implicit), diffusion evaluated explicitly:
-
-```
-x_{n+1} = x_n + Δt · f(x_{n+1}, u_k, d_k, p, t_{n+1}) + sigma(x_n, u_k, d_k, p, t_n) · Δω_n
-```
-
-The implicit equation is solved by Newton's method on the residual
-
-```
-R(x_{n+1}) = x_{n+1} − x_n − f(x_{n+1}, …) · Δt − sigma(x_n, …) · Δω_n = 0,
-
-∂R/∂x = I − (∂f/∂x)(x_{n+1}, …) · Δt.
-```
-
-The IE scheme is appropriate when the drift dynamics are stiff (large
-eigenvalues in `∂f/∂x`).
+sub-step (implicit), diffusion evaluated explicitly.  Appropriate when
+the drift dynamics are stiff.
 
 **Parameters**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model |
+| `model` | `ContinuousDiscreteSDE` | — | Nonlinear SDE model |
 | `dt` | `float` | — | Measurement sampling interval |
 | `n_steps` | `int` | `10` | Integration sub-steps per interval |
-| `scheme` | `"EE"` or `"IE"` | `"EE"` | Integration scheme |
+| `scheme` | `IntegrationScheme` | `EXPLICIT_EULER` | `EXPLICIT_EULER` or `IMPLICIT_EULER` |
 | `seed` | `int` or `None` | `None` | Random seed for reproducibility |
-| `newton_tol` | `float` | `1e-12` | IE drift Newton tolerance (ignored for EE) |
-| `newton_max_iter` | `int` | `50` | IE maximum Newton iterations per sub-step |
 
 **Methods**:
 
 ```python
 from mbc.simulation import SDESimulator
+from mbc.estimation import IntegrationScheme
 
-sim = SDESimulator(model, dt=1.0, n_steps=20, scheme="EE", seed=42)
+sim = SDESimulator(model, dt=1.0, n_steps=20, scheme=IntegrationScheme.EXPLICIT_EULER, seed=42)
 
 # Simulate one measurement interval [t, t+dt]
 x_next = sim.step(x, u, d, p, t)               # returns (nx,) ndarray
 
 # Simulate full horizon of T intervals
-# U : (T, nu) ndarray,  D : (T, nd) ndarray,  P : (T, nparams) ndarray
 X = sim.simulate(x0, U, D, P, t0=0.0)          # returns (T+1, nx) ndarray
 ```
 
 #### `SDAESimulator` — `mbc.simulation`
 
-Implicit-explicit Euler-Maruyama integrator for `ContinuousDiscreteDAEModel`
-(ControlToolbox §SDAE — *Numerical Integration: Implicit-Explicit Method*).
-Drift and the algebraic constraint are evaluated at the *next* sub-step
-(implicit); diffusion is explicit.
+Implicit-explicit Euler-Maruyama integrator for `ContinuousDiscreteSDAE`
+(ControlToolbox §SDAE).  Drift and the algebraic constraint are evaluated at
+the *next* sub-step (implicit); diffusion is explicit.
 
 At each sub-step the combined variable `z_{n+1} = (x_{n+1}, y_{n+1})` is
-the root of
-
-```
-R(z_{n+1}) = [
-    x_{n+1} − x_n − f(x_{n+1}, y_{n+1}, u_k, d_k, p, t_{n+1}) · Δt − sigma(x_n, y_n, …) · Δω_n;
-    g(x_{n+1}, y_{n+1}, p)
-] = 0
-```
-
-found by Newton's method with residual Jacobian
-
-```
-∂R/∂z = [
-    I − (∂f/∂x) · Δt,    −(∂f/∂y) · Δt;
-    ∂g/∂x,                ∂g/∂y
-].
-```
-
-There is no explicit-explicit variant — the SDAE always requires the
-Newton solve.  For consistent initial conditions the user-provided `y0`
-must satisfy `g(x0, y0, …) = 0`.
+the root of the residual.  There is no explicit-explicit variant — the SDAE
+always requires the Newton solve.  For consistent initial conditions the
+user-provided `y0` must satisfy `g(x0, y0, …) = 0`.
 
 **Parameters**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteDAEModel` | — | SDAE model |
+| `model` | `ContinuousDiscreteSDAE` | — | SDAE model |
 | `dt` | `float` | — | Measurement sampling interval |
 | `n_steps` | `int` | `10` | Integration sub-steps per interval |
 | `newton_tol` | `float` | `1e-10` | Newton solver convergence tolerance |
@@ -1044,7 +1074,7 @@ def fd_jacobian_hm(model, x, u, d, p, t, h_fd=1e-5):
     return J
 ```
 
-For `ContinuousDiscreteDAEModel`, additional Jacobians are needed:
+For `ContinuousDiscreteSDAE`, additional Jacobians are needed:
 
 ```python
 # ∂f/∂y  (nx × ny),  ∂g/∂x  (ny × nx),  ∂g/∂y  (ny × ny),  ∂hm/∂y  (nym × ny)
@@ -1053,7 +1083,7 @@ For `ContinuousDiscreteDAEModel`, additional Jacobians are needed:
 
 #### Missing-observation masking (nonlinear estimators)
 
-All nonlinear estimators accept the same `mask` argument as `KalmanFilter`.
+All nonlinear estimators accept the same `mask` argument as `DiscreteLinearKF`.
 When `mask[i] = False`, output `i` is excluded from the measurement update by
 constructing sub-matrices restricted to the active rows before calling the
 update equations.  Let `active = [i for i, m in enumerate(mask) if m]` and
@@ -1082,7 +1112,7 @@ its standard `predict` and `update` methods.
 
 ---
 
-#### `CDKalmanFilter` — `mbc.estimation`
+#### `ContinuousDiscreteLinearKF` — `mbc.estimation`
 
 Kalman filter for a **linear** continuous-discrete stochastic system —
 the linear specialisation of :class:`~mbc.estimation.ContinuousDiscreteEKF`
@@ -1090,7 +1120,7 @@ the linear specialisation of :class:`~mbc.estimation.ContinuousDiscreteEKF`
 ``A``, ``B``, ``E`` are integrated directly by forward Euler — no ZOH
 or Van Loan pre-discretisation inside the filter.
 
-**Model**: :class:`~mbc.models.LinearContinuousDiscreteModel`.
+**Model**: :class:`~mbc.models.ContinuousDiscreteLinearSDE`.
 
 **Time update over ``[t_{k-1}, t_k]``** — forward-Euler integration of
 the state and Lyapunov-type covariance ODEs with sub-step ``h = dt / n_steps``:
@@ -1123,15 +1153,15 @@ x̂_{k|k} = x̂_{k|k-1} + K_k e_k
 P_{k|k} = (I − K_k Cm) P_{k|k-1} (I − K_k Cm)ᵀ + K_k Rm K_kᵀ        (Joseph)
 ```
 
-**Missing observations** — see :class:`KalmanFilter` for the identical
+**Missing observations** — see :class:`DiscreteLinearKF` for the identical
 masking logic.
 
 **Constructor**:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `LinearContinuousDiscreteModel` | — | Linear CD plant |
-| `x0` | `(nx,) ndarray` | `np.array(model.x)` | Initial state estimate |
+| `model` | `ContinuousDiscreteLinearSDE` | — | Linear CD plant |
+| `x0` | `(nx,) ndarray` | `np.zeros(nx)` | Initial state estimate |
 | `P0` | `(nx, nx) ndarray` | `I_{nx}` | Initial state error covariance |
 | `n_steps` | `int` | `10` | Forward-Euler sub-steps per sampling interval |
 
@@ -1139,9 +1169,9 @@ masking logic.
 :class:`~mbc.estimation.ContinuousDiscreteEKF`):
 
 ```python
-from mbc.estimation import CDKalmanFilter
+from mbc.estimation import ContinuousDiscreteLinearKF
 
-kf = CDKalmanFilter(model, x0=x0, P0=P0, n_steps=10)
+kf = ContinuousDiscreteLinearKF(model, x0=x0, P0=P0, n_steps=10)
 
 # Building blocks
 x_pred, P_pred = kf.predict(u_prev, d_prev)       # time update (ODE integration)
@@ -1158,7 +1188,7 @@ x_hat, P = kf.step(ym, u_prev, d_prev, mask=None)
 
 #### `ContinuousDiscreteEKF` — `mbc.estimation` *(ControlToolbox §SDE — CD-EKF)*
 
-Extended Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Applies the
+Extended Kalman Filter for a nonlinear `ContinuousDiscreteSDE`.  Applies the
 linear Kalman filter update equations to a local linearisation of the nonlinear
 state and measurement dynamics; the state distribution is characterised by its
 first two moments — mean and covariance — at all times.
@@ -1231,7 +1261,7 @@ with `scheme="IE"`; that choice is independent of the filter.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model |
+| `model` | `ContinuousDiscreteSDE` | — | Nonlinear SDE model |
 | `x0` | `(nx,) ndarray` | — | Initial state estimate |
 | `P0` | `(nx,nx) ndarray` | — | Initial state covariance |
 | `dt` | `float` | — | Sampling interval |
@@ -1260,7 +1290,7 @@ x_hat, P = ekf.update(y, d, mask=None)       # update only
 
 #### `ContinuousDiscreteUKF` — `mbc.estimation` *(ControlToolbox §SDE — CD-UKF)*
 
-Unscented Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Replaces
+Unscented Kalman Filter for a nonlinear `ContinuousDiscreteSDE`.  Replaces
 the Jacobian linearisation of the EKF with a deterministic sigma-point
 approximation (unscented transform).  The time update uses an **augmented**
 dimension `n̄ = nx + nω` to handle state uncertainty and process noise
@@ -1345,7 +1375,7 @@ P_{k|k} = P_{k|k-1} − K_k R_e K_kᵀ
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model |
+| `model` | `ContinuousDiscreteSDE` | — | Nonlinear SDE model |
 | `x0` | `(nx,) ndarray` | — | Initial state estimate |
 | `P0` | `(nx,nx) ndarray` | — | Initial state covariance |
 | `dt` | `float` | — | Sampling interval |
@@ -1367,7 +1397,7 @@ x_hat, P = ukf.step(y, u, d, p, t, mask=None)
 
 #### `ContinuousDiscreteEnKF` — `mbc.estimation` *(ControlToolbox §SDE — CD-EnKF)*
 
-Ensemble Kalman Filter for a nonlinear `ContinuousDiscreteModel`.  Maintains an
+Ensemble Kalman Filter for a nonlinear `ContinuousDiscreteSDE`.  Maintains an
 ensemble of `N_p` particles to approximate the state distribution without
 requiring Jacobian computations.  Each particle is propagated independently
 through the *full* stochastic dynamics with state-dependent diffusion; the
@@ -1424,7 +1454,7 @@ Bessel-corrected sample covariance over the updated ensemble.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model |
+| `model` | `ContinuousDiscreteSDE` | — | Nonlinear SDE model |
 | `x0` | `(nx,) ndarray` | — | Initial state estimate (ensemble mean) |
 | `P0` | `(nx,nx) ndarray` | — | Initial covariance (for drawing ensemble) |
 | `dt` | `float` | — | Sampling interval |
@@ -1447,7 +1477,7 @@ x_hat, P = enkf.step(y, u, d, t, mask=None)
 
 #### `ContinuousDiscreteParticleFilter` — `mbc.estimation` *(ControlToolbox §SDE — CD-PF)*
 
-Sequential Monte Carlo (particle filter) for a nonlinear `ContinuousDiscreteModel`.
+Sequential Monte Carlo (particle filter) for a nonlinear `ContinuousDiscreteSDE`.
 Represents the posterior `p(x[k] | y[1:k])` as a particle set of size `N_p`.
 Unlike the EnKF the measurement update makes **no Gaussian assumption**; the
 filter is asymptotically exact as `N_p → ∞`.
@@ -1502,7 +1532,7 @@ P_{k|k} = (1 / (N_p − 1)) Σ_i (x̂_{k|k}^(i) − x̂_{k|k})(…)ᵀ
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Nonlinear SDE model |
+| `model` | `ContinuousDiscreteSDE` | — | Nonlinear SDE model |
 | `x0` | `(nx,) ndarray` | — | Initial state estimate |
 | `P0` | `(nx,nx) ndarray` | — | Initial covariance |
 | `dt` | `float` | — | Sampling interval |
@@ -1525,7 +1555,7 @@ x_hat, P = pf.step(y, u, d, t, mask=None)
 
 #### `ContinuousDiscreteDAEEKF` — `mbc.estimation` *(ControlToolbox §SDAE — CD-EKF)*
 
-Extended Kalman Filter for `ContinuousDiscreteDAEModel`.  The algebraic
+Extended Kalman Filter for `ContinuousDiscreteSDAE`.  The algebraic
 variables `y` are *never* added to the state vector — the implicit function
 theorem expresses `y` as an implicit function of `x` and propagates the
 resulting sensitivities through the time and measurement updates.  The state
@@ -1601,7 +1631,7 @@ filtered state.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteDAEModel` | — | SDAE model |
+| `model` | `ContinuousDiscreteSDAE` | — | SDAE model |
 | `x0` | `(nx,) ndarray` | — | Initial differential state estimate |
 | `y0` | `(ny,) ndarray` | — | Initial algebraic state guess (will be projected onto `g = 0`) |
 | `P0` | `(nx,nx) ndarray` | — | Initial covariance (differential states only) |
@@ -1650,7 +1680,7 @@ NLP is solved through a swappable backend interface:
   `solver_options={"hessian_approximation": "exact"}` only when a full
   analytical Hessian is available.
 
-Both `EconomicOptimalControlProblem` and `CDTrackingOptimalControlProblem`
+Both `ContinuousOCP` and `CDTrackingDiscreteLinearOCP`
 provide **analytical constraint and objective Jacobians** to whichever
 backend is active, eliminating the O(n) finite-difference Jacobian overhead
 that arises when `jac` is not supplied (see benchmark results for nfev
@@ -1662,35 +1692,35 @@ analytical-vs-numerical gradient/Hessian efficiency examples, run
 `python scripts/nlp_solver_benchmark.py` or the benchmark test suite
 `python -m pytest tests/test_benchmark_jacobians.py -v`.
 
-#### `CDOptimalControlProblem` — `mbc.control`
+#### `ContinuousLinearOCP` — `mbc.control`
 
-Receding-horizon QP for a `LinearContinuousDiscreteModel`.  A typed thin wrapper
-around `OptimalControlProblem` that accepts a continuous-discrete model.
+Receding-horizon QP for a `LinearContinuousDiscreteSDE`.  A typed thin wrapper
+around `DiscreteLinearOCP` that accepts a continuous-discrete model.
 Internally wraps the model in a `_CDModelAdapter` that computes ZOH-discretised
 matrices `(Ad, Bd, Ed)` from the continuous-time model matrices `(A, B, E)` at
 construction time and exposes them as numpy arrays for the QP solver.
 
 The cost function, constraints, batch-form prediction matrices, and QP solver
-are identical to `OptimalControlProblem` (see §1.3).  ZOH discretisation is
+are identical to `DiscreteLinearOCP` (see §1.3).  ZOH discretisation is
 *exact* for a linear ODE under ZOH inputs, so this linear specialisation is
 strictly more accurate than the implicit-Euler scheme used in the nonlinear
 OCP — and is the recommended choice whenever the plant model is linear.
 
-**Parameters**: identical to `OptimalControlProblem` with `model` of type
-`LinearContinuousDiscreteModel`.
+**Parameters**: identical to `DiscreteLinearOCP` with `model` of type
+`LinearContinuousDiscreteSDE`.
 
 **Usage**:
 
 ```python
-from mbc.control import CDOptimalControlProblem
+from mbc.control import ContinuousLinearOCP
 
-ocp = CDOptimalControlProblem(model, N=20, Q=Q_y, R=R_u, P=P_terminal)
+ocp = ContinuousLinearOCP(model, N=20, Q=Q_y, R=R_u, P=P_terminal)
 U_seq, X_seq = ocp.solve(x0=x_hat, D=D_forecast, x_ref=model.x_ref, u_prev=u_prev)
 ```
 
 ---
 
-#### `EconomicOptimalControlProblem` — `mbc.control` *(ControlToolbox §EMPC)*
+#### `ContinuousOCP` — `mbc.control` *(ControlToolbox §EMPC)*
 
 Economic Optimal Control Problem (EOCP) for **continuous-discrete nonlinear
 SDE / SDAE systems**.  This is the unified nonlinear-OCP class — it supports
@@ -1698,8 +1728,8 @@ any convex combination of the spec's objective terms (tracking, ROM, input
 economy, general Lagrange/Mayer) with both hard and soft (slacked, exact-
 penalty) constraints.
 
-The class accepts both `ContinuousDiscreteModel` (SDE) and
-`ContinuousDiscreteDAEModel` (SDAE) plant models.  When the plant is an
+The class accepts both `ContinuousDiscreteSDE` (SDE) and
+`ContinuousDiscreteSDAE` (SDAE) plant models.  When the plant is an
 SDAE, the algebraic state `y` is a decision variable of the NLP and the
 constraint `g(x, y, …) = 0` is enforced at every sub-step.
 
@@ -1784,7 +1814,7 @@ by the L1 + L2 exact-penalty form `φ_pq` above.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` or `…DAEModel` | — | Plant model |
+| `model` | `ContinuousDiscreteSDE` or `…DAEModel` | — | Plant model |
 | `N` | `int` | — | Prediction horizon (control intervals) |
 | `lagrange` | `(t, x, y, u, θ) → float` or `None` | `None` | General stage cost `l` |
 | `mayer` | `(x, y, θ) → float` or `None` | `None` | Terminal cost `l̂` |
@@ -1816,7 +1846,7 @@ by the L1 + L2 exact-penalty form `φ_pq` above.
 ##### Methods
 
 ```python
-from mbc.control import EconomicOptimalControlProblem
+from mbc.control import ContinuousOCP
 
 # Spec signature: lagrange(t, x, y, u, theta) -> float
 def lagrange(t, x, y, u, theta):
@@ -1826,7 +1856,7 @@ def lagrange(t, x, y, u, theta):
 def mayer(x, y, theta):
     return 0.1 * float(x @ x)     # terminal state penalty
 
-ocp = EconomicOptimalControlProblem(
+ocp = ContinuousOCP(
     model, N=20, dt=1.0,
     lagrange=lagrange, mayer=mayer,
     Q_z=Q_z, z_ref=z_setpoint,        # tracking
@@ -1856,12 +1886,12 @@ u0 = ocp.step(x_hat, d_fcast, u_prev=u_seq_prev, p=p, t0=t)
 
 ---
 
-#### `CDTrackingOptimalControlProblem` — `mbc.control`
+#### `CDTrackingDiscreteLinearOCP` — `mbc.control`
 
-Convenience wrapper around `EconomicOptimalControlProblem` exposing a
+Convenience wrapper around `ContinuousOCP` exposing a
 quadratic-tracking-friendly constructor (`Q`, `R`, `P`, `S`, `c_u`).
 Translates the standard tracking-OCP arguments into the underlying
-`EconomicOptimalControlProblem`:
+`ContinuousOCP`:
 
 | Tracking-OCP arg | Maps to |
 |------------------|---------|
@@ -1877,9 +1907,9 @@ Because the underlying problem is the same EOCP, both classes are
 interchangeable as the `ocp` argument of `CDNMPCController`.
 
 ```python
-from mbc.control import CDTrackingOptimalControlProblem
+from mbc.control import CDTrackingDiscreteLinearOCP
 
-ocp = CDTrackingOptimalControlProblem(
+ocp = CDTrackingDiscreteLinearOCP(
     model, N=20, Q=Q_z, R=R_u,
     S=S_rom, c_u=np.zeros(model.nu), z_ref=z_setpoint,
     u_min=u_lo, u_max=u_hi, du_min=du_lo, du_max=du_hi,
@@ -1904,8 +1934,8 @@ the MPC is the closed-loop composition.
 
 #### `CDMPCController` — `mbc.control`
 
-Combines a :class:`~mbc.estimation.CDKalmanFilter` (estimator) and a
-:class:`~mbc.control.CDOptimalControlProblem` (OCP) into a closed-loop
+Combines a :class:`~mbc.estimation.ContinuousDiscreteLinearKF` (estimator) and a
+:class:`~mbc.control.ContinuousLinearOCP` (OCP) into a closed-loop
 receding-horizon controller for a linear continuous-discrete plant — the
 linear specialisation of the ControlToolbox §EMPC ENMPC algorithm.
 
@@ -1920,11 +1950,11 @@ linear specialisation of the ControlToolbox §EMPC ENMPC algorithm.
 **Usage**:
 
 ```python
-from mbc.estimation import CDKalmanFilter
-from mbc.control import CDOptimalControlProblem, CDMPCController
+from mbc.estimation import ContinuousDiscreteLinearKF
+from mbc.control import ContinuousLinearOCP, CDMPCController
 
-kf   = CDKalmanFilter(model, n_steps=10)
-ocp  = CDOptimalControlProblem(model, N=20, Q=Q_z, R=R_u)
+kf   = ContinuousDiscreteLinearKF(model, n_steps=10)
+ocp  = ContinuousLinearOCP(model, N=20, Q=Q_z, R=R_u)
 ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
 
 u, U_seq, X_seq = ctrl.step(ym, D)   # D = (N·nd, 1) stacked disturbance forecast
@@ -1935,7 +1965,7 @@ u, U_seq, X_seq = ctrl.step(ym, D)   # D = (N·nd, 1) stacked disturbance foreca
 ```
         ┌──────────────────────────────────────────────────────────┐
         │                    CDMPCController                       │
-ym[k] ─┼─► CDKalmanFilter ── x̂[k|k] ── CDOptOCP ── U*[0] ── u[k] ┼─► Plant
+ym[k] ─┼─► ContinuousDiscreteLinearKF ── x̂[k|k] ── CDOptOCP ── U*[0] ── u[k] ┼─► Plant
         │  (continuous ODE              (ZOH-QP, lifted batch)    │
         │   integration on A, B, E)                               │
         │       ▲                                                 │
@@ -1952,7 +1982,7 @@ the same ``model`` object.
 #### `CDLinearizedMPCController` — `mbc.control`
 
 Successive-linearisation MPC for nonlinear continuous-discrete plants that
-reuses the linear QP OCP machinery (:class:`~mbc.control.OptimalControlProblem`).
+reuses the linear QP OCP machinery (:class:`~mbc.control.DiscreteLinearOCP`).
 
 At each control interval, the controller:
 
@@ -1999,7 +2029,7 @@ Any combination of:
 - **Estimators**: `ContinuousDiscreteEKF`, `ContinuousDiscreteUKF`,
   `ContinuousDiscreteEnKF`, `ContinuousDiscreteParticleFilter`,
   `ContinuousDiscreteDAEEKF`, `DelayedObservationFilter` (wrapping any of the above)
-- **OCPs**: `EconomicOptimalControlProblem`, `CDTrackingOptimalControlProblem`
+- **OCPs**: `ContinuousOCP`, `CDTrackingDiscreteLinearOCP`
 
 can be composed without any changes to the controller code.
 
@@ -2051,15 +2081,15 @@ reduce solver work.
 ```python
 from mbc.estimation import ContinuousDiscreteEKF
 from mbc.control import (
-    CDTrackingOptimalControlProblem,
-    EconomicOptimalControlProblem,
+    CDTrackingDiscreteLinearOCP,
+    ContinuousOCP,
     CDNMPCController,
 )
 
 ekf = ContinuousDiscreteEKF(model, x0, P0, dt=1.0)
 
 # Tracking NMPC (convenience wrapper)
-ocp = CDTrackingOptimalControlProblem(
+ocp = CDTrackingDiscreteLinearOCP(
     model, N=20, Q=Q_z, R=R_u,
     z_ref=z_setpoint, u_min=u_lo, u_max=u_hi, dt=1.0,
 )
@@ -2070,7 +2100,7 @@ u = ctrl.step(ym, d_trajectory, p=None, t=t_k)
 def lagrange(t, x, y, u, theta):
     return profit_per_unit_input * float(u[0]) * 1.0
 
-eocp = EconomicOptimalControlProblem(model, N=20, lagrange=lagrange, dt=1.0)
+eocp = ContinuousOCP(model, N=20, lagrange=lagrange, dt=1.0)
 ctrl_e = CDNMPCController(estimator=ekf, ocp=eocp)
 u = ctrl_e.step(ym, d_trajectory, p=None, t=t_k)
 
@@ -2262,7 +2292,7 @@ during `[t_k, t_{k+1}]`.  The inputs from entry `k` drive the prediction to
 from mbc.identification.likelihood import cd_ped_neg_log_likelihood
 
 neg_ll = cd_ped_neg_log_likelihood(
-    model_factory,   # callable: θ → ContinuousDiscreteModel
+    model_factory,   # callable: θ → ContinuousDiscreteSDE
     theta,           # (ntheta,) ndarray — parameter vector
     history,         # list of {"ym": ndarray, "u": ndarray, "d": ndarray}
     x0,              # (nx,) ndarray — initial state estimate
@@ -2273,7 +2303,7 @@ neg_ll = cd_ped_neg_log_likelihood(
 ```
 
 The `model_factory(θ)` callable must return a
-:class:`~mbc.models.ContinuousDiscreteModel` whose `params` property holds
+:class:`~mbc.models.ContinuousDiscreteSDE` whose `params` property holds
 the parameter vector `p` passed to `f`, `sigma`, `hm`, `dfdx`, and `dhmdx`
 at each filter step.
 
@@ -2320,7 +2350,7 @@ using **Nelder–Mead** (gradient-free, default; activated by `use_gradient=Fals
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model_factory` | `θ → ContinuousDiscreteModel` | — | Model constructor |
+| `model_factory` | `θ → ContinuousDiscreteSDE` | — | Model constructor |
 | `theta0` | `(ntheta,) ndarray` | — | Initial parameter guess |
 | `bounds` | `list[(lo,hi)]` or `None` | — | Per-parameter box constraints |
 | `x0` | `(nx,) ndarray` | — | Initial state estimate |
@@ -2338,10 +2368,10 @@ using **Nelder–Mead** (gradient-free, default; activated by `use_gradient=Fals
 ```python
 import numpy as np
 from mbc.identification import CDParameterEstimator
-from mbc.models import ContinuousDiscreteModel
+from mbc.models import ContinuousDiscreteSDE
 
 # 1. Define a parameterised model: theta = [log(mu_max), log(K_s)]
-class MonodModel(ContinuousDiscreteModel):
+class MonodModel(ContinuousDiscreteSDE):
     _Y = 0.5
     def __init__(self, mu_max, K_s):
         self._mu_max = mu_max; self._K_s = K_s
@@ -2493,7 +2523,7 @@ monic).  The output noise `e[k]` in `y[k] = C_out x[k] + D u[k] + e[k]`
 corresponds to `C(z)` having a leading coefficient of 1.
 
 This structure means `G` can be passed directly as the `noise_matrix` argument to
-`KalmanFilter` or `CDKalmanFilter` for noise-separated filtering.
+`DiscreteLinearKF` or `ContinuousDiscreteLinearKF` for noise-separated filtering.
 
 **Transfer-function normalisation**: `den` must be supplied in **monic** form (leading
 coefficient 1.0).  If `den[0] ≠ 1`, divide both `num` and `den` by `den[0]` before
@@ -2655,7 +2685,7 @@ but deterministic realisations.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `model` | `ContinuousDiscreteModel` | — | Plant model (for measurement function `hm`) |
+| `model` | `ContinuousDiscreteSDE` | — | Plant model (for measurement function `hm`) |
 | `simulator` | `SDESimulator` or `SDAESimulator` | — | Plant dynamics integrator |
 | `controller` | `object` with `.step()` | — | Feedback controller |
 | `estimator` | `object` with `.step()` or `None` | `None` | State estimator; `None` = perfect state info |

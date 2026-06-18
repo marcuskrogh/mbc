@@ -40,7 +40,7 @@ import matplotlib.gridspec as gridspec
 import matplotlib.ticker as ticker
 
 from mbc.models import ContinuousDiscreteSDE
-from mbc.estimation.ekf import ContinuousDiscreteEKF
+from mbc.estimation import ContinuousDiscreteEKF
 
 
 # ── Model ─────────────────────────────────────────────────────────────────────
