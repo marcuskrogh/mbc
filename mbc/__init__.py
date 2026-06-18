@@ -34,14 +34,14 @@ model-based control, estimation, identification, and simulation.
   mbc.control
       Optimal control algorithms:
 
-      * ``DiscreteLinearOCP``             – receding-horizon QP for discrete-time linear systems.
-      * ``DiscreteLinearisedOCP``         – QP for linearised discrete-time systems with SS coordinate shifting.
-      * ``ContinuousLinearOCP``           – receding-horizon QP for linear continuous-discrete systems.
-      * ``ContinuousOCP``                 – economic/tracking NLP for nonlinear CD systems.
-      * ``ContinuousLinearisedOCP``       – QP for linearised CD systems with SS coordinate shifting.
-      * ``MPCController``    – DiscreteLinearKF + DiscreteLinearOCP.
-      * ``CDMPCController``  – ContinuousDiscreteLinearKF + ContinuousLinearOCP.
-      * ``CDNMPCController`` – generic estimator + OCP controller.
+      * ``StandardLinearDiscreteOCP``             – receding-horizon QP for discrete-time linear systems.
+      * ``StandardLinearisedDiscreteOCP``         – QP for linearised discrete-time systems with SS coordinate shifting.
+      * ``StandardLinearContinuousDiscreteOCP``           – receding-horizon QP for linear continuous-discrete systems.
+      * ``GeneralContinuousOCP``                 – economic/tracking NLP for nonlinear CD systems.
+      * ``StandardLinearizedContinuousDiscreteOCP``       – QP for linearised CD systems with SS coordinate shifting.
+      * ``StandardLinearDiscreteMPC``    – DiscreteLinearKF + StandardLinearDiscreteOCP.
+      * ``StandardLinearContinuousMPC``  – ContinuousDiscreteLinearKF + StandardLinearContinuousDiscreteOCP.
+      * ``StandardNonlinearContinuousMPC`` – generic estimator + OCP controller.
 
   mbc.identification
       System-identification / parameter-estimation utilities:
@@ -104,15 +104,30 @@ from .estimation import (
     DelayedObservationFilter,
 )
 from .control import (
-    OCP,
-    DiscreteLinearOCP,
-    DiscreteLinearisedOCP,
-    ContinuousLinearOCP,
-    ContinuousOCP,
-    ContinuousLinearisedOCP,
-    MPCController,
-    CDMPCController,
-    CDNMPCController,
+    OptimalControlProblem,
+    DiscreteOptimalControlProblem,
+    ContinuousOptimalControlProblem,
+    ModelPredictiveController,
+    HorizonProfile,
+    LinearisationPoint,
+    StandardLinearDiscreteOCP,
+    StandardLinearisedDiscreteOCP,
+    StandardLinearContinuousDiscreteOCP,
+    GeneralContinuousOCP,
+    StandardContinuousOCP,
+    StandardLinearizedContinuousDiscreteOCP,
+    LinearDiscreteMPC,
+    LinearisedDiscreteMPC,
+    LinearContinuousMPC,
+    LinearisedContinuousMPC,
+    NonlinearContinuousMPC,
+    StandardLinearDiscreteMPC,
+    StandardLinearisedDiscreteMPC,
+    StandardLinearContinuousMPC,
+    StandardLinearisedContinuousMPC,
+    StandardNonlinearContinuousMPC,
+    linearize_cd_model,
+    discretize_cd_linearization,
 )
 from .identification.estimator import ParameterEstimator, CDParameterEstimator, EstimationResult
 from .identification.likelihood import (
@@ -157,18 +172,35 @@ __all__ = [
     "ContinuousDiscretePF",
     "ContinuousDiscreteDAEEKF",
     "DelayedObservationFilter",
-    # Control — abstract base
-    "OCP",
-    # Control — OCP canonical names
-    "DiscreteLinearOCP",
-    "DiscreteLinearisedOCP",
-    "ContinuousLinearOCP",
-    "ContinuousOCP",
-    "ContinuousLinearisedOCP",
-    # Control — MPC controllers
-    "MPCController",
-    "CDMPCController",
-    "CDNMPCController",
+    # Control — abstract bases
+    "OptimalControlProblem",
+    "DiscreteOptimalControlProblem",
+    "ContinuousOptimalControlProblem",
+    "ModelPredictiveController",
+    "HorizonProfile",
+    "LinearisationPoint",
+    # Control — standard OCP implementations
+    "StandardLinearDiscreteOCP",
+    "StandardLinearisedDiscreteOCP",
+    "StandardLinearContinuousDiscreteOCP",
+    "GeneralContinuousOCP",
+    "StandardContinuousOCP",
+    "StandardLinearizedContinuousDiscreteOCP",
+    # Control — MPC abstract bases
+    "LinearDiscreteMPC",
+    "LinearisedDiscreteMPC",
+    "LinearContinuousMPC",
+    "LinearisedContinuousMPC",
+    "NonlinearContinuousMPC",
+    # Control — standard MPC implementations
+    "StandardLinearDiscreteMPC",
+    "StandardLinearisedDiscreteMPC",
+    "StandardLinearContinuousMPC",
+    "StandardLinearisedContinuousMPC",
+    "StandardNonlinearContinuousMPC",
+    # CD linearisation helpers
+    "linearize_cd_model",
+    "discretize_cd_linearization",
     # Identification
     "ParameterEstimator",
     "CDParameterEstimator",

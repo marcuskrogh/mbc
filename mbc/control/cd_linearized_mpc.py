@@ -9,13 +9,15 @@ ZOH-discretises the local model, and solves a
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from typing import Any
 
 import numpy as np
 
 from .._utils import _fd_jacobian, _zoh_full, _van_loan
 from ..models import DiscreteLinearSDE, ContinuousDiscreteSDE
-from .discrete_linear_ocp import DiscreteLinearOCP
+from ._base import ModelPredictiveController
+from .discrete_linear_ocp import StandardLinearDiscreteOCP
 
 
 class _DeviationDiscreteLinearSDE(DiscreteLinearSDE):
@@ -225,13 +227,55 @@ def discretize_cd_linearization(
     }
 
 
-class CDLinearizedMPCController:
+class LinearisedContinuousMPC(ModelPredictiveController, ABC):
     """
-    Successive-linearisation MPC for nonlinear continuous-discrete models.
+    Abstract MPC with **mixed nonlinear estimation and linearised control**.
 
-    The controller keeps existing nonlinear estimators unchanged and reuses
-    :class:`DiscreteLinearOCP` by updating a mutable deviation linear model
-    at each sampling instant.
+    State estimation runs on the full **nonlinear** continuous-discrete plant
+    (e.g. :class:`~mbc.estimation.ContinuousDiscreteEKF`).  The OCP linearises
+    the same model at each sample, ZOH-discretises the Jacobian, and solves a
+    **discrete-time** linear QP in deviation coordinates.
+
+    This split is deliberate: there is no need to replace the nonlinear model
+    in the estimator just because the control layer is linearised.
+    """
+
+    @property
+    @abstractmethod
+    def x_ref(self) -> np.ndarray:
+        """Absolute state reference used for tracking."""
+
+    @property
+    @abstractmethod
+    def last_disturbance_deviation_trajectory(self) -> np.ndarray:
+        """Most recent disturbance trajectory in deviation coordinates."""
+
+    @abstractmethod
+    def compute(
+        self,
+        y: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None = None,
+        t: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Compute and return the optimal closed-loop MPC action."""
+
+
+class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
+    """
+    Standard mixed nonlinear-estimation / linearised-control MPC.
+
+    **Estimator** — any continuous-discrete state estimator on the nonlinear
+    ``ContinuousDiscreteSDE`` plant (typically :class:`~mbc.estimation.ContinuousDiscreteEKF`).
+
+    **Controller** — at each sample, Jacobian-linearise at
+    ``(x_ss, u_ss, d_ss)`` (current estimate by default, or
+    :meth:`set_linearisation_point` for a thermal equilibrium), ZOH-discretise,
+    and solve :class:`~mbc.control.StandardLinearDiscreteOCP` in deviation
+    coordinates.
+
+    Horizon-varying references, bounds, weights, disturbances, and linear input
+    costs are configured via the profile setters before :meth:`compute`.
     """
 
     def __init__(
@@ -249,7 +293,10 @@ class CDLinearizedMPCController:
         S: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
+        du_min: np.ndarray | None = None,
+        du_max: np.ndarray | None = None,
     ) -> None:
+        super().__init__()
         self._model = model
         self._estimator = estimator
         self._N = int(N)
@@ -271,16 +318,19 @@ class CDLinearizedMPCController:
             u_max_abs=np.asarray(u_max, dtype=float),
         )
 
-        self._ocp = DiscreteLinearOCP(
+        self._ocp = StandardLinearDiscreteOCP(
             model=self._lin_model,
             N=self._N,
             Q=Q,
             R=R,
             P=P,
             S=S,
+            du_min=du_min,
+            du_max=du_max,
             rho=rho,
             y_offset=y_offset,
         )
+        self._bind_ocp(self._ocp)
 
         self._u_prev = np.zeros(model.nu, dtype=float)
         self._d_prev = np.zeros(model.nd, dtype=float)
@@ -300,7 +350,43 @@ class CDLinearizedMPCController:
         """Most recent disturbance trajectory in deviation coordinates."""
         return self._last_D_dev.copy()
 
-    def step(
+    def _resolve_disturbance_deviation(
+        self,
+        d_ss: np.ndarray,
+    ) -> np.ndarray:
+        """Absolute disturbance forecast → deviation coordinates ``Δd = d − d_ss``."""
+        prof = self._horizon_profile
+        nd = self._model.nd
+        if prof.disturbance_profile is not None:
+            D_abs = np.asarray(prof.disturbance_profile, dtype=float)
+            if D_abs.ndim == 1:
+                D_abs = D_abs.reshape(self._N, nd)
+            if D_abs.shape != (self._N, nd):
+                raise ValueError(
+                    f"disturbance_profile must have shape ({self._N}, {nd}); "
+                    f"got {D_abs.shape}."
+                )
+            return D_abs - d_ss.reshape(1, -1)
+        return np.zeros((self._N, nd))
+
+    def _deviation_input_bound_profiles(
+        self,
+        u_ss: np.ndarray,
+    ) -> tuple[np.ndarray | None, np.ndarray | None]:
+        """Absolute input-bound profiles expressed in deviation coordinates."""
+        prof = self._horizon_profile
+        if prof.input_min_profile is None or prof.input_max_profile is None:
+            return None, None
+        u_min_abs = np.asarray(prof.input_min_profile, dtype=float).reshape(
+            self._N, self._model.nu
+        )
+        u_max_abs = np.asarray(prof.input_max_profile, dtype=float).reshape(
+            self._N, self._model.nu
+        )
+        u_ss_row = u_ss.reshape(1, -1)
+        return u_min_abs - u_ss_row, u_max_abs - u_ss_row
+
+    def compute(
         self,
         y: np.ndarray,
         d: np.ndarray,
@@ -308,11 +394,17 @@ class CDLinearizedMPCController:
         t: float = 0.0,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
-        Execute one closed-loop step.
+        Compute the optimal closed-loop action.
 
-        Disturbance-hold assumption: the measured disturbance at the current
-        interval start is used as operating disturbance (`d_ss`) and held
-        constant over the horizon in the local linear MPC problem.
+        **Estimation** uses the nonlinear plant and estimator unchanged.
+        **Control** linearises, discretises, and solves the deviation QP.
+
+        Configure horizon profiles (disturbance forecast, references, bounds,
+        weights, linear input costs) and optionally
+        :meth:`set_linearisation_point` before calling.
+
+        When no disturbance profile is set, disturbances are held at ``d_ss``
+        over the horizon (``Δd[k] = 0``).
         """
         y = np.asarray(y, dtype=float).reshape(self._model.nym)
         d_now = np.asarray(d, dtype=float).reshape(self._model.nd)
@@ -321,9 +413,15 @@ class CDLinearizedMPCController:
         x_hat_np, _ = self._estimator.step(y, self._u_prev, self._d_prev, p_, t)
         x_hat = np.asarray(x_hat_np, dtype=float).reshape(self._model.nx)
 
-        x_ss = x_hat.copy()
-        u_ss = self._u_prev.copy()
-        d_ss = d_now.copy()
+        lp = self._horizon_profile.linearisation_point
+        if lp is not None:
+            x_ss = np.asarray(lp.x, dtype=float).reshape(self._model.nx)
+            u_ss = np.asarray(lp.u, dtype=float).reshape(self._model.nu)
+            d_ss = np.asarray(lp.d, dtype=float).reshape(self._model.nd)
+        else:
+            x_ss = x_hat.copy()
+            u_ss = self._u_prev.copy()
+            d_ss = d_now.copy()
 
         lin = linearize_cd_model(self._model, x_ss, u_ss, d_ss, p_, t)
         disc = discretize_cd_linearization(lin, self._dt)
@@ -343,20 +441,28 @@ class CDLinearizedMPCController:
             x_ref=x_ref_dev,
         )
 
-        # Deviation MPC uses constant disturbance over the horizon: dd[k] = 0.
-        D_dev_np = np.zeros((self._N, self._model.nd), dtype=float)
+        D_dev_np = self._resolve_disturbance_deviation(d_ss)
         self._last_D_dev = D_dev_np.copy()
-        D_dev = D_dev_np.reshape(-1)
 
-        x0_dev = np.zeros(self._model.nx, dtype=float)
-        u_prev_dev = np.zeros(self._model.nu, dtype=float)
+        x0_dev = x_hat - x_ss
+        u_prev_dev = self._u_prev - u_ss
 
-        U_dev, X_dev = self._ocp.solve(
-            x0=x0_dev,
-            D=D_dev,
-            x_ref=x_ref_dev,
-            u_prev=u_prev_dev,
-        )
+        prof = self._horizon_profile
+        saved_u_min, saved_u_max = prof.input_min_profile, prof.input_max_profile
+        u_min_dev, u_max_dev = self._deviation_input_bound_profiles(u_ss)
+        if u_min_dev is not None:
+            prof.input_min_profile = u_min_dev
+            prof.input_max_profile = u_max_dev
+        try:
+            U_dev, X_dev = self._ocp.solve(
+                x0=x0_dev,
+                D=D_dev_np.reshape(-1),
+                x_ref=None,
+                u_prev=u_prev_dev,
+            )
+        finally:
+            prof.input_min_profile = saved_u_min
+            prof.input_max_profile = saved_u_max
 
         U_dev_np = np.asarray(U_dev, dtype=float).reshape(self._N, self._model.nu)
         X_dev_np = np.asarray(X_dev, dtype=float).reshape(self._N, self._model.nx)

@@ -2,7 +2,7 @@
 Benchmark: Analytical vs Numerical Jacobians for Continuous-Discrete NLP.
 
 Measures the numerical efficiency gain from the analytical constraint and
-objective Jacobians provided by ``ContinuousOCP``.
+objective Jacobians provided by ``GeneralContinuousOCP``.
 
 Metrics
 -------
@@ -31,7 +31,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mbc.control import ContinuousOCP
+from mbc.control import GeneralContinuousOCP
 from mbc.control.nlp_solver import NLPConstraint, NLPProblem, NLPResult, ScipyNLPBackend
 from mbc.models import ContinuousDiscreteSDAE, ContinuousDiscreteSDE
 
@@ -183,7 +183,7 @@ def _solve_eocp(
     strip_jac: bool = False,
 ) -> _SolveRecord:
     """Run a single EOCP solve and return metrics."""
-    ocp = ContinuousOCP(
+    ocp = GeneralContinuousOCP(
         model,
         N,
         Q_z=np.eye(1) * 2.0,
@@ -229,8 +229,8 @@ def _solve_cdtracking(
     *,
     strip_jac: bool = False,
 ) -> _SolveRecord:
-    """Run a single ContinuousOCP (tracking) solve and return metrics."""
-    ocp = ContinuousOCP(
+    """Run a single GeneralContinuousOCP (tracking) solve and return metrics."""
+    ocp = GeneralContinuousOCP(
         model,
         N,
         Q_z=np.eye(1) * 2.0,
@@ -408,7 +408,7 @@ def print_report(result: dict) -> None:
     titles = {
         "sde_eocp": "EOCP SDE — ScalarNonlinear  (dx = −0.2x + tanh(u))",
         "sdae_eocp": "EOCP SDAE — IsomerisationReactor  (differential + algebraic)",
-        "sde_cdtracking": "ContinuousOCP tracking — ScalarNonlinear  (includes analytical R_stage+P_terminal Jac)",
+        "sde_cdtracking": "GeneralContinuousOCP tracking — ScalarNonlinear  (includes analytical R_stage+P_terminal Jac)",
     }
     for key, title in titles.items():
         _print_table(result["summary"].get(key, {}), title, horizons)

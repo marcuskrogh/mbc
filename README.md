@@ -2002,28 +2002,37 @@ matrices ``(Ad, Bd, Ed)`` via the internal ``_CDModelAdapter`` (computed
 from ``A``, ``B``, ``E``, ``dt`` at construction time).  Both operate on
 the same ``model`` object.
 
-#### `CDLinearizedMPCController` — `mbc.control`
+#### `StandardLinearisedContinuousMPC` — `mbc.control`
 
-Successive-linearisation MPC for nonlinear continuous-discrete plants that
-reuses the linear QP OCP machinery (:class:`~mbc.control.DiscreteLinearOCP`).
+Mixed **nonlinear estimation / linearised control** MPC for continuous-discrete
+plants.  The estimator runs on the full nonlinear
+:class:`~mbc.models.ContinuousDiscreteSDE` (typically
+:class:`~mbc.estimation.ContinuousDiscreteEKF`); the OCP linearises the same
+model at each sample, ZOH-discretises the Jacobian, and solves a deviation-
+coordinate QP via :class:`~mbc.control.StandardLinearDiscreteOCP`.
 
 At each control interval, the controller:
 
 1. gets `x̂[k|k]` from any nonlinear estimator (`step(y, u_prev, d_prev, p, t)`),
-2. sets operating point `(x_ss, u_ss, d_ss) = (x̂[k|k], u[k-1], d[k])`,
+2. chooses `(x_ss, u_ss, d_ss)` from the current estimate or
+   :meth:`~mbc.control.ModelPredictiveController.set_linearisation_point`
+   (e.g. a thermal equilibrium),
 3. linearises `f`, `hm`, `gm` at the operating point,
 4. discretises `(A, B, E)` with ZOH,
-5. solves a deviation-coordinate QP and converts `u = u_ss + Δu`.
+5. solves a deviation-coordinate QP with `x₀ = x̂ − x_ss`, `u_prev_dev = u[k−1] − u_ss`,
+   and optional disturbance / bound profiles, then converts `u = u_ss + Δu`.
 
-**Disturbance assumption**: `d_ss` is held constant across the horizon at each
-interval, i.e. disturbance deviations are zero (`Δd[k+i] = 0`).
+**Disturbance forecast**: set via
+:meth:`~mbc.control.ModelPredictiveController.set_disturbance_profile` (absolute
+values; converted to `Δd = d − d_ss` internally).  When no profile is set,
+`d_ss` is held over the horizon (`Δd[k] = 0`).
 
 **Usage**:
 
 ```python
-from mbc.control import CDLinearizedMPCController
+from mbc.control import StandardLinearisedContinuousMPC
 
-ctrl = CDLinearizedMPCController(
+ctrl = StandardLinearisedContinuousMPC(
     model=nonlinear_model,
     estimator=ekf,
     N=20,
@@ -2035,7 +2044,9 @@ ctrl = CDLinearizedMPCController(
     x_ref=np.array([2.0]),
 )
 
-u, U_abs, X_abs = ctrl.step(y=ym, d=d_now, p=np.array([]), t=t_k)
+ctrl.set_disturbance_profile(d_forecast)
+ctrl.set_linearisation_point(x_ss, u_ss, d_ss)
+u, U_abs, X_abs = ctrl.compute(y=ym, d=d_now, p=np.array([]), t=t_k)
 ```
 
 

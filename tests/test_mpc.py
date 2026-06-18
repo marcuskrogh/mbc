@@ -4,16 +4,16 @@ Tests for MPC controllers and Optimal Control Problems.
 Covers the following classes:
 
 Linear (discrete-time):
-  - DiscreteLinearOCP  (mbc.control)
-  - MPCController      (mbc.control)
+  - StandardLinearDiscreteOCP  (mbc.control)
+  - StandardLinearDiscreteMPC      (mbc.control)
 
 Linear continuous-discrete:
-  - ContinuousLinearOCP  (mbc.control)
-  - CDMPCController      (mbc.control)
+  - StandardLinearContinuousDiscreteOCP  (mbc.control)
+  - StandardLinearContinuousMPC      (mbc.control)
 
 Nonlinear continuous-discrete:
-  - ContinuousOCP       (mbc.control)
-  - CDNMPCController    (mbc.control)
+  - GeneralContinuousOCP       (mbc.control)
+  - StandardNonlinearContinuousMPC    (mbc.control)
 """
 
 from __future__ import annotations
@@ -31,13 +31,13 @@ from mbc.models import (
 )
 from mbc.estimation import DiscreteLinearKF, ContinuousDiscreteLinearKF, ContinuousDiscreteLinearKFParams, ContinuousDiscreteEKF, ContinuousDiscreteEKFParams
 from mbc.control import (
-    DiscreteLinearOCP,
-    ContinuousLinearOCP,
-    ContinuousOCP,
-    MPCController,
-    CDMPCController,
-    CDNMPCController,
-    CDLinearizedMPCController,
+    StandardLinearDiscreteOCP,
+    StandardLinearContinuousDiscreteOCP,
+    GeneralContinuousOCP,
+    StandardLinearDiscreteMPC,
+    StandardLinearContinuousMPC,
+    StandardNonlinearContinuousMPC,
+    StandardLinearisedContinuousMPC,
     linearize_cd_model,
     discretize_cd_linearization,
     NLPScalingPolicy,
@@ -212,7 +212,7 @@ def _np(m) -> np.ndarray:
     return np.asarray(m, dtype=float).ravel()
 
 
-# ── Tests: DiscreteLinearOCP ──────────────────────────────────────────────────
+# ── Tests: StandardLinearDiscreteOCP ──────────────────────────────────────────────────
 
 
 class TestDiscreteLinearOCP:
@@ -222,7 +222,7 @@ class TestDiscreteLinearOCP:
         model = DoubleIntegrator()
         Q = np.eye(1)
         R = np.eye(1) * 0.1
-        return DiscreteLinearOCP(model, N=N, Q=Q, R=R, y_offset=20.0, **kw)
+        return StandardLinearDiscreteOCP(model, N=N, Q=Q, R=R, y_offset=20.0, **kw)
 
     def test_solve_returns_correct_shapes(self):
         ocp = self._make_ocp(N=5)
@@ -284,8 +284,8 @@ class TestDiscreteLinearOCP:
         D = np.zeros((N * model.nd, 1))
         x_ref = model.x_ref
 
-        ocp_no_rom = DiscreteLinearOCP(model, N=N, Q=Q, R=R, y_offset=20.0)
-        ocp_rom = DiscreteLinearOCP(
+        ocp_no_rom = StandardLinearDiscreteOCP(model, N=N, Q=Q, R=R, y_offset=20.0)
+        ocp_rom = StandardLinearDiscreteOCP(
             model, N=N, Q=Q, R=R, y_offset=20.0,
             S=np.eye(1) * 10.0,
         )
@@ -301,11 +301,11 @@ class TestDiscreteLinearOCP:
         )
 
 
-# ── Tests: MPCController ──────────────────────────────────────────────────────
+# ── Tests: StandardLinearDiscreteMPC ──────────────────────────────────────────────────────
 
 
 class TestMPCController:
-    """Tests for the discrete-time MPCController (KF + OCP)."""
+    """Tests for the discrete-time StandardLinearDiscreteMPC (KF + OCP)."""
 
     def _make_ctrl(self, N=10):
         model = DoubleIntegrator()
@@ -314,15 +314,15 @@ class TestMPCController:
         kf = DiscreteLinearKF(model)
         Q_ocp = np.eye(1)
         R_ocp = np.eye(1) * 0.1
-        ocp = DiscreteLinearOCP(model, N=N, Q=Q_ocp, R=R_ocp, y_offset=20.0)
-        ctrl = MPCController(model, estimator=kf, ocp=ocp)
+        ocp = StandardLinearDiscreteOCP(model, N=N, Q=Q_ocp, R=R_ocp, y_offset=20.0)
+        ctrl = StandardLinearDiscreteMPC(model, estimator=kf, ocp=ocp)
         return ctrl, model
 
     def test_step_returns_correct_shapes(self):
         ctrl, model = self._make_ctrl(N=5)
         y = _cvx(np.array([0.5]))
         D = np.zeros((5 * model.nd, 1))
-        u, U_seq, X_seq = ctrl.step(y, D)
+        u, U_seq, X_seq = ctrl.compute(y, D)
         assert u.shape == (model.nu,)
         assert U_seq.shape == (5 * model.nu,)
         assert X_seq.shape == (5 * model.nx,)
@@ -331,7 +331,7 @@ class TestMPCController:
         ctrl, model = self._make_ctrl(N=10)
         y = _cvx(np.array([0.0]))
         D = np.zeros((10 * model.nd, 1))
-        u, _, _ = ctrl.step(y, D)
+        u, _, _ = ctrl.compute(y, D)
         u_val = float(list(u)[0])
         u_min, u_max = model.u_bounds
         assert u_val >= u_min[0] - 1e-6
@@ -342,7 +342,7 @@ class TestMPCController:
         D = np.zeros((5 * model.nd, 1))
         for k in range(10):
             y = _cvx(np.array([0.0 + 0.1 * k]))
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             assert u.shape == (model.nu,)
 
     def test_closed_loop_drives_toward_reference(self):
@@ -381,8 +381,8 @@ class TestMPCController:
         kf = DiscreteLinearKF(model)
         Q_ocp = np.eye(1) * 5.0
         R_ocp = np.eye(1) * 0.1
-        ocp = DiscreteLinearOCP(model, N=10, Q=Q_ocp, R=R_ocp, y_offset=20.0)
-        ctrl = MPCController(model, estimator=kf, ocp=ocp)
+        ocp = StandardLinearDiscreteOCP(model, N=10, Q=Q_ocp, R=R_ocp, y_offset=20.0)
+        ctrl = StandardLinearDiscreteMPC(model, estimator=kf, ocp=ocp)
 
         x = np.array([0.0])
         Ad = model.Ad
@@ -392,7 +392,7 @@ class TestMPCController:
         for _ in range(N_steps):
             y = _cvx(model.Cm @ x)
             D = np.zeros((10 * model.nd, 1))
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             u_np = np.array(list(u)).ravel()
             x = Ad @ x + Bd @ u_np
 
@@ -403,17 +403,17 @@ class TestMPCController:
         )
 
 
-# ── Tests: ContinuousLinearOCP ────────────────────────────────────────────────
+# ── Tests: StandardLinearContinuousDiscreteOCP ────────────────────────────────────────────────
 
 
 class TestContinuousLinearOCP:
-    """Tests for ContinuousLinearOCP (linear CD system, QP via ZOH)."""
+    """Tests for StandardLinearContinuousDiscreteOCP (linear CD system, QP via ZOH)."""
 
     def _make_ocp(self, N=10):
         model = SimpleLinearCD()
         Q = np.eye(1)
         R = np.eye(1) * 0.1
-        return ContinuousLinearOCP(model, N=N, Q=Q, R=R, y_offset=10.0), model
+        return StandardLinearContinuousDiscreteOCP(model, N=N, Q=Q, R=R, y_offset=10.0), model
 
     def test_solve_returns_correct_shapes(self):
         ocp, model = self._make_ocp(N=5)
@@ -460,26 +460,26 @@ class TestContinuousLinearOCP:
         assert U.shape == (5 * model.nu,)
 
 
-# ── Tests: CDMPCController ────────────────────────────────────────────────────
+# ── Tests: StandardLinearContinuousMPC ────────────────────────────────────────────────────
 
 
 class TestCDMPCController:
-    """Tests for the linear CD-MPC controller (ContinuousDiscreteLinearKF + ContinuousLinearOCP)."""
+    """Tests for the linear CD-MPC controller (ContinuousDiscreteLinearKF + StandardLinearContinuousDiscreteOCP)."""
 
     def _make_ctrl(self, N=10):
         model = SimpleLinearCD()
         kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
         Q = np.eye(1)
         R = np.eye(1) * 0.1
-        ocp = ContinuousLinearOCP(model, N=N, Q=Q, R=R, y_offset=10.0)
-        ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
+        ocp = StandardLinearContinuousDiscreteOCP(model, N=N, Q=Q, R=R, y_offset=10.0)
+        ctrl = StandardLinearContinuousMPC(model, estimator=kf, ocp=ocp)
         return ctrl, model
 
     def test_step_returns_correct_shapes(self):
         ctrl, model = self._make_ctrl(N=5)
         y = _cvx(np.array([0.5]))
         D = np.zeros((5 * model.nd, 1))
-        u, U_seq, X_seq = ctrl.step(y, D)
+        u, U_seq, X_seq = ctrl.compute(y, D)
         assert u.shape == (model.nu,)
         assert U_seq.shape == (5 * model.nu,)
         assert X_seq.shape == (5 * model.nx,)
@@ -488,7 +488,7 @@ class TestCDMPCController:
         ctrl, model = self._make_ctrl(N=10)
         y = _cvx(np.array([0.0]))
         D = np.zeros((10 * model.nd, 1))
-        u, _, _ = ctrl.step(y, D)
+        u, _, _ = ctrl.compute(y, D)
         u_val = float(list(u)[0])
         u_min, u_max = model.u_bounds
         assert u_val >= u_min[0] - 1e-6
@@ -499,7 +499,7 @@ class TestCDMPCController:
         D = np.zeros((5 * model.nd, 1))
         for k in range(8):
             y = _cvx(np.array([float(k) * 0.1]))
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             assert u.shape == (model.nu,)
 
     def test_closed_loop_drives_toward_reference(self):
@@ -508,8 +508,8 @@ class TestCDMPCController:
         kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
         Q = np.eye(1) * 5.0
         R = np.eye(1) * 0.01
-        ocp = ContinuousLinearOCP(model, N=20, Q=Q, R=R, y_offset=10.0)
-        ctrl = CDMPCController(model, estimator=kf, ocp=ocp)
+        ocp = StandardLinearContinuousDiscreteOCP(model, N=20, Q=Q, R=R, y_offset=10.0)
+        ctrl = StandardLinearContinuousMPC(model, estimator=kf, ocp=ocp)
 
         from mbc._utils import _zoh_full
         Ad, Bd, _ = _zoh_full(model.A, model.B, model.E, model.Ts)
@@ -519,7 +519,7 @@ class TestCDMPCController:
         for _ in range(N_steps):
             y = _cvx(model.Cm @ x)
             D = np.zeros((20 * model.nd, 1))
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             u_np = np.array(list(u)).ravel()
             x = Ad @ x + Bd @ u_np
 
@@ -528,17 +528,17 @@ class TestCDMPCController:
         )
 
 
-# ── Tests: ContinuousOCP (tracking) ──────────────────────────────────────────
+# ── Tests: GeneralContinuousOCP (tracking) ──────────────────────────────────────────
 
 
 class TestContinuousOCPTracking:
-    """Tests for the nonlinear tracking OCP using ContinuousOCP with Q_z/R_stage."""
+    """Tests for the nonlinear tracking OCP using GeneralContinuousOCP with Q_z/R_stage."""
 
     def _make_ocp(self, N=5, **kw):
         model = ScalarNonlinear()
         Q = np.eye(1)
         R = np.eye(1) * 0.1
-        return ContinuousOCP(
+        return GeneralContinuousOCP(
             model, N=N, Q_z=Q, R_stage=R,
             z_ref=np.array([2.0]),
             u_min=np.array([-3.0]),
@@ -596,11 +596,11 @@ class TestContinuousOCPTracking:
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
 
-        ocp_no_rom = ContinuousOCP(
+        ocp_no_rom = GeneralContinuousOCP(
             model, N=N, Q_z=Q, R_stage=R, z_ref=np.array([2.0]),
             u_min=np.array([-5.0]), u_max=np.array([5.0]), dt=1.0,
         )
-        ocp_rom = ContinuousOCP(
+        ocp_rom = GeneralContinuousOCP(
             model, N=N, Q_z=Q, R_stage=R, z_ref=np.array([2.0]),
             Q_du=np.eye(1) * 10.0,
             u_min=np.array([-5.0]), u_max=np.array([5.0]), dt=1.0,
@@ -621,7 +621,7 @@ class TestContinuousOCPTracking:
         d_traj = np.zeros((N, model.nd))
 
         # With soft state constraint x_max = 2, input should push x down
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=N, Q_z=Q, R_stage=R, z_ref=np.array([3.0]),
             x_max=np.array([2.0]), rho_x_2=1e3,
             u_min=np.array([-5.0]), u_max=np.array([5.0]), dt=1.0,
@@ -633,7 +633,7 @@ class TestContinuousOCPTracking:
         )
 
 
-# ── Tests: ContinuousOCP (economic) ──────────────────────────────────────────
+# ── Tests: GeneralContinuousOCP (economic) ──────────────────────────────────────────
 
 
 class TestContinuousOCP:
@@ -648,7 +648,7 @@ class TestContinuousOCP:
         def lagrange(t, x, y, u, theta):
             return -float(x[0]) + 0.5 * float(u[0] ** 2)
 
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=N,
             lagrange=lagrange,
             u_min=np.array([-3.0]),
@@ -700,7 +700,7 @@ class TestContinuousOCP:
         def lag(t, x, y, u, theta):
             return 0.1 * float(u[0] ** 2)
 
-        ocp_no_mayer = ContinuousOCP(
+        ocp_no_mayer = GeneralContinuousOCP(
             model, N=N, lagrange=lag, dt=1.0,
         )
 
@@ -708,7 +708,7 @@ class TestContinuousOCP:
         def mayer(x, y, theta):
             return 100.0 * float((x[0] - 1.0) ** 2)
 
-        ocp_mayer = ContinuousOCP(
+        ocp_mayer = GeneralContinuousOCP(
             model, N=N, lagrange=lag, mayer=mayer, dt=1.0,
         )
 
@@ -735,7 +735,7 @@ class TestContinuousOCP:
         def lag(t, x, y, u, theta):
             return 0.01 * float(u[0] ** 2)
 
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=N, lagrange=lag,
             z_min=np.array([1.5]),
             rho_z_2=1e3,
@@ -753,7 +753,7 @@ class TestContinuousOCP:
         """Soft z bounds should use one shared slack block per output."""
         model = ScalarNonlinear()
         N = 4
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model,
             N=N,
             z_min=np.array([-0.5]),
@@ -785,7 +785,7 @@ class TestContinuousOCP:
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
 
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model,
             N=N,
             Q_z=np.array([[1.0]]),
@@ -808,7 +808,7 @@ class TestContinuousOCP:
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
         backend = ScipyNLPBackend(method="SLSQP", options={"maxiter": 80})
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model,
             N=N,
             Q_z=np.array([[1.0]]),
@@ -834,7 +834,7 @@ class TestContinuousOCP:
             variable_scale=10.0,
             constraint_scale=2.0,
         )
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model,
             N=N,
             Q_z=np.array([[1.0]]),
@@ -858,7 +858,7 @@ class TestContinuousOCP:
         N = 4
         x0 = np.array([0.0])
         d_traj = np.zeros((N, model.nd))
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model,
             N=N,
             Q_z=np.array([[1.0]]),
@@ -875,7 +875,7 @@ class TestContinuousOCP:
         assert info["result"].success
 
 
-# ── Tests: ContinuousOCP on SDAE plant ──────────────────────
+# ── Tests: GeneralContinuousOCP on SDAE plant ──────────────────────
 
 
 class _IsomerisationReactor(ContinuousDiscreteSDAE):
@@ -929,12 +929,12 @@ class _IsomerisationReactor(ContinuousDiscreteSDAE):
 
 
 class TestContinuousOCPOnSDAE:
-    """ContinuousOCP direct-simultaneous formulation must satisfy g(x, y, p) = 0
+    """GeneralContinuousOCP direct-simultaneous formulation must satisfy g(x, y, p) = 0
     to machine precision at every sub-step (ControlToolbox §EMPC)."""
 
     def _make_ocp(self, N=5, n_steps=2):
         model = _IsomerisationReactor()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=N,
             Q_z=np.array([[1.0]]), z_ref=np.array([1.5]),
             u_min=np.array([0.0]), u_max=np.array([1.0]),
@@ -987,7 +987,7 @@ class TestContinuousOCPOnSDAE:
         pytest.importorskip("cyipopt")
         ocp, model = self._make_ocp(N=4, n_steps=2)
         # Rebuild with explicit IPOPT backend selector.
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=4,
             Q_z=np.array([[1.0]]), z_ref=np.array([1.5]),
             u_min=np.array([0.0]), u_max=np.array([1.0]),
@@ -1003,7 +1003,7 @@ class TestContinuousOCPOnSDAE:
         assert info["result"].success
 
 
-# ── Tests: CDNMPCController ───────────────────────────────────────────────────
+# ── Tests: StandardNonlinearContinuousMPC ───────────────────────────────────────────────────
 
 
 class TestCDNMPCController:
@@ -1016,7 +1016,7 @@ class TestCDNMPCController:
         ekf = ContinuousDiscreteEKF(model, x0, P0)
 
         if ocp_cls == "tracking":
-            ocp = ContinuousOCP(
+            ocp = GeneralContinuousOCP(
                 model, N=N, Q_z=np.eye(1), R_stage=np.eye(1) * 0.1,
                 z_ref=np.array([2.0]),
                 u_min=np.array([-3.0]),
@@ -1026,27 +1026,27 @@ class TestCDNMPCController:
         else:
             def lag(t, x, y, u, theta):
                 return -float(x[0]) + 0.1 * float(u[0] ** 2)
-            ocp = ContinuousOCP(
+            ocp = GeneralContinuousOCP(
                 model, N=N, lagrange=lag,
                 u_min=np.array([-3.0]),
                 u_max=np.array([3.0]),
                 dt=1.0,
             )
-        ctrl = CDNMPCController(estimator=ekf, ocp=ocp)
+        ctrl = StandardNonlinearContinuousMPC(estimator=ekf, ocp=ocp)
         return ctrl, model
 
     def test_step_returns_correct_shape_tracking(self):
         ctrl, model = self._make_ctrl(ocp_cls="tracking")
         ym = np.array([0.5])
         d_traj = np.zeros((5, model.nd))
-        u = ctrl.step(ym, d_traj, p=None, t=0.0)
+        u = ctrl.compute(ym, d_traj, p=None, t=0.0)
         assert u.shape == (model.nu,)
 
     def test_step_returns_correct_shape_economic(self):
         ctrl, model = self._make_ctrl(ocp_cls="economic")
         ym = np.array([0.5])
         d_traj = np.zeros((5, model.nd))
-        u = ctrl.step(ym, d_traj, p=None, t=0.0)
+        u = ctrl.compute(ym, d_traj, p=None, t=0.0)
         assert u.shape == (model.nu,)
 
     def test_repeated_steps_do_not_crash(self):
@@ -1054,23 +1054,23 @@ class TestCDNMPCController:
         d_traj = np.zeros((5, model.nd))
         for k in range(8):
             ym = np.array([0.1 * k])
-            u = ctrl.step(ym, d_traj, p=None, t=float(k))
+            u = ctrl.compute(ym, d_traj, p=None, t=float(k))
             assert u.shape == (model.nu,), f"Bad u shape at step {k}: {u.shape}"
 
     def test_closed_loop_tracking(self):
-        """CDNMPCController with tracking OCP should drive state toward z_ref."""
+        """StandardNonlinearContinuousMPC with tracking OCP should drive state toward z_ref."""
         model = ScalarNonlinear()
         x0 = np.array([0.0])
         P0 = np.eye(1)
         ekf = ContinuousDiscreteEKF(model, x0.copy(), P0)
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=10, Q_z=np.eye(1) * 5.0, R_stage=np.eye(1) * 0.01,
             z_ref=np.array([2.0]),
             u_min=np.array([-5.0]),
             u_max=np.array([5.0]),
             dt=1.0,
         )
-        ctrl = CDNMPCController(estimator=ekf, ocp=ocp)
+        ctrl = StandardNonlinearContinuousMPC(estimator=ekf, ocp=ocp)
 
         x = x0.copy()
         p = np.array([])
@@ -1080,7 +1080,7 @@ class TestCDNMPCController:
         for k in range(N_steps):
             ym = model.hm(x, np.zeros(1), np.zeros(1), p, float(k))
             d_traj = np.zeros((10, model.nd))
-            u = ctrl.step(ym, d_traj, p=None, t=float(k))
+            u = ctrl.compute(ym, d_traj, p=None, t=float(k))
             # Simple Euler step (mean dynamics, no noise)
             x = x + model.f(x, u, np.zeros(model.nd), p, float(k)) * dt
 
@@ -1094,7 +1094,7 @@ class TestCDNMPCController:
         d_traj = np.zeros((5, model.nd))
         for k in range(10):
             ym = np.array([float(k) * 0.2])
-            u = ctrl.step(ym, d_traj, p=None, t=float(k))
+            u = ctrl.compute(ym, d_traj, p=None, t=float(k))
             assert np.all(u >= -3.0 - 1e-6), f"u={u} below u_min at step {k}"
             assert np.all(u <= 3.0 + 1e-6), f"u={u} above u_max at step {k}"
 
@@ -1111,7 +1111,7 @@ class TestAnalyticalJacobians:
     def _make_sde_ocp(self):
         """Small SDE tracking OCP with ROM and soft-z constraints."""
         model = ScalarNonlinear()
-        return ContinuousOCP(
+        return GeneralContinuousOCP(
             model,
             N=2,
             Q_z=np.eye(1) * 2.0,
@@ -1175,7 +1175,7 @@ class TestAnalyticalJacobians:
     def test_objective_jac_matches_fd_when_all_terms_analytical(self):
         """For a pure tracking OCP (no user lagrange/mayer), objective grad is analytical."""
         model = ScalarNonlinear()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model,
             N=2,
             Q_z=np.eye(1) * 2.0,
@@ -1199,9 +1199,9 @@ class TestAnalyticalJacobians:
                                    err_msg="Objective gradient mismatch")
 
     def test_tracking_ocp_has_analytical_jac(self):
-        """ContinuousOCP with R_stage/P_terminal always provides analytical Jacs."""
+        """GeneralContinuousOCP with R_stage/P_terminal always provides analytical Jacs."""
         model = ScalarNonlinear()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=3,
             Q_z=np.eye(1) * 2.0,
             R_stage=np.eye(1) * 0.1,
@@ -1210,13 +1210,13 @@ class TestAnalyticalJacobians:
             dt=1.0,
         )
         assert ocp._can_use_analytical_objective_jac(), (
-            "ContinuousOCP with R_stage/P_terminal should provide analytical Jacobians"
+            "GeneralContinuousOCP with R_stage/P_terminal should provide analytical Jacobians"
         )
 
     def test_tracking_ocp_objective_jac_matches_fd(self):
-        """ContinuousOCP with R_stage/P_terminal objective gradient matches finite differences."""
+        """GeneralContinuousOCP with R_stage/P_terminal objective gradient matches finite differences."""
         model = ScalarNonlinear()
-        ocp = ContinuousOCP(
+        ocp = GeneralContinuousOCP(
             model, N=2,
             Q_z=np.eye(1) * 2.0,
             R_stage=np.eye(1) * 0.1,
@@ -1244,7 +1244,7 @@ class TestAnalyticalJacobians:
         model = ScalarNonlinear()
 
         # Without analytical Jacobians (no lagrange_jac)
-        ocp_nograd = ContinuousOCP(
+        ocp_nograd = GeneralContinuousOCP(
             model, N=3,
             lagrange=lambda t, x, y, u, p: float(u @ u),
             Q_z=np.eye(1) * 2.0,
@@ -1254,7 +1254,7 @@ class TestAnalyticalJacobians:
         )
 
         # With analytical Jacobians
-        ocp_grad = ContinuousOCP(
+        ocp_grad = GeneralContinuousOCP(
             model, N=3,
             lagrange=lambda t, x, y, u, p: float(u @ u),
             lagrange_jac=lambda t, x, y, u, p: (
@@ -1279,7 +1279,7 @@ class TestAnalyticalJacobians:
         )
 
 
-# ── Tests: CDLinearizedMPCController and linearisation utilities ─────────────────
+# ── Tests: StandardLinearisedContinuousMPC and linearisation utilities ─────────────────
 
 
 class _ScalarBoundedNonlinear(ContinuousDiscreteSDE):
@@ -1391,7 +1391,7 @@ class TestCDLinearizedMPCController:
         model = _ScalarBoundedNonlinear()
         Q = np.eye(1) * 5.0
         R = np.eye(1) * 0.05
-        ctrl = CDLinearizedMPCController(
+        ctrl = StandardLinearisedContinuousMPC(
             model=model,
             estimator=estimator,
             N=8,
@@ -1408,7 +1408,7 @@ class TestCDLinearizedMPCController:
     def test_step_returns_absolute_action_and_sequences(self):
         est = _DummyEstimator2([0.0])
         ctrl, model = self._make_ctrl(estimator=est)
-        u, U, X = ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        u, U, X = ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
         assert u.shape == (model.nu,)
         assert U.shape == (8, model.nu)
         assert X.shape == (8, model.nx)
@@ -1416,7 +1416,7 @@ class TestCDLinearizedMPCController:
     def test_step_respects_absolute_bounds(self):
         est = _DummyEstimator2([0.0])
         ctrl, _ = self._make_ctrl(estimator=est, x_ref=np.array([10.0]))
-        u, _, _ = ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        u, _, _ = ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
         assert np.all(u >= -1.0 - 1e-8)
         assert np.all(u <= 1.0 + 1e-8)
 
@@ -1427,14 +1427,14 @@ class TestCDLinearizedMPCController:
         ekf = ContinuousDiscreteEKF(model, x0=x0, P0=P0)
         Q = np.eye(1) * 2.0
         R = np.eye(1) * 0.1
-        ctrl = CDLinearizedMPCController(
+        ctrl = StandardLinearisedContinuousMPC(
             model=model, estimator=ekf, N=5, Q=Q, R=R, dt=1.0,
             u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([1.0]), y_offset=10.0,
         )
 
-        ctrl.step(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
         Ad_0 = ctrl._lin_model.Ad.copy()
-        ctrl.step(y=np.array([1.0]), d=np.array([0.5]), p=np.array([]), t=1.0)
+        ctrl.compute(y=np.array([1.0]), d=np.array([0.5]), p=np.array([]), t=1.0)
         Ad_1 = ctrl._lin_model.Ad.copy()
 
         assert not np.allclose(Ad_0, Ad_1), "Expected re-linearization to update local Ad"
@@ -1442,10 +1442,54 @@ class TestCDLinearizedMPCController:
     def test_disturbance_hold_assumption_uses_zero_deviation_trajectory(self):
         est = _DummyEstimator2([0.0])
         ctrl, model = self._make_ctrl(estimator=est)
-        ctrl.step(y=np.array([0.0]), d=np.array([0.7]), p=np.array([]), t=0.0)
+        ctrl.compute(y=np.array([0.0]), d=np.array([0.7]), p=np.array([]), t=0.0)
         D_dev = ctrl.last_disturbance_deviation_trajectory
         assert D_dev.shape == (8, model.nd)
         assert np.allclose(D_dev, 0.0)
+
+    def test_disturbance_profile_converted_to_deviation_coordinates(self):
+        est = _DummyEstimator2([0.0])
+        ctrl, model = self._make_ctrl(estimator=est)
+        d_ss = 0.4
+        D_abs = np.linspace(0.4, 1.2, 8).reshape(8, 1)
+        ctrl.set_linearisation_point(x=np.array([0.0]), u=np.array([0.0]), d=np.array([d_ss]))
+        ctrl.set_disturbance_profile(D_abs)
+        ctrl.compute(y=np.array([0.0]), d=np.array([d_ss]), p=np.array([]), t=0.0)
+        D_dev = ctrl.last_disturbance_deviation_trajectory
+        np.testing.assert_allclose(D_dev, D_abs - d_ss)
+
+    def test_equilibrium_linearisation_uses_state_deviation_initial_condition(self):
+        est = _DummyEstimator2([0.5])
+        ctrl, _ = self._make_ctrl(estimator=est, x_ref=np.array([2.0]))
+        ctrl.set_linearisation_point(
+            x=np.array([0.0]), u=np.array([0.0]), d=np.array([0.0]),
+        )
+
+        captured: dict[str, np.ndarray] = {}
+        orig_solve = ctrl._ocp.solve
+
+        def spy_solve(x0, *args, **kwargs):
+            captured["x0"] = np.asarray(x0, dtype=float).copy()
+            return orig_solve(x0, *args, **kwargs)
+
+        ctrl._ocp.solve = spy_solve  # type: ignore[method-assign]
+        ctrl.compute(y=np.array([0.5]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        np.testing.assert_allclose(captured["x0"], np.array([0.5]))
+
+    def test_input_bound_profiles_stay_absolute_across_steps(self):
+        est = _DummyEstimator2([0.0])
+        ctrl, model = self._make_ctrl(estimator=est)
+        u_min_abs = np.full((8, model.nu), -0.8)
+        u_max_abs = np.full((8, model.nu), 0.8)
+        ctrl.set_input_bound_profiles(u_min_abs, u_max_abs)
+
+        ctrl.set_linearisation_point(x=np.array([0.0]), u=np.array([0.2]), d=np.array([0.0]))
+        ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
+        ctrl.set_linearisation_point(x=np.array([0.0]), u=np.array([0.5]), d=np.array([0.0]))
+        ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=1.0)
+
+        np.testing.assert_allclose(ctrl.horizon_profile.input_min_profile, u_min_abs)
+        np.testing.assert_allclose(ctrl.horizon_profile.input_max_profile, u_max_abs)
 
     def test_closed_loop_moves_toward_reference(self):
         model = _ScalarBoundedNonlinear()
@@ -1455,7 +1499,7 @@ class TestCDLinearizedMPCController:
 
         Q = np.eye(1) * 8.0
         R = np.eye(1) * 0.05
-        ctrl = CDLinearizedMPCController(
+        ctrl = StandardLinearisedContinuousMPC(
             model=model, estimator=ekf, N=10, Q=Q, R=R, dt=1.0,
             u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([2.0]), y_offset=10.0,
         )
@@ -1464,7 +1508,7 @@ class TestCDLinearizedMPCController:
         p = np.array([])
         for k in range(15):
             y = model.hm(x, np.zeros(model.nu), np.zeros(model.nd), p, float(k))
-            u, _, _ = ctrl.step(y=y, d=np.zeros(model.nd), p=p, t=float(k))
+            u, _, _ = ctrl.compute(y=y, d=np.zeros(model.nd), p=p, t=float(k))
             x = x + model.f(x, u, np.zeros(model.nd), p, float(k)) * 1.0
 
         assert abs(x[0] - 2.0) < 1.0
@@ -1487,8 +1531,8 @@ class TestOCPFormulationEquivalence:
                   solver="highs")
         if use_rom:
             kw["S"] = np.eye(1) * 5.0
-        ocp_c = DiscreteLinearOCP(formulation="condensed", **kw)
-        ocp_s = DiscreteLinearOCP(formulation="sparse", **kw)
+        ocp_c = StandardLinearDiscreteOCP(formulation="condensed", **kw)
+        ocp_s = StandardLinearDiscreteOCP(formulation="sparse", **kw)
 
         x0 = np.array([0.0, 0.0])
         D = np.zeros(N * model.nd)
@@ -1503,8 +1547,8 @@ class TestOCPFormulationEquivalence:
         N = 12
         kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0,
                   solver="highs")
-        ocp_c = ContinuousLinearOCP(formulation="condensed", **kw)
-        ocp_s = ContinuousLinearOCP(formulation="sparse", **kw)
+        ocp_c = StandardLinearContinuousDiscreteOCP(formulation="condensed", **kw)
+        ocp_s = StandardLinearContinuousDiscreteOCP(formulation="sparse", **kw)
         x0 = np.array([0.0])
         D = np.zeros(N * model.nd)
         x_ref = model.x_ref
@@ -1521,10 +1565,10 @@ class TestOCPFormulationEquivalence:
         D = np.zeros(N * model.nd)
         x_ref = model.x_ref
         kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
-        U_ref, _ = DiscreteLinearOCP(solver="highs", formulation="condensed",
+        U_ref, _ = StandardLinearDiscreteOCP(solver="highs", formulation="condensed",
                                          **kw).solve(x0, D, x_ref)
         for solver in ("highs", "osqp"):
-            U, _ = DiscreteLinearOCP(solver=solver, **kw).solve(x0, D, x_ref)
+            U, _ = StandardLinearDiscreteOCP(solver=solver, **kw).solve(x0, D, x_ref)
             np.testing.assert_allclose(U, U_ref, atol=1e-4,
                                        err_msg=f"{solver} disagrees with reference")
 
@@ -1533,14 +1577,14 @@ class TestOCPFormulationEquivalence:
         model = DoubleIntegrator()
         kw = dict(Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
         for N in (5, 40, 100):
-            assert DiscreteLinearOCP(
+            assert StandardLinearDiscreteOCP(
                 model, N=N, solver="osqp", **kw)._resolve_formulation() == "sparse"
-            assert DiscreteLinearOCP(
+            assert StandardLinearDiscreteOCP(
                 model, N=N, solver="highs", **kw)._resolve_formulation() == "condensed"
 
     def test_explicit_formulation_overrides_auto(self):
         model = DoubleIntegrator()
-        ocp = DiscreteLinearOCP(
+        ocp = StandardLinearDiscreteOCP(
             model, N=5, Q=np.eye(1), R=np.eye(1), formulation="sparse"
         )
         assert ocp._resolve_formulation() == "sparse"
@@ -1548,7 +1592,7 @@ class TestOCPFormulationEquivalence:
     def test_invalid_formulation_raises(self):
         model = DoubleIntegrator()
         with pytest.raises(ValueError):
-            DiscreteLinearOCP(model, N=5, Q=np.eye(1), R=np.eye(1),
+            StandardLinearDiscreteOCP(model, N=5, Q=np.eye(1), R=np.eye(1),
                                   formulation="banana")
 
 
@@ -1561,16 +1605,16 @@ class TestWarmStartMPC:
     def _run(self, warm_start, N=10, n_steps=12, formulation="auto"):
         model = DoubleIntegrator()
         kf = DiscreteLinearKF(model)
-        ocp = DiscreteLinearOCP(
+        ocp = StandardLinearDiscreteOCP(
             model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=20.0,
             formulation=formulation,
         )
-        ctrl = MPCController(model, estimator=kf, ocp=ocp, warm_start=warm_start)
+        ctrl = StandardLinearDiscreteMPC(model, estimator=kf, ocp=ocp, warm_start=warm_start)
         us = []
         for k in range(n_steps):
             y = np.array([0.1 * k])
             D = np.zeros(N * model.nd)
-            u, _, _ = ctrl.step(y, D)
+            u, _, _ = ctrl.compute(y, D)
             us.append(np.asarray(u, dtype=float).copy())
         return np.array(us)
 
@@ -1588,13 +1632,13 @@ class TestWarmStartMPC:
         def run(warm):
             model = SimpleLinearCD()
             kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
-            ocp = ContinuousLinearOCP(
+            ocp = StandardLinearContinuousDiscreteOCP(
                 model, N=10, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0
             )
-            ctrl = CDMPCController(model, estimator=kf, ocp=ocp, warm_start=warm)
+            ctrl = StandardLinearContinuousMPC(model, estimator=kf, ocp=ocp, warm_start=warm)
             us = []
             for k in range(10):
-                u, _, _ = ctrl.step(np.array([0.1 * k]), np.zeros(10 * model.nd))
+                u, _, _ = ctrl.compute(np.array([0.1 * k]), np.zeros(10 * model.nd))
                 us.append(float(np.asarray(u).ravel()[0]))
             return np.array(us)
         np.testing.assert_allclose(run(True), run(False), atol=1e-5)

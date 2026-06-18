@@ -61,8 +61,15 @@ import numpy as np
 from scipy.linalg import block_diag
 
 from .._utils import _any_to_np1d, _any_to_np2d
-from ._base import OCP
+from ._base import DiscreteOptimalControlProblem
 from .qp_solver import QPProblem, QPSolverBackend, make_qp_backend
+from .input_linear_cost import (
+    InputLinearCostMode,
+    augment_condensed_qp,
+    augment_sparse_qp,
+    infer_signed_magnitude_input_indices,
+    resolve_input_linear_cost,
+)
 
 if TYPE_CHECKING:
     from ..models import DiscreteLinearSDE
@@ -120,7 +127,7 @@ def _shift_warm_start(
 # ── Discrete-time linear OCP ─────────────────────────────────────────────────
 
 
-class DiscreteLinearOCP(OCP):
+class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
     """
     Receding-horizon QP with hard input and soft output box constraints for
     discrete-time linear systems.
@@ -144,6 +151,9 @@ class DiscreteLinearOCP(OCP):
         Terminal tracking cost ``‖z[N] − z_ref‖²_P``.  Default: ``Q``.
     S : (nu, nu) array-like, optional
         Input rate-of-movement cost ``‖Δu‖²_S``.  ``None`` disables.
+    du_min, du_max : (nu,) array-like, optional
+        Hard input rate-of-movement box ``du_min ≤ Δu ≤ du_max``.
+        ``None`` disables the corresponding bound.
     rho : float, optional
         Quadratic penalty on the soft-output slack variable ``ε``.
         Default: 1e4.
@@ -166,12 +176,15 @@ class DiscreteLinearOCP(OCP):
         R: Any,
         P: Any | None = None,
         S: Any | None = None,
+        du_min: Any | None = None,
+        du_max: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
         solver: str | QPSolverBackend = "osqp",
         solver_options: dict[str, Any] | None = None,
         formulation: str = "auto",
     ) -> None:
+        super().__init__()
         if formulation not in ("auto", "condensed", "sparse"):
             raise ValueError(
                 f"formulation must be 'auto', 'condensed', or 'sparse'; "
@@ -183,6 +196,12 @@ class DiscreteLinearOCP(OCP):
         self._R = _any_to_np2d(R)
         self._P = _any_to_np2d(P) if P is not None else self._Q.copy()
         self._S = _any_to_np2d(S) if S is not None else None
+        self._du_min = (
+            _any_to_np1d(du_min).reshape(-1) if du_min is not None else None
+        )
+        self._du_max = (
+            _any_to_np1d(du_max).reshape(-1) if du_max is not None else None
+        )
         self._rho = rho
         self._y_offset = y_offset
         self._backend = make_qp_backend(solver, solver_options=solver_options)
@@ -194,6 +213,10 @@ class DiscreteLinearOCP(OCP):
         if self._S is not None:
             self._D_diff = _build_D_diff(nu, N)
             self._S_bar = block_diag(*([self._S] * N))
+        elif self._du_min is not None or self._du_max is not None:
+            self._D_diff = _build_D_diff(nu, N)
+        else:
+            self._D_diff = None
 
     # ── OCP abstract properties ────────────────────────────────────────────
 
@@ -219,28 +242,112 @@ class DiscreteLinearOCP(OCP):
         from .qp_solver import OSQPBackend
         return "sparse" if isinstance(self._backend, OSQPBackend) else "condensed"
 
+    def _rate_offset(self, u_prev_np: np.ndarray | None, nu: int, N: int) -> np.ndarray:
+        """Affine offset ``d0`` in ``Δu = D_diff U + d0``."""
+        d0 = np.zeros(N * nu)
+        if u_prev_np is not None:
+            d0[:nu] = -u_prev_np
+        return d0
+
+    @staticmethod
+    def _per_step_scales(values: Any | None, N: int, default: float = 1.0) -> np.ndarray:
+        if values is None:
+            return np.full(N, default)
+        arr = np.asarray(values, dtype=float)
+        if arr.ndim == 0 or arr.size == 1:
+            return np.full(N, float(arr.reshape(-1)[0]))
+        if arr.shape[0] != N:
+            raise ValueError(f"Horizon profile length {arr.shape[0]} != N={N}.")
+        return arr.reshape(N)
+
+    def _resolve_disturbance(self, D: Any | None, nd: int) -> np.ndarray:
+        if D is not None:
+            return _any_to_np1d(D).reshape(-1)
+        prof = self._horizon_profile.disturbance_profile
+        if prof is None:
+            raise ValueError(
+                "Disturbance forecast required: pass D to solve() or "
+                "call set_disturbance_profile()."
+            )
+        return _any_to_np1d(prof).reshape(-1)
+
+    def _resolve_x_ref(self, x_ref: Any | None, nx: int) -> np.ndarray:
+        if x_ref is not None:
+            x_ref_np = _any_to_np1d(x_ref).reshape(-1)
+        else:
+            x_ref_np = np.asarray(self._model.x_ref, dtype=float).reshape(-1)
+        prof = self._horizon_profile.output_reference_deviation_profile
+        if prof is None:
+            return x_ref_np
+        dev = np.asarray(prof, dtype=float)
+        if dev.ndim == 1 and dev.size == nx:
+            return x_ref_np + dev
+        if dev.ndim == 1 and dev.size == self._N * nx:
+            return x_ref_np + dev[:nx]
+        return x_ref_np
+
+    def _per_step_output_references(
+        self, Cz: np.ndarray, x_ref: np.ndarray, nz: int, N: int,
+    ) -> np.ndarray:
+        z_ref = Cz @ x_ref
+        prof = self._horizon_profile.output_reference_deviation_profile
+        if prof is None:
+            return np.tile(z_ref, N)
+        dev = np.asarray(prof, dtype=float)
+        if dev.ndim == 1 and dev.size == nz:
+            return np.tile(z_ref + dev, N)
+        if dev.ndim == 2 and dev.shape == (N, nz):
+            return (np.tile(z_ref, (N, 1)) + dev).reshape(-1)
+        if dev.ndim == 1 and dev.size == N * nz:
+            return (np.tile(z_ref, N) + dev).reshape(-1)
+        return np.tile(z_ref, N)
+
+    def _resolve_linear_cost_layout(self):
+        prof = self._horizon_profile
+        u_min, u_max = self._model.u_bounds
+        return resolve_input_linear_cost(
+            coefficient_profile=prof.input_linear_cost_coefficient_profile,
+            N=self._N,
+            nu=self._model.nu,
+            u_min=_any_to_np1d(u_min),
+            u_max=_any_to_np1d(u_max),
+            slack_input_indices=prof.slack_input_indices,
+            positive_slack_coefficient_profile=prof.positive_slack_coefficient_profile,
+            negative_slack_coefficient_profile=prof.negative_slack_coefficient_profile,
+        )
+
+    def _per_step_band_half_width(self, N: int) -> np.ndarray:
+        prof = self._horizon_profile.soft_output_band_half_width_profile
+        if prof is None:
+            return np.full(N, self._y_offset)
+        return self._per_step_scales(prof, N, default=self._y_offset)
+
     # ── Public solve ────────────────────────────────────────────────────────
 
     def solve(
         self,
         x0: Any,
-        D: Any,
-        x_ref: Any,
+        D: Any | None = None,
+        x_ref: Any | None = None,
         u_prev: Any | None = None,
         warm_start: dict[str, np.ndarray] | None = None,
     ) -> tuple[np.ndarray, np.ndarray]:
         """
         Solve the QP starting from state estimate ``x0``.
 
+        Disturbances, references, and other horizon quantities are taken from
+        call-time arguments when provided; otherwise from :attr:`horizon_profile`
+        (configured via the profile setters).
+
         Parameters
         ----------
         x0    : (nx,) array-like — current state estimate ``x̂_{k|k}``.
-        D     : (N · nd,) array-like — stacked disturbance forecast
-                ``[d[0]; d[1]; …; d[N − 1]]``.
-        x_ref : (nx,) array-like — state reference; the output reference is
-                ``z_ref = Cz x_ref``.
+        D     : (N · nd,) array-like, optional — disturbance forecast.  Falls
+                back to :attr:`horizon_profile.disturbance_profile`.
+        x_ref : (nx,) array-like, optional — state reference.  Falls back to
+                ``model.x_ref`` plus any output-reference deviation profile.
         u_prev : (nu,) array-like, optional
-            Previously-applied input (used only when ``S`` is active).
+            Previously-applied input (used for ROM penalty / hard ROM limits).
         warm_start : dict, optional
             ``{"U": (N·nu,), "X": (N·nx,)}`` primal warm-start trajectory.
 
@@ -257,14 +364,14 @@ class DiscreteLinearOCP(OCP):
         nz = Cz.shape[0]
 
         x0 = _any_to_np1d(x0).reshape(-1)
-        x_ref = _any_to_np1d(x_ref).reshape(-1)
-        D = _any_to_np1d(D).reshape(-1) if D is not None else np.zeros(N * nd)
+        x_ref = self._resolve_x_ref(x_ref, nx)
+        D = self._resolve_disturbance(D, nd)
 
         Ad = _any_to_np2d(self._model.Ad)
         Bd = _any_to_np2d(self._model.Bd)
         Ed = _any_to_np2d(self._model.Ed)
 
-        if self._S is not None:
+        if self._S is not None or self._du_min is not None or self._du_max is not None:
             u_prev_np = (
                 np.zeros(nu) if u_prev is None
                 else _any_to_np1d(u_prev).reshape(-1)
@@ -288,7 +395,7 @@ class DiscreteLinearOCP(OCP):
 
         if not result.success:
             warnings.warn(
-                f"DiscreteLinearOCP.solve: QP solver returned status "
+                f"StandardLinearDiscreteOCP.solve: QP solver returned status "
                 f"'{result.status}'; returning zero inputs as fallback.",
                 RuntimeWarning,
                 stacklevel=2,
@@ -301,8 +408,8 @@ class DiscreteLinearOCP(OCP):
 
     # ── Warm-start assembly ────────────────────────────────────────────────
 
-    @staticmethod
     def _assemble_warm(
+        self,
         formulation: str,
         warm_start: dict[str, np.ndarray] | None,
         N: int,
@@ -313,6 +420,8 @@ class DiscreteLinearOCP(OCP):
         """Map a physical ``{"U", "X"}`` warm start to the decision vector."""
         if warm_start is None:
             return None
+        layout = self._resolve_linear_cost_layout()
+        n_slack_st = 2 * layout.n_st if layout is not None and layout.has_slack else 0
         n_U = N * nu
         n_eps = N * nz
         n_X = N * nx
@@ -322,15 +431,16 @@ class DiscreteLinearOCP(OCP):
         U_w = np.asarray(U_w, dtype=float).reshape(-1)
         if U_w.shape[0] != n_U:
             return None
+        slack_pad = np.zeros(n_slack_st)
         if formulation == "condensed":
-            return np.concatenate([U_w, np.zeros(n_eps)])
+            return np.concatenate([U_w, slack_pad, np.zeros(n_eps)])
         X_w = warm_start.get("X")
         if X_w is None:
             return None
         X_w = np.asarray(X_w, dtype=float).reshape(-1)
         if X_w.shape[0] != n_X:
             return None
-        return np.concatenate([X_w, U_w, np.zeros(n_eps)])
+        return np.concatenate([X_w, U_w, slack_pad, np.zeros(n_eps)])
 
     # ── Forward simulation (fallback X reconstruction) ─────────────────────
 
@@ -363,6 +473,11 @@ class DiscreteLinearOCP(OCP):
         self, x0, D, x_ref, Ad, Bd, Ed, Cz, nx, nu, nd, nz, u_prev_np,
     ) -> tuple[dict[str, Any], Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]]:
         N = self._N
+        prof = self._horizon_profile
+        q_scales = self._per_step_scales(prof.output_tracking_weight_scale_profile, N)
+        r_scales = self._per_step_scales(
+            prof.input_regularisation_weight_scale_profile, N
+        )
 
         Ad_pow = [np.eye(nx)]
         for _ in range(N):
@@ -383,11 +498,12 @@ class DiscreteLinearOCP(OCP):
         CP = Cz_bar @ Psi
         CL = Cz_bar @ Lambda
 
-        Q_bar = block_diag(*([self._Q] * (N - 1) + [self._P])) if N > 1 else self._P
-        R_bar = block_diag(*([self._R] * N))
+        Q_bar = block_diag(*([
+            self._Q * q_scales[k] for k in range(N - 1)
+        ] + [self._P * q_scales[N - 1]])) if N > 1 else self._P * q_scales[0]
+        R_bar = block_diag(*[self._R * r_scales[k] for k in range(N)])
 
-        z_ref = Cz @ x_ref
-        z_ref_bar = np.tile(z_ref, N)
+        z_ref_bar = self._per_step_output_references(Cz, x_ref, nz, N)
         Z_free = CP @ x0 + CL @ D
         e_free = Z_free - z_ref_bar
 
@@ -413,23 +529,52 @@ class DiscreteLinearOCP(OCP):
         f[:n_U] = f_u
 
         u_min, u_max = self._model.u_bounds
-        u_min_t = np.tile(_any_to_np1d(u_min).reshape(-1), N)
-        u_max_t = np.tile(_any_to_np1d(u_max).reshape(-1), N)
+        prof = self._horizon_profile
+        if prof.input_min_profile is not None and prof.input_max_profile is not None:
+            u_min_t = np.asarray(prof.input_min_profile, dtype=float).reshape(-1)
+            u_max_t = np.asarray(prof.input_max_profile, dtype=float).reshape(-1)
+        else:
+            u_min_t = np.tile(_any_to_np1d(u_min).reshape(-1), N)
+            u_max_t = np.tile(_any_to_np1d(u_max).reshape(-1), N)
         lb = np.concatenate([u_min_t, np.zeros(n_eps)])
         ub = np.concatenate([u_max_t, np.full(n_eps, np.inf)])
 
-        z_min_t = np.tile(z_ref - self._y_offset, N)
-        z_max_t = np.tile(z_ref + self._y_offset, N)
+        band = self._per_step_band_half_width(N)
+        z_min_t = np.zeros(N * nz)
+        z_max_t = np.zeros(N * nz)
+        for k in range(N):
+            z_ref_k = z_ref_bar[k * nz:(k + 1) * nz]
+            z_min_t[k * nz:(k + 1) * nz] = z_ref_k - band[k]
+            z_max_t[k * nz:(k + 1) * nz] = z_ref_k + band[k]
         neg_I = -np.eye(n_eps)
         G = np.vstack([np.hstack([-CG, neg_I]), np.hstack([CG, neg_I])])
         h = np.concatenate([-z_min_t + Z_free, z_max_t - Z_free])
+
+        if self._du_min is not None or self._du_max is not None:
+            d0 = self._rate_offset(u_prev_np, nu, N)
+            G_rate: list[np.ndarray] = []
+            h_rate: list[np.ndarray] = []
+            if self._du_max is not None:
+                G_rate.append(np.hstack([self._D_diff, np.zeros((N * nu, n_eps))]))
+                h_rate.append(np.tile(self._du_max, N) - d0)
+            if self._du_min is not None:
+                G_rate.append(np.hstack([-self._D_diff, np.zeros((N * nu, n_eps))]))
+                h_rate.append(-np.tile(self._du_min, N) + d0)
+            G = np.vstack([G] + G_rate)
+            h = np.concatenate([h] + h_rate)
 
         def extract(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             U_flat = z[:n_U]
             X_flat = Psi @ x0 + Gamma @ U_flat + Lambda @ D
             return U_flat, X_flat
 
-        return {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h}, extract
+        qp = {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h}
+        layout = self._resolve_linear_cost_layout()
+        if layout is not None and layout.has_any:
+            qp = augment_condensed_qp(
+                qp, layout=layout, N=N, nu=nu, n_eps=n_eps,
+            )
+        return qp, extract
 
     # ── Sparse (simultaneous, banded) builder ──────────────────────────────
 
@@ -446,18 +591,25 @@ class DiscreteLinearOCP(OCP):
         oU = n_X
         oE = n_X + n_U
 
-        z_ref = Cz @ x_ref
+        prof = self._horizon_profile
+        q_scales = self._per_step_scales(prof.output_tracking_weight_scale_profile, N)
+        r_scales = self._per_step_scales(
+            prof.input_regularisation_weight_scale_profile, N
+        )
+        z_ref_bar = self._per_step_output_references(Cz, x_ref, nz, N)
+        band = self._per_step_band_half_width(N)
+
         f = np.zeros(n_Z)
 
         Czt = Cz.T
-        H_state = Czt @ self._Q @ Cz
-        H_state_term = Czt @ self._P @ Cz
-        x_blocks = [H_state] * (N - 1) + [H_state_term] if N > 1 else [H_state_term]
+        x_blocks = []
         for k in range(N):
-            Qk = self._P if k == N - 1 else self._Q
-            f[k * nx:(k + 1) * nx] = -Czt @ (Qk @ z_ref)
+            Qk = (self._P if k == N - 1 else self._Q) * q_scales[k]
+            x_blocks.append(Czt @ Qk @ Cz)
+            z_ref_k = z_ref_bar[k * nz:(k + 1) * nz]
+            f[k * nx:(k + 1) * nx] = -Czt @ (Qk @ z_ref_k)
 
-        R_bar = block_diag(*([self._R] * N))
+        R_bar = block_diag(*[self._R * r_scales[k] for k in range(N)])
         if self._S is not None:
             d0 = np.zeros(n_U)
             d0[:nu] = -u_prev_np
@@ -500,8 +652,12 @@ class DiscreteLinearOCP(OCP):
         A_eq = sp.csc_matrix((vals, (rows, cols)), shape=(n_X, n_Z))
 
         u_min, u_max = self._model.u_bounds
-        u_min_t = np.tile(_any_to_np1d(u_min).reshape(-1), N)
-        u_max_t = np.tile(_any_to_np1d(u_max).reshape(-1), N)
+        if prof.input_min_profile is not None and prof.input_max_profile is not None:
+            u_min_t = np.asarray(prof.input_min_profile, dtype=float).reshape(-1)
+            u_max_t = np.asarray(prof.input_max_profile, dtype=float).reshape(-1)
+        else:
+            u_min_t = np.tile(_any_to_np1d(u_min).reshape(-1), N)
+            u_max_t = np.tile(_any_to_np1d(u_max).reshape(-1), N)
         lb = np.concatenate([np.full(n_X, -np.inf), u_min_t, np.zeros(n_eps)])
         ub = np.concatenate([np.full(n_X, np.inf), u_max_t, np.full(n_eps, np.inf)])
 
@@ -521,13 +677,14 @@ class DiscreteLinearOCP(OCP):
 
         neg_eye_nz = -np.eye(nz)
         h = np.zeros(2 * n_eps)
-        z_min = z_ref - self._y_offset
-        z_max = z_ref + self._y_offset
         for k in range(N):
             xs = k * nx
             es = oE + k * nz
             r_hi = k * nz
             r_lo = n_eps + k * nz
+            z_ref_k = z_ref_bar[k * nz:(k + 1) * nz]
+            z_min = z_ref_k - band[k]
+            z_max = z_ref_k + band[k]
             _add_g(r_hi, xs, Cz)
             _add_g(r_hi, es, neg_eye_nz)
             h[r_hi:r_hi + nz] = z_max
@@ -536,12 +693,42 @@ class DiscreteLinearOCP(OCP):
             h[r_lo:r_lo + nz] = -z_min
         G = sp.csc_matrix((g_vals, (g_rows, g_cols)), shape=(2 * n_eps, n_Z))
 
+        if self._du_min is not None or self._du_max is not None:
+            d0 = self._rate_offset(u_prev_np, nu, N)
+            G_rate_list = []
+            h_rate_list: list[np.ndarray] = []
+            if self._du_max is not None:
+                G_rate_list.append(
+                    sp.hstack([
+                        sp.csc_matrix((N * nu, n_X)),
+                        self._D_diff,
+                        sp.csc_matrix((N * nu, n_eps)),
+                    ])
+                )
+                h_rate_list.append(np.tile(self._du_max, N) - d0)
+            if self._du_min is not None:
+                G_rate_list.append(
+                    sp.hstack([
+                        sp.csc_matrix((N * nu, n_X)),
+                        -self._D_diff,
+                        sp.csc_matrix((N * nu, n_eps)),
+                    ])
+                )
+                h_rate_list.append(-np.tile(self._du_min, N) + d0)
+            G = sp.vstack([G] + G_rate_list, format="csc")
+            h = np.concatenate([h] + h_rate_list)
+
         def extract(z: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
             X_flat = z[:n_X]
             U_flat = z[oU:oU + n_U]
             return U_flat, X_flat
 
-        return (
-            {"P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h, "A": A_eq, "b": b_eq},
-            extract,
-        )
+        qp = {
+            "P": H, "q": f, "lb": lb, "ub": ub, "G": G, "h": h, "A": A_eq, "b": b_eq,
+        }
+        layout = self._resolve_linear_cost_layout()
+        if layout is not None and layout.has_any:
+            qp = augment_sparse_qp(
+                qp, layout=layout, N=N, nu=nu, nx=nx, nz=nz,
+            )
+        return qp, extract

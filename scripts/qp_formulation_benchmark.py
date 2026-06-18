@@ -2,7 +2,7 @@
 Benchmark the linear-MPC QP backends and formulations.
 
 Compares the QP backends (HiGHS, OSQP) crossed with the two
-``DiscreteLinearOCP`` build strategies — the dense *condensed*
+``StandardLinearDiscreteOCP`` build strategies — the dense *condensed*
 (state-eliminated) form and the sparse *simultaneous* form with banded
 dynamics equalities — across a range of prediction horizons, and checks that
 they agree to solver tolerance.
@@ -31,7 +31,7 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from mbc.control import DiscreteLinearOCP
+from mbc.control import StandardLinearDiscreteOCP
 from mbc.models import DiscreteLinearSDE
 
 
@@ -117,7 +117,7 @@ def main() -> None:
         times = []
         Us = []
         for solver, form in combos:
-            ocp = DiscreteLinearOCP(
+            ocp = StandardLinearDiscreteOCP(
                 model, N=N, Q=np.eye(model.nx), R=np.eye(model.nu) * 0.1,
                 y_offset=5.0, solver=solver, formulation=form,
             )

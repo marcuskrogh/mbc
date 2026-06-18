@@ -1,12 +1,12 @@
 """
-Continuous-discrete linear receding-horizon QP (``ContinuousLinearOCP``).
+Continuous-discrete linear receding-horizon QP (``StandardLinearContinuousDiscreteOCP``).
 
-A thin, typed wrapper around :class:`DiscreteLinearOCP` for
+A thin, typed wrapper around :class:`StandardLinearDiscreteOCP` for
 :class:`~mbc.models.ContinuousDiscreteLinearSDE`.  Solves the
 receding-horizon QP via the lifted (batch) formulation using a convex-QP
 backend (OSQP by default).  The continuous-discrete model is ZOH-discretised
 once at construction time and the resulting discrete matrices are passed to
-the parent ``DiscreteLinearOCP``.
+the parent ``StandardLinearDiscreteOCP``.
 
 Given the continuous-discrete model
 
@@ -26,7 +26,7 @@ from typing import Any, Tuple, TYPE_CHECKING
 
 import numpy as np
 
-from .discrete_linear_ocp import DiscreteLinearOCP
+from .discrete_linear_ocp import StandardLinearDiscreteOCP
 from .qp_solver import QPSolverBackend
 
 if TYPE_CHECKING:
@@ -84,13 +84,17 @@ class _CDModelAdapter:
     def u_bounds(self) -> Tuple[np.ndarray, np.ndarray]:
         return self._m.u_bounds
 
+    @property
+    def x_ref(self) -> np.ndarray:
+        return self._m.x_ref
 
-class ContinuousLinearOCP(DiscreteLinearOCP):
+
+class StandardLinearContinuousDiscreteOCP(StandardLinearDiscreteOCP):
     """
     Receding-horizon QP for a linear continuous-discrete system.
 
     ZOH-discretises the continuous-discrete model at construction time and
-    delegates to :class:`DiscreteLinearOCP` for all QP building and solving.
+    delegates to :class:`StandardLinearDiscreteOCP` for all QP building and solving.
     The original CD model is stored as ``self._cd_model`` for direct access.
 
     Parameters
@@ -122,8 +126,8 @@ class ContinuousLinearOCP(DiscreteLinearOCP):
 
     Notes
     -----
-    ``ContinuousLinearOCP.solve`` has the same signature as
-    ``DiscreteLinearOCP.solve`` — see that class for full documentation.
+    ``StandardLinearContinuousDiscreteOCP.solve`` has the same signature as
+    ``StandardLinearDiscreteOCP.solve`` — see that class for full documentation.
     """
 
     def __init__(
