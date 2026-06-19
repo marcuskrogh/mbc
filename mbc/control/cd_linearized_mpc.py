@@ -260,6 +260,22 @@ class LinearisedContinuousMPC(ModelPredictiveController, ABC):
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Compute and return the optimal closed-loop MPC action."""
 
+    @abstractmethod
+    def propagate(
+        self,
+        y: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None = None,
+        t: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Run the estimator without solving the OCP; return ``(x_hat, P)``.
+
+        The elapsed time since the last call to :meth:`compute` or
+        :meth:`propagate` is inferred from ``t``, so odd (off-grid) intervals
+        are handled automatically without any manual bookkeeping.
+        """
+
 
 class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
     """
@@ -335,6 +351,7 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
         self._u_prev = np.zeros(model.nu, dtype=float)
         self._d_prev = np.zeros(model.nd, dtype=float)
         self._last_D_dev = np.zeros((self._N, model.nd), dtype=float)
+        self._t_last: float | None = None
 
     @property
     def x_ref(self) -> np.ndarray:
@@ -481,5 +498,55 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
 
         self._u_prev = u_abs.copy()
         self._d_prev = d_now.copy()
+        self._t_last = float(t)
 
         return u_abs, U_abs, X_abs
+
+    def propagate(
+        self,
+        y: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None = None,
+        t: float = 0.0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Run the estimator without solving the OCP; return ``(x_hat, P)``.
+
+        Use this when the controller is switched off but state tracking must
+        continue.  The elapsed time since the last :meth:`compute` or
+        :meth:`propagate` call is inferred from ``t``, so off-grid (odd)
+        arrival times are handled automatically: the estimator integrates for
+        exactly ``t - t_last`` regardless of the nominal sampling period.
+
+        On the very first call (before any :meth:`compute` has been made) the
+        nominal sampling period is used, matching the standard start-up
+        behaviour.
+
+        Parameters
+        ----------
+        y : (nym,) array-like    — current measurement.
+        d : (nd,) array-like     — current disturbance; updates the stored
+            disturbance for the next call.
+        p : (np,) array-like, optional — parameter vector.
+        t : float                — current time (seconds).
+
+        Returns
+        -------
+        x_hat : (nx,) filtered state estimate.
+        P     : (nx, nx) state error covariance.
+        """
+        y = np.asarray(y, dtype=float).reshape(self._model.nym)
+        d_now = np.asarray(d, dtype=float).reshape(self._model.nd)
+        p_ = np.array([], dtype=float) if p is None else np.asarray(p, dtype=float)
+
+        if self._t_last is not None:
+            dt = float(t) - self._t_last
+            if dt > 0.0:
+                self._estimator.predict_for(dt, self._u_prev, self._d_prev, p_, self._t_last)
+            x_hat, P = self._estimator.update(y, self._u_prev, d_now, p_)
+        else:
+            x_hat, P = self._estimator.step(y, self._u_prev, self._d_prev, p_, t)
+
+        self._d_prev = d_now.copy()
+        self._t_last = float(t)
+        return np.asarray(x_hat, dtype=float), P

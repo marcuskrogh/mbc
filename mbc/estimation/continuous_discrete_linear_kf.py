@@ -189,6 +189,52 @@ class ContinuousDiscreteLinearKF(ContinuousDiscreteEstimator):
         self._P = P
         return x.copy(), P.copy()
 
+    def predict_for(
+        self,
+        dt: float,
+        u: np.ndarray,
+        d: np.ndarray,
+        p=None,
+        t: float | None = None,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Time update over an arbitrary interval ``dt``.
+
+        Keeps the same nominal sub-step size ``h = Ts / n_steps`` and runs
+        ``max(1, round(dt / h))`` sub-steps, so per-step accuracy is unchanged
+        regardless of whether ``dt`` is shorter or longer than ``Ts``.
+
+        Parameters
+        ----------
+        dt : float  — integration duration in seconds.
+        u  : (nu,) ndarray  — input (ZOH) over the interval.
+        d  : (nd,) ndarray  — disturbance over the interval.
+        p, t : ignored — accepted for interface uniformity (LTI model).
+        """
+        u_np = _any_to_np1d(u)
+        d_np = _any_to_np1d(d)
+
+        n_steps = max(1, round(dt / self._h))
+        h = dt / n_steps
+
+        x = self._x.copy()
+        P = self._P.copy()
+        A = self._A_c
+        Bu = self._B_c @ u_np
+        Ed = self._E_c @ d_np
+        GGT = self._GGT
+
+        for _ in range(n_steps):
+            x_dot = A @ x + Bu + Ed
+            P_dot = A @ P + P @ A.T + GGT
+            x = x + h * x_dot
+            P = P + h * P_dot
+        P = 0.5 * (P + P.T)
+
+        self._x = x
+        self._P = P
+        return x.copy(), P.copy()
+
     def update(
         self,
         ym: np.ndarray,
