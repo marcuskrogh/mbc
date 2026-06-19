@@ -145,31 +145,43 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         Plant model providing ``Ad``, ``Bd``, ``Ed``, ``Cz``, ``u_bounds``.
     N : int
         Prediction horizon (number of control intervals).
-    Q : (nz, nz) array-like
-        Stage tracking cost ``‖z − z_ref‖²_Q``.
-    R : (nu, nu) array-like
-        Stage input cost ``‖u‖²_R``.
-    P : (nz, nz) array-like, optional
-        Terminal tracking cost ``‖z[N] − z_ref‖²_P``.  Default: ``Q``.
-    S : (nu, nu) array-like, optional
-        Input rate-of-movement cost ``‖Δu‖²_S``.  ``None`` disables.
+    Q : array-like
+        Stage tracking cost ``‖z − z_ref‖²_Q``.  Three forms are accepted:
+
+        * **scalar** — constant weight ``Q_k = scalar · I_{nz}`` at every step.
+        * **(N,) array** — per-step scalar ``Q_k = arr[k] · I_{nz}``.
+        * **(N, nz) array** — per-step diagonal ``Q_k = diag(arr[k, :])``.
+        * **(nz, nz) array** — constant matrix (existing behaviour).
+
+        When ``N == nz`` a 1-D array of length ``N`` is always interpreted as
+        per-step scalars, not as a constant diagonal.
+    R : array-like
+        Stage input cost ``‖u‖²_R``.  Same four forms as ``Q`` with ``nu``
+        replacing ``nz``.
+    P : array-like, optional
+        Terminal tracking cost ``‖z[N] − z_ref‖²_P``.  Accepts scalar,
+        ``(nz,)`` diagonal vector, or ``(nz, nz)`` matrix.  Default: last
+        step's ``Q`` matrix.
+    S : array-like, optional
+        Input rate-of-movement cost ``‖Δu‖²_S``.  Same four forms as ``R``
+        with ``nu``.  ``None`` disables.
     du_min, du_max : (nu,) array-like, optional
         Hard input rate-of-movement box ``du_min ≤ Δu ≤ du_max``.
         ``None`` disables the corresponding bound.
-    rho : float or (N,) array-like, optional
-        Quadratic penalty on the soft-output slack variable ``ε``.  A scalar
-        applies the same weight at every step; an (N,) array sets a per-step
-        weight.  Default: 1e4.
-    rho_lin : float or (N,) array-like, optional
-        Linear penalty on the soft-output slack variable ``ε``.  Adds a term
-        ``ρ_lin · 1ᵀε`` to the cost, which (since ``ε ≥ 0``) acts as an L1
-        penalty and promotes exact constraint satisfaction.  A scalar applies
-        the same weight at every step; an (N,) array sets a per-step weight.
+    rho : float, (N,) or (N, nz) array-like, optional
+        Quadratic penalty on the soft-output slack variable ``ε``.
+
+        * scalar → same weight for every step and output channel.
+        * (N,) → per-step scalar, broadcast across output channels.
+        * (N, nz) → per-step, per-channel weight.
+
+        Default: 1e4.
+    rho_lin : float, (N,) or (N, nz) array-like, optional
+        Linear (L1-style) penalty on ``ε``.  Same three forms as ``rho``.
         Default: 0.0 (disabled).
-    y_offset : float or (N,) array-like, optional
+    y_offset : float, (N,) or (N, nz) array-like, optional
         Symmetric half-width δ of the soft-output band ``[z_ref − δ,
-        z_ref + δ]``.  A scalar applies the same band at every step; an (N,)
-        array sets a per-step half-width.  Default: 2.0.
+        z_ref + δ]``.  Same three forms as ``rho``.  Default: 2.0.
     solver : str or QPSolverBackend, optional
         Convex-QP backend selector.  ``"highs"`` (default) or ``"osqp"`` (optional).
     solver_options : dict, optional
@@ -203,16 +215,6 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             )
         self._model = model
         self._N = N
-        self._Q = _any_to_np2d(Q)
-        self._R = _any_to_np2d(R)
-        self._P = _any_to_np2d(P) if P is not None else self._Q.copy()
-        self._S = _any_to_np2d(S) if S is not None else None
-        self._du_min = (
-            _any_to_np1d(du_min).reshape(-1) if du_min is not None else None
-        )
-        self._du_max = (
-            _any_to_np1d(du_max).reshape(-1) if du_max is not None else None
-        )
         self._rho = rho
         self._rho_lin = rho_lin
         self._y_offset = y_offset
@@ -220,11 +222,29 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         self._formulation = formulation
 
         nu = model.nu
+        nz = np.asarray(model.Cz, dtype=float).shape[0]
+
+        self._Q_mats: list[np.ndarray] = self._per_step_weight_matrices(Q, N, nz)
+        self._R_mats: list[np.ndarray] = self._per_step_weight_matrices(R, N, nu)
+        self._P_mat: np.ndarray = (
+            self._terminal_weight_matrix(P, nz)
+            if P is not None
+            else self._Q_mats[-1].copy()
+        )
+
+        self._du_min = (
+            _any_to_np1d(du_min).reshape(-1) if du_min is not None else None
+        )
+        self._du_max = (
+            _any_to_np1d(du_max).reshape(-1) if du_max is not None else None
+        )
+
         self._D_diff: np.ndarray | None = None
         self._S_bar: np.ndarray | None = None
-        if self._S is not None:
+        if S is not None:
+            S_mats = self._per_step_weight_matrices(S, N, nu)
             self._D_diff = _build_D_diff(nu, N)
-            self._S_bar = block_diag(*([self._S] * N))
+            self._S_bar = block_diag(*S_mats)
         elif self._du_min is not None or self._du_max is not None:
             self._D_diff = _build_D_diff(nu, N)
         else:
@@ -271,6 +291,73 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         if arr.shape[0] != N:
             raise ValueError(f"Horizon profile length {arr.shape[0]} != N={N}.")
         return arr.reshape(N)
+
+    @staticmethod
+    def _per_step_weight_matrices(param: Any, N: int, dim: int) -> list[np.ndarray]:
+        """Convert a weight param to a list of N (dim×dim) matrices.
+
+        Accepts:
+        - scalar → ``scalar · I_dim`` replicated N times.
+        - (dim, dim) ndarray → constant matrix replicated N times.
+        - (N,) ndarray → per-step ``arr[k] · I_dim``.
+        - (N, dim) ndarray → per-step ``diag(arr[k, :])``.
+
+        When N == dim a 1-D input of length N is treated as per-step scalars.
+        """
+        arr = np.asarray(param, dtype=float)
+        if arr.ndim == 0 or arr.size == 1:
+            mat = float(arr.flat[0]) * np.eye(dim)
+            return [mat] * N
+        if arr.ndim == 2 and arr.shape == (dim, dim):
+            return [arr] * N
+        if arr.ndim == 1 and arr.shape[0] == N:
+            return [float(arr[k]) * np.eye(dim) for k in range(N)]
+        if arr.ndim == 2 and arr.shape == (N, dim):
+            return [np.diag(arr[k]) for k in range(N)]
+        raise ValueError(
+            f"Cannot interpret weight of shape {arr.shape} for N={N}, dim={dim}. "
+            f"Expected: scalar, ({dim},{dim}) matrix, ({N},) per-step scalars, "
+            f"or ({N},{dim}) per-step diagonal vectors."
+        )
+
+    @staticmethod
+    def _terminal_weight_matrix(param: Any, dim: int) -> np.ndarray:
+        """Convert a terminal weight param to a (dim×dim) matrix.
+
+        Accepts scalar, (dim,) diagonal vector, or (dim, dim) matrix.
+        """
+        arr = np.asarray(param, dtype=float)
+        if arr.ndim == 0 or arr.size == 1:
+            return float(arr.flat[0]) * np.eye(dim)
+        if arr.ndim == 1 and arr.size == dim:
+            return np.diag(arr)
+        if arr.ndim == 2 and arr.shape == (dim, dim):
+            return arr.copy()
+        raise ValueError(
+            f"Cannot interpret terminal weight of shape {arr.shape} for dim={dim}. "
+            f"Expected: scalar, ({dim},) diagonal vector, or ({dim},{dim}) matrix."
+        )
+
+    @staticmethod
+    def _per_step_weight_vectors(param: Any, N: int, dim: int) -> np.ndarray:
+        """Convert a weight param to an (N, dim) array.
+
+        Accepts:
+        - scalar → ``np.full((N, dim), scalar)``.
+        - (N,) ndarray → per-step scalar broadcast to ``(N, dim)``.
+        - (N, dim) ndarray → returned as-is.
+        """
+        arr = np.asarray(param, dtype=float)
+        if arr.ndim == 0 or arr.size == 1:
+            return np.full((N, dim), float(arr.flat[0]))
+        if arr.ndim == 1 and arr.shape[0] == N:
+            return np.tile(arr.reshape(N, 1), (1, dim))
+        if arr.ndim == 2 and arr.shape == (N, dim):
+            return arr.copy()
+        raise ValueError(
+            f"Cannot interpret weight of shape {arr.shape} for N={N}, dim={dim}. "
+            f"Expected: scalar, ({N},) per-step scalars, or ({N},{dim}) per-step vectors."
+        )
 
     def _resolve_disturbance(self, D: Any | None, nd: int) -> np.ndarray:
         if D is not None:
@@ -334,11 +421,11 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             negative_slack_coefficient_profile=prof.negative_slack_coefficient_profile,
         )
 
-    def _per_step_band_half_width(self, N: int) -> np.ndarray:
+    def _per_step_band_half_widths(self, N: int, nz: int) -> np.ndarray:
+        """Return (N, nz) band half-width array (per-step, per-output)."""
         prof = self._horizon_profile.soft_output_band_half_width_profile
-        if prof is None:
-            return self._per_step_scales(self._y_offset, N)
-        return self._per_step_scales(prof, N)
+        source = prof if prof is not None else self._y_offset
+        return self._per_step_weight_vectors(source, N, nz)
 
     # ── Public solve ────────────────────────────────────────────────────────
 
@@ -389,7 +476,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         Bd = _any_to_np2d(self._model.Bd)
         Ed = _any_to_np2d(self._model.Ed)
 
-        if self._S is not None or self._du_min is not None or self._du_max is not None:
+        if self._S_bar is not None or self._du_min is not None or self._du_max is not None:
             u_prev_np = (
                 np.zeros(nu) if u_prev is None
                 else _any_to_np1d(u_prev).reshape(-1)
@@ -516,10 +603,14 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         CP = Cz_bar @ Psi
         CL = Cz_bar @ Lambda
 
-        Q_bar = block_diag(*([
-            self._Q * q_scales[k] for k in range(N - 1)
-        ] + [self._P * q_scales[N - 1]])) if N > 1 else self._P * q_scales[0]
-        R_bar = block_diag(*[self._R * r_scales[k] for k in range(N)])
+        Q_mats = [self._Q_mats[k] * q_scales[k] for k in range(N)]
+        P_scaled = self._P_mat * q_scales[N - 1]
+        R_mats = [self._R_mats[k] * r_scales[k] for k in range(N)]
+
+        Q_bar = (
+            block_diag(*(Q_mats[:N - 1] + [P_scaled])) if N > 1 else P_scaled
+        )
+        R_bar = block_diag(*R_mats)
 
         z_ref_bar = self._per_step_output_references(Cz, x_ref, nz, N)
         Z_free = CP @ x0 + CL @ D
@@ -528,7 +619,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         H_uu = CG.T @ Q_bar @ CG + R_bar
         f_u = CG.T @ Q_bar @ e_free
 
-        if self._S is not None:
+        if self._S_bar is not None:
             d0 = np.zeros(N * nu)
             d0[:nu] = -u_prev_np
             H_uu = H_uu + self._D_diff.T @ self._S_bar @ self._D_diff
@@ -536,16 +627,15 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
 
         u_eq = self._resolve_input_equilibrium(nu)
         if u_eq is not None:
-            f_u = f_u + absolute_quadratic_input_regularisation_linear_term(
-                self._R, u_eq, N, nu, r_scales,
-            )
+            for k in range(N):
+                f_u[k * nu:(k + 1) * nu] += 2.0 * (R_mats[k] @ u_eq)
 
         n_U = N * nu
         n_eps = N * nz
         n_Z = n_U + n_eps
 
-        rho_steps = self._per_step_scales(self._rho, N)
-        rho_diag = np.repeat(rho_steps, nz)
+        rho_arr = self._per_step_weight_vectors(self._rho, N, nz)
+        rho_diag = rho_arr.reshape(-1)
 
         H = np.zeros((n_Z, n_Z))
         H[:n_U, :n_U] = H_uu
@@ -554,8 +644,8 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
 
         f = np.zeros(n_Z)
         f[:n_U] = f_u
-        rho_lin_steps = self._per_step_scales(self._rho_lin, N)
-        rho_lin_vec = np.repeat(rho_lin_steps, nz)
+        rho_lin_arr = self._per_step_weight_vectors(self._rho_lin, N, nz)
+        rho_lin_vec = rho_lin_arr.reshape(-1)
         if np.any(rho_lin_vec != 0.0):
             f[n_U:] = rho_lin_vec
 
@@ -570,7 +660,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         lb = np.concatenate([u_min_t, np.zeros(n_eps)])
         ub = np.concatenate([u_max_t, np.full(n_eps, np.inf)])
 
-        band = self._per_step_band_half_width(N)
+        band = self._per_step_band_half_widths(N, nz)  # (N, nz)
         z_min_t = np.zeros(N * nz)
         z_max_t = np.zeros(N * nz)
         for k in range(N):
@@ -629,20 +719,24 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             prof.input_regularisation_weight_scale_profile, N
         )
         z_ref_bar = self._per_step_output_references(Cz, x_ref, nz, N)
-        band = self._per_step_band_half_width(N)
+        band = self._per_step_band_half_widths(N, nz)  # (N, nz)
+
+        Q_mats = [self._Q_mats[k] * q_scales[k] for k in range(N)]
+        P_scaled = self._P_mat * q_scales[N - 1]
+        R_mats = [self._R_mats[k] * r_scales[k] for k in range(N)]
 
         f = np.zeros(n_Z)
 
         Czt = Cz.T
         x_blocks = []
         for k in range(N):
-            Qk = (self._P if k == N - 1 else self._Q) * q_scales[k]
+            Qk = P_scaled if k == N - 1 else Q_mats[k]
             x_blocks.append(Czt @ Qk @ Cz)
             z_ref_k = z_ref_bar[k * nz:(k + 1) * nz]
             f[k * nx:(k + 1) * nx] = -Czt @ (Qk @ z_ref_k)
 
-        R_bar = block_diag(*[self._R * r_scales[k] for k in range(N)])
-        if self._S is not None:
+        R_bar = block_diag(*R_mats)
+        if self._S_bar is not None:
             d0 = np.zeros(n_U)
             d0[:nu] = -u_prev_np
             H_uu = R_bar + self._D_diff.T @ self._S_bar @ self._D_diff
@@ -652,14 +746,13 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
 
         u_eq = self._resolve_input_equilibrium(nu)
         if u_eq is not None:
-            f[oU:oU + n_U] += absolute_quadratic_input_regularisation_linear_term(
-                self._R, u_eq, N, nu, r_scales,
-            )
+            for k in range(N):
+                f[oU + k * nu:oU + (k + 1) * nu] += 2.0 * (R_mats[k] @ u_eq)
 
-        rho_steps = self._per_step_scales(self._rho, N)
-        rho_diag = np.repeat(rho_steps, nz)
-        rho_lin_steps = self._per_step_scales(self._rho_lin, N)
-        rho_lin_vec = np.repeat(rho_lin_steps, nz)
+        rho_arr = self._per_step_weight_vectors(self._rho, N, nz)
+        rho_diag = rho_arr.reshape(-1)
+        rho_lin_arr = self._per_step_weight_vectors(self._rho_lin, N, nz)
+        rho_lin_vec = rho_lin_arr.reshape(-1)
         if np.any(rho_lin_vec != 0.0):
             f[oE:oE + n_eps] = rho_lin_vec
 
@@ -728,7 +821,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             r_hi = k * nz
             r_lo = n_eps + k * nz
             z_ref_k = z_ref_bar[k * nz:(k + 1) * nz]
-            z_min = z_ref_k - band[k]
+            z_min = z_ref_k - band[k]   # band[k] is (nz,) vector
             z_max = z_ref_k + band[k]
             _add_g(r_hi, xs, Cz)
             _add_g(r_hi, es, neg_eye_nz)

@@ -42,25 +42,24 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
         Linearised continuous-discrete plant with steady-state operating point.
     N : int
         Prediction horizon (number of sampling intervals).
-    Q : (nz, nz) array-like
-        Stage output tracking cost  ‖δz − δz_ref‖²_Q  (deviation space).
-    R : (nu, nu) array-like
-        Stage input cost  ``‖u‖²_R``  on **absolute** inputs.  In the deviation
-        QP this is implemented via :attr:`horizon_profile.input_equilibrium`
-        (set automatically from ``u_s``).
-    P : (nz, nz) array-like, optional
-        Terminal output tracking cost.  Default: Q.
-    S : (nu, nu) array-like, optional
-        Input rate-of-movement cost  ‖Δ(δu)‖²_S.  ``None`` → disabled.
-    rho : float or (N,) array-like, optional
-        Quadratic penalty on the soft-output slack variable ``ε``.  Scalar or
-        per-step (N,) array.  Default: 1e4.
-    rho_lin : float or (N,) array-like, optional
-        Linear penalty on the soft-output slack variable ``ε``.  Scalar or
-        per-step (N,) array.  Default: 0.0.
-    y_offset : float or (N,) array-like, optional
-        Symmetric half-width δ of the soft output constraint band.
-        Default: 2.0.
+    Q : array-like
+        Stage tracking cost in deviation space.  Accepts scalar, ``(N,)``
+        per-step scalars, ``(N, nz)`` per-step diagonal vectors, or ``(nz, nz)``
+        constant matrix.
+    R : array-like
+        Stage input cost on **absolute** inputs.  Same four forms as ``Q`` with
+        ``nu`` replacing ``nz``.
+    P : array-like, optional
+        Terminal tracking cost.  Accepts scalar, ``(nz,)`` diagonal, or
+        ``(nz, nz)`` matrix.  Default: last step's ``Q`` matrix.
+    S : array-like, optional
+        Input rate-of-movement cost.  Same four forms as ``R``.  ``None`` → disabled.
+    rho : float, (N,) or (N, nz) array-like, optional
+        Quadratic penalty on the soft-output slack variable ``ε``.  Default: 1e4.
+    rho_lin : float, (N,) or (N, nz) array-like, optional
+        Linear (L1-style) penalty on ``ε``.  Default: 0.0.
+    y_offset : float, (N,) or (N, nz) array-like, optional
+        Symmetric half-width δ of the soft output constraint band.  Default: 2.0.
     solver : str or QPSolverBackend, optional
         Convex-QP backend.  Default: ``"highs"``.
     solver_options : dict, optional
