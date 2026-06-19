@@ -119,7 +119,7 @@ def main() -> None:
         for solver, form in combos:
             ocp = StandardLinearDiscreteOCP(
                 model, N=N, Q=np.eye(model.nx), R=np.eye(model.nu) * 0.1,
-                y_offset=5.0, solver=solver, formulation=form,
+                z_offset=5.0, solver=solver, formulation=form,
             )
             t, U, _ = _time_solve(ocp, x0, D, x_ref)
             times.append(t * 1e3)

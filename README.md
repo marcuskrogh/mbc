@@ -451,7 +451,7 @@ z[k+1] ≤ z_ref + δ + ε[k+1]                         (soft upper output bound
 ```
 
 The output bounds are centred at the reference ``z_ref`` with half-width
-``δ = y_offset``.  Violations are penalised quadratically via ``ρ ‖ε‖²``,
+``δ = z_offset``.  Violations are penalised quadratically via ``ρ ‖ε‖²``,
 which guarantees the QP is always feasible.
 
 **Batch (lifted) prediction matrices**
@@ -524,7 +524,7 @@ OSQP `update` with primal+dual starts), which is planned future work.
 | `P` | `(nz, nz) matrix` | `Q` | Terminal output tracking cost |
 | `S` | `(nu, nu) matrix` or `None` | `None` | Quadratic ROM cost ``‖Δu‖²_S``; `None` disables |
 | `rho` | `float` | `1e4` | Soft-constraint slack quadratic penalty weight |
-| `y_offset` | `float` | `2.0` | Half-width δ of the symmetric soft-output band |
+| `z_offset` | `float` | `2.0` | Half-width δ of the symmetric soft-output band |
 
 **Usage**:
 

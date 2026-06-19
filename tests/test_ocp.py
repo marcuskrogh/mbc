@@ -17,7 +17,7 @@ from mbc.control import (
     GeneralContinuousOCP,
     StandardContinuousOCP,
 )
-from tests.ocp_fixtures import ScalarDiscretePlant, ScalarCDPlant
+from tests.ocp_fixtures import ScalarDiscretePlant, ScalarCDPlant, TwoOutputDiscretePlant
 
 
 @pytest.fixture
@@ -52,7 +52,7 @@ class TestStandardLinearDiscreteOCP:
     def test_soft_output_constraint(self, scalar_disc):
         ocp = StandardLinearDiscreteOCP(
             model=scalar_disc, N=4, Q=np.eye(1), R=np.eye(1) * 0.1,
-            y_offset=0.5, rho=1e4,
+            z_offset=0.5, rho=1e4,
         )
         U, X = ocp.solve(x0=[0.0], D=np.zeros(4), x_ref=[1.0])
         z = np.array(X).reshape(-1, 1)
@@ -128,6 +128,19 @@ class TestHorizonProfiles:
         assert u.shape == (1,)
         assert ocp.horizon_profile is ctrl.horizon_profile
 
+    def test_per_step_weight_scale_profile(self, scalar_disc):
+        """output_tracking_weight_scale_profile still works as (N,) scalar multiplier."""
+        N = 4
+        D = np.zeros(N * scalar_disc.nd)  # nd=0 → empty
+
+        ocp_scaled = StandardLinearDiscreteOCP(scalar_disc, N=N, Q=np.eye(1) * 2, R=np.eye(1))
+        ocp_profile = StandardLinearDiscreteOCP(scalar_disc, N=N, Q=np.eye(1), R=np.eye(1))
+        ocp_profile.set_output_tracking_weight_scale_profile(np.full(N, 2.0))
+
+        U_scaled, _ = ocp_scaled.solve(x0=[0.0], D=D, x_ref=[1.0])
+        U_profile, _ = ocp_profile.solve(x0=[0.0], D=D, x_ref=[1.0])
+        np.testing.assert_allclose(U_scaled, U_profile, atol=1e-8)
+
     def test_tracking_and_bounds(self, scalar_cd):
         model = scalar_cd.nonlinear_model
         ocp = StandardContinuousOCP(
@@ -143,3 +156,242 @@ class TestHorizonProfiles:
         assert np.all(u_opt >= -2.0 - 1e-5)
         assert np.all(u_opt <= 2.0 + 1e-5)
         assert "X" in info
+
+
+@pytest.fixture
+def two_out():
+    return TwoOutputDiscretePlant()
+
+
+D4 = np.zeros(4 * 0)  # nd=0, so D has 0 elements per step
+
+
+def _ocp(model, N=4, **kw):
+    """Helper: OCP with zero disturbances pre-loaded."""
+    ocp = StandardLinearDiscreteOCP(model, N=N, **kw)
+    ocp.set_disturbance_profile(np.zeros(N * model.nd))
+    return ocp
+
+
+class TestPerStepWeightForms:
+    """Test that Q, R, P, S, rho, rho_lin, z_offset accept all three width forms."""
+
+    # ── Q (stage tracking weight) ─────────────────────────────────────────
+
+    def test_Q_scalar_equals_matrix(self, two_out):
+        ocp_s = _ocp(two_out, Q=2.0, R=np.eye(2))
+        ocp_m = _ocp(two_out, Q=np.eye(2) * 2.0, R=np.eye(2))
+        U_s, _ = ocp_s.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        U_m, _ = ocp_m.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        np.testing.assert_allclose(U_s, U_m, atol=1e-8)
+
+    def test_Q_per_step_scalars(self, two_out):
+        """(N,) Q form sets different per-step weights; earlier steps track faster."""
+        N = 4
+        # heavy weight early, light late
+        Q_early = _ocp(two_out, Q=np.array([10.0, 10.0, 1.0, 1.0]), R=np.eye(2) * 0.01)
+        Q_late  = _ocp(two_out, Q=np.array([1.0,  1.0, 10.0, 10.0]), R=np.eye(2) * 0.01)
+        U_early, X_early = Q_early.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        U_late,  X_late  = Q_late.solve( [0.0, 0.0], x_ref=[1.0, 1.0])
+        # Early-heavy forces the first input to be larger
+        assert abs(U_early[0]) > abs(U_late[0]) - 1e-6
+
+    def test_Q_per_step_vectors(self, two_out):
+        """(N, nz) Q form penalises outputs asymmetrically per step; solutions differ."""
+        N = 4
+        nz = 2
+        # heavy on output 0 only → first input channel works harder
+        Q_ch0 = np.zeros((N, nz))
+        Q_ch0[:, 0] = 10.0
+        Q_ch0[:, 1] = 0.1
+        Q_ch1 = np.zeros((N, nz))
+        Q_ch1[:, 0] = 0.1
+        Q_ch1[:, 1] = 10.0
+        ocp0 = _ocp(two_out, Q=Q_ch0, R=np.eye(2) * 0.01)
+        ocp1 = _ocp(two_out, Q=Q_ch1, R=np.eye(2) * 0.01)
+        U0, _ = ocp0.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        U1, _ = ocp1.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        # Q_ch0 penalises output-0 → drives input-0 harder
+        assert U0[0] > U1[0] - 1e-6
+
+    def test_Q_matrix_form_still_works(self, two_out):
+        ocp = _ocp(two_out, Q=np.diag([3.0, 1.0]), R=np.eye(2))
+        U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert U.shape == (8,)
+
+    # ── R (input regularisation weight) ──────────────────────────────────
+
+    def test_R_scalar_equals_matrix(self, two_out):
+        ocp_s = _ocp(two_out, Q=np.eye(2), R=0.5)
+        ocp_m = _ocp(two_out, Q=np.eye(2), R=np.eye(2) * 0.5)
+        U_s, _ = ocp_s.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        U_m, _ = ocp_m.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        np.testing.assert_allclose(U_s, U_m, atol=1e-8)
+
+    def test_R_per_step_scalars(self, two_out):
+        """(N,) R form: low early penalisation → larger first input."""
+        N = 4
+        R_low_early  = _ocp(two_out, Q=np.eye(2), R=np.array([0.001, 0.001, 10.0, 10.0]))
+        R_high_early = _ocp(two_out, Q=np.eye(2), R=np.array([10.0,  10.0,  0.001, 0.001]))
+        U_le, _ = R_low_early.solve( [0.0, 0.0], x_ref=[1.0, 1.0])
+        U_he, _ = R_high_early.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert np.linalg.norm(U_le[:2]) > np.linalg.norm(U_he[:2]) - 1e-6
+
+    def test_R_per_step_vectors(self, two_out):
+        """(N, nu) R form: per-input penalty asymmetry shifts solution."""
+        N = 4
+        nu = 2
+        # penalise input-0 heavily at every step
+        R_heavy0 = np.ones((N, nu))
+        R_heavy0[:, 0] = 10.0
+        R_light0 = np.ones((N, nu))
+        R_light0[:, 0] = 0.01
+        ocp_h = _ocp(two_out, Q=np.eye(2), R=R_heavy0)
+        ocp_l = _ocp(two_out, Q=np.eye(2), R=R_light0)
+        U_h, _ = ocp_h.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        U_l, _ = ocp_l.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert abs(U_h[0]) < abs(U_l[0]) + 1e-6
+
+    # ── P (terminal weight) ───────────────────────────────────────────────
+
+    def test_P_scalar(self, two_out):
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), P=5.0)
+        U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert U.shape == (8,)
+
+    def test_P_diagonal_vector(self, two_out):
+        """(nz,) P vector is treated as a diagonal matrix."""
+        ocp_v = _ocp(two_out, Q=np.eye(2), R=np.eye(2), P=np.array([3.0, 1.0]))
+        ocp_m = _ocp(two_out, Q=np.eye(2), R=np.eye(2), P=np.diag([3.0, 1.0]))
+        U_v, _ = ocp_v.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        U_m, _ = ocp_m.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        np.testing.assert_allclose(U_v, U_m, atol=1e-8)
+
+    def test_P_defaults_to_last_Q_step(self, two_out):
+        """When P is None, it defaults to the last step's Q matrix."""
+        N = 4
+        q_arr = np.zeros((N, 2))
+        q_arr[:-1, :] = 1.0
+        q_arr[-1, :] = 5.0   # last step has weight 5
+        ocp_default = _ocp(two_out, N=N, Q=q_arr, R=np.eye(2))
+        # Explicit P equal to last Q step should give same result
+        ocp_explicit = _ocp(two_out, N=N, Q=q_arr, R=np.eye(2), P=np.diag(q_arr[-1]))
+        U_d, _ = ocp_default.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        U_e, _ = ocp_explicit.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        np.testing.assert_allclose(U_d, U_e, atol=1e-8)
+
+    # ── S (rate-of-movement weight) ───────────────────────────────────────
+
+    def test_S_per_step_scalars(self, two_out):
+        """Per-step (N,) S weight: heavy early ROM makes first Δu small."""
+        N = 4
+        ocp_h = _ocp(two_out, Q=np.eye(2), R=np.eye(2) * 0.01,
+                     S=np.array([10.0, 10.0, 0.01, 0.01]))
+        ocp_l = _ocp(two_out, Q=np.eye(2), R=np.eye(2) * 0.01,
+                     S=np.array([0.01, 0.01, 10.0, 10.0]))
+        U_h, _ = ocp_h.solve([0.0, 0.0], x_ref=[1.0, 1.0], u_prev=[0.0, 0.0])
+        U_l, _ = ocp_l.solve([0.0, 0.0], x_ref=[1.0, 1.0], u_prev=[0.0, 0.0])
+        assert np.linalg.norm(U_h[:2]) <= np.linalg.norm(U_l[:2]) + 1e-6
+
+    def test_S_per_step_vectors(self, two_out):
+        """(N, nu) S form: asymmetric ROM penalisation per input channel."""
+        N = 4
+        nu = 2
+        S_heavy0 = np.ones((N, nu)) * 0.01
+        S_heavy0[:, 0] = 10.0
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2) * 0.01, S=S_heavy0)
+        U, _ = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0], u_prev=[0.0, 0.0])
+        assert U.shape == (8,)
+
+    # ── rho (quadratic slack penalty) ─────────────────────────────────────
+
+    def test_rho_per_step_vectors(self, two_out):
+        """(N, nz) rho: different penalty per output channel."""
+        N = 4
+        nz = 2
+        # very tight band, high rho on output-0 → strong push to track output-0
+        rho_arr = np.ones((N, nz))
+        rho_arr[:, 0] = 1e6
+        rho_arr[:, 1] = 1.0
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=rho_arr, z_offset=0.01)
+        U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert U.shape == (8,)
+
+    def test_rho_per_step_scalars(self, two_out):
+        """(N,) rho differs from scalar rho in practice."""
+        N = 4
+        rho_vary = np.array([1e6, 1e6, 1.0, 1.0])
+        ocp_v = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=rho_vary, z_offset=0.5)
+        ocp_c = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1.0,      z_offset=0.5)
+        U_v, _ = ocp_v.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        U_c, _ = ocp_c.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert not np.allclose(U_v, U_c)
+
+    # ── rho_lin (linear slack penalty) ────────────────────────────────────
+
+    def test_rho_lin_per_step_vectors(self, two_out):
+        """(N, nz) rho_lin: per-output linear slack penalty."""
+        N = 4
+        nz = 2
+        rho_lin_arr = np.ones((N, nz)) * 100.0
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2),
+                   rho=1e4, rho_lin=rho_lin_arr, z_offset=0.5)
+        U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert U.shape == (8,)
+
+    # ── z_offset (soft-output band half-width) ────────────────────────────
+
+    def test_z_offset_per_step_scalars(self, two_out):
+        """(N,) z_offset: wider band later → slack needed only in early steps."""
+        N = 4
+        y_tight_early = _ocp(two_out, Q=np.eye(2), R=np.eye(2),
+                              rho=1e4, z_offset=np.array([0.1, 0.1, 5.0, 5.0]))
+        U, X = y_tight_early.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert U.shape == (8,)
+
+    def test_z_offset_per_step_vectors(self, two_out):
+        """(N, nz) z_offset: different band per output channel."""
+        N = 4
+        nz = 2
+        band_arr = np.ones((N, nz)) * 2.0
+        band_arr[:, 0] = 0.1   # tight for output-0, wide for output-1
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1e4, z_offset=band_arr)
+        U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert U.shape == (8,)
+
+    def test_z_offset_scalar_profile_override(self, two_out):
+        """Profile (N, nz) band overrides init-time z_offset."""
+        N = 4
+        nz = 2
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1e4, z_offset=0.5)
+        band_arr = np.ones((N, nz)) * 2.0
+        ocp.set_soft_output_band_half_width_profile(band_arr)
+        U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
+        assert U.shape == (8,)
+
+    # ── Both formulations ─────────────────────────────────────────────────
+
+    @pytest.mark.parametrize("formulation", ["condensed", "sparse"])
+    def test_both_formulations_agree_on_per_step_vector_Q(self, two_out, formulation):
+        """condensed and sparse give same answer with per-step vector Q."""
+        N = 4
+        nz = 2
+        Q_arr = np.column_stack([np.linspace(1, 4, N), np.linspace(2, 5, N)])
+        ocp_c = _ocp(two_out, N=N, Q=Q_arr, R=np.eye(2), formulation="condensed")
+        ocp_s = _ocp(two_out, N=N, Q=Q_arr, R=np.eye(2), formulation="sparse")
+        U_c, X_c = ocp_c.solve([0.5, -0.3], x_ref=[1.0, 0.5])
+        U_s, X_s = ocp_s.solve([0.5, -0.3], x_ref=[1.0, 0.5])
+        np.testing.assert_allclose(U_c, U_s, atol=1e-6)
+        np.testing.assert_allclose(X_c, X_s, atol=1e-6)
+
+    # ── Shape error handling ───────────────────────────────────────────────
+
+    def test_bad_Q_shape_raises(self, two_out):
+        with pytest.raises(ValueError, match="Cannot interpret weight"):
+            StandardLinearDiscreteOCP(two_out, N=4, Q=np.ones((3, 2)), R=np.eye(2))
+
+    def test_bad_rho_shape_raises(self, two_out):
+        with pytest.raises(ValueError, match="Cannot interpret weight"):
+            _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=np.ones((3, 2))).solve(
+                [0.0, 0.0], x_ref=[1.0, 1.0]
+            )
