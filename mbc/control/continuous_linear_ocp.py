@@ -113,7 +113,9 @@ class StandardLinearContinuousDiscreteOCP(StandardLinearDiscreteOCP):
     S : (nu, nu) array-like, optional
         Input rate-of-movement cost  ‖Δu‖²_S.  ``None`` → disabled.
     rho : float, optional
-        Penalty weight on soft output constraint violation.  Default: 1e4.
+        Quadratic penalty on the soft-output slack variable ``ε``.  Default: 1e4.
+    rho_lin : float, optional
+        Linear penalty on the soft-output slack variable ``ε``.  Default: 0.0.
     y_offset : float, optional
         Symmetric half-width δ of the soft output constraint band.
         Default: 2.0.
@@ -139,6 +141,7 @@ class StandardLinearContinuousDiscreteOCP(StandardLinearDiscreteOCP):
         P: Any | None = None,
         S: Any | None = None,
         rho: float = 1e4,
+        rho_lin: float = 0.0,
         y_offset: float = 2.0,
         solver: str | QPSolverBackend = "highs",
         solver_options: dict[str, Any] | None = None,
@@ -154,6 +157,7 @@ class StandardLinearContinuousDiscreteOCP(StandardLinearDiscreteOCP):
             P=P,
             S=S,
             rho=rho,
+            rho_lin=rho_lin,
             y_offset=y_offset,
             solver=solver,
             solver_options=solver_options,

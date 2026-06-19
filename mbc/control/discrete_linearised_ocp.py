@@ -57,7 +57,9 @@ class StandardLinearisedDiscreteOCP(StandardLinearDiscreteOCP):
     S : (nu, nu) array-like, optional
         Input rate-of-movement cost  ‖Δ(δu)‖²_S.  ``None`` → disabled.
     rho : float, optional
-        Penalty weight on soft output constraint violation.  Default: 1e4.
+        Quadratic penalty on the soft-output slack variable ``ε``.  Default: 1e4.
+    rho_lin : float, optional
+        Linear penalty on the soft-output slack variable ``ε``.  Default: 0.0.
     y_offset : float, optional
         Symmetric half-width δ of the soft output constraint band.
         Default: 2.0.
