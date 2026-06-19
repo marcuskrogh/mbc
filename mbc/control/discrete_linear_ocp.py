@@ -22,6 +22,7 @@ Cost function over horizon N
     Φ(U) = Σ_{k=0}^{N-1} [ ‖z[k+1] − z_ref‖²_Q + ‖u[k]‖²_R + ‖Δu[k]‖²_S ]
          + ‖z[N] − z_ref‖²_P
          + ρ Σ_{k=0}^{N-1} ‖ε[k+1]‖²
+         + ρ_lin Σ_{k=0}^{N-1} 1ᵀε[k+1]
 
 with Δu[k] = u[k] − u[k−1] (rate of movement) and ε[k] the soft-output
 slack variable.
@@ -158,6 +159,11 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
     rho : float, optional
         Quadratic penalty on the soft-output slack variable ``ε``.
         Default: 1e4.
+    rho_lin : float, optional
+        Linear penalty on the soft-output slack variable ``ε``.  Adds a term
+        ``ρ_lin · 1ᵀε`` to the cost, which (since ``ε ≥ 0``) acts as an L1
+        penalty and promotes exact constraint satisfaction.  Default: 0.0
+        (disabled).
     y_offset : float, optional
         Symmetric half-width δ of the soft-output band ``[z_ref − δ,
         z_ref + δ]``.  Default: 2.0.
@@ -180,6 +186,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         du_min: Any | None = None,
         du_max: Any | None = None,
         rho: float = 1e4,
+        rho_lin: float = 0.0,
         y_offset: float = 2.0,
         solver: str | QPSolverBackend = "highs",
         solver_options: dict[str, Any] | None = None,
@@ -204,6 +211,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             _any_to_np1d(du_max).reshape(-1) if du_max is not None else None
         )
         self._rho = rho
+        self._rho_lin = rho_lin
         self._y_offset = y_offset
         self._backend = make_qp_backend(solver, solver_options=solver_options)
         self._formulation = formulation
@@ -540,6 +548,8 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
 
         f = np.zeros(n_Z)
         f[:n_U] = f_u
+        if self._rho_lin != 0.0:
+            f[n_U:] = self._rho_lin
 
         u_min, u_max = self._model.u_bounds
         prof = self._horizon_profile
@@ -637,6 +647,9 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
             f[oU:oU + n_U] += absolute_quadratic_input_regularisation_linear_term(
                 self._R, u_eq, N, nu, r_scales,
             )
+
+        if self._rho_lin != 0.0:
+            f[oE:oE + n_eps] = self._rho_lin
 
         H = sp.block_diag(
             x_blocks + [H_uu, self._rho * sp.eye(n_eps)],
