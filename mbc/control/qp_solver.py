@@ -375,6 +375,7 @@ def make_qp_backend(
         return OSQPBackend(options=solver_options)
 
     raise ValueError(
-        f"Unknown QP solver '{solver}'. Supported: 'highs', 'osqp'. "
+        f"Unknown QP solver '{solver}'. Supported: 'highs' (built-in), "
+        "'osqp' (optional; install mbc[osqp]). "
         "Alternatively pass a QPSolverBackend instance."
     )

@@ -162,7 +162,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         Symmetric half-width δ of the soft-output band ``[z_ref − δ,
         z_ref + δ]``.  Default: 2.0.
     solver : str or QPSolverBackend, optional
-        Convex-QP backend selector.  ``"osqp"`` (default) or ``"highs"``.
+        Convex-QP backend selector.  ``"highs"`` (default) or ``"osqp"`` (optional).
     solver_options : dict, optional
         Backend-specific options forwarded to the QP solver.
     formulation : {"auto", "condensed", "sparse"}, optional
@@ -181,7 +181,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         du_max: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
-        solver: str | QPSolverBackend = "osqp",
+        solver: str | QPSolverBackend = "highs",
         solver_options: dict[str, Any] | None = None,
         formulation: str = "auto",
     ) -> None:

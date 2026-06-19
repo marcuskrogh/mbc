@@ -21,6 +21,12 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+try:
+    import osqp as _osqp_mod  # noqa: F401
+    _OSQP_AVAILABLE = True
+except ImportError:
+    _OSQP_AVAILABLE = False
+
 
 
 from mbc.models import (
@@ -1567,11 +1573,13 @@ class TestOCPFormulationEquivalence:
         kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
         U_ref, _ = StandardLinearDiscreteOCP(solver="highs", formulation="condensed",
                                          **kw).solve(x0, D, x_ref)
-        for solver in ("highs", "osqp"):
+        solvers = ["highs"] + (["osqp"] if _OSQP_AVAILABLE else [])
+        for solver in solvers:
             U, _ = StandardLinearDiscreteOCP(solver=solver, **kw).solve(x0, D, x_ref)
             np.testing.assert_allclose(U, U_ref, atol=1e-4,
                                        err_msg=f"{solver} disagrees with reference")
 
+    @pytest.mark.skipif(not _OSQP_AVAILABLE, reason="osqp not installed")
     def test_auto_is_backend_aware(self):
         """``auto`` → sparse for OSQP (banded-exploiting), condensed for HiGHS."""
         model = DoubleIntegrator()

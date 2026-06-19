@@ -58,7 +58,7 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
         Symmetric half-width δ of the soft output constraint band.
         Default: 2.0.
     solver : str or QPSolverBackend, optional
-        Convex-QP backend.  Default: ``"osqp"``.
+        Convex-QP backend.  Default: ``"highs"``.
     solver_options : dict, optional
         Forwarded to the QP backend.
     formulation : {"auto", "condensed", "sparse"}, optional
@@ -81,7 +81,7 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
         S: Any | None = None,
         rho: float = 1e4,
         y_offset: float = 2.0,
-        solver: str | QPSolverBackend = "osqp",
+        solver: str | QPSolverBackend = "highs",
         solver_options: dict[str, Any] | None = None,
         formulation: str = "auto",
     ) -> None:

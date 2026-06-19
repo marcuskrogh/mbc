@@ -62,7 +62,7 @@ class StandardLinearisedDiscreteOCP(StandardLinearDiscreteOCP):
         Symmetric half-width δ of the soft output constraint band.
         Default: 2.0.
     solver : str or QPSolverBackend, optional
-        Convex-QP backend.  Default: ``"osqp"``.
+        Convex-QP backend.  Default: ``"highs"``.
     solver_options : dict, optional
         Forwarded to the QP backend.
     formulation : {"auto", "condensed", "sparse"}, optional
