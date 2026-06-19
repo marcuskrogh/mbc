@@ -54,6 +54,9 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
         ``(nz, nz)`` matrix.  Default: last step's ``Q`` matrix.
     S : array-like, optional
         Input rate-of-movement cost.  Same four forms as ``R``.  ``None`` → disabled.
+    du_min, du_max : (nu,) array-like, optional
+        Hard input rate-of-movement box ``du_min ≤ Δu ≤ du_max``.
+        ``None`` disables the corresponding bound.
     rho : float, (N,) or (N, nz) array-like, optional
         Quadratic penalty on the soft-output slack variable ``ε``.  Default: 1e4.
     rho_lin : float, (N,) or (N, nz) array-like, optional
@@ -82,6 +85,8 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
         R: Any,
         P: Any | None = None,
         S: Any | None = None,
+        du_min: Any | None = None,
+        du_max: Any | None = None,
         rho: float = 1e4,
         rho_lin: float = 0.0,
         z_offset: float = 2.0,
@@ -96,6 +101,8 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
             R=R,
             P=P,
             S=S,
+            du_min=du_min,
+            du_max=du_max,
             rho=rho,
             rho_lin=rho_lin,
             z_offset=z_offset,
