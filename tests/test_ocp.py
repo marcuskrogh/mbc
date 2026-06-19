@@ -395,3 +395,103 @@ class TestPerStepWeightForms:
             _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=np.ones((3, 2))).solve(
                 [0.0, 0.0], x_ref=[1.0, 1.0]
             )
+
+
+class TestPerChannelWeightScaleProfiles:
+    """Req 1: output/input weight-scale profiles accept (N, nz)/(N, nu) arrays."""
+
+    @pytest.mark.parametrize("formulation", ["condensed", "sparse"])
+    def test_per_channel_Q_scale_equivalence(self, two_out, formulation):
+        """(N, nz) output_tracking_weight_scale_profile equals baking scales into Q."""
+        N = 4
+        nz = 2
+        # base Q = diag(1, 2), scales vary per step and per channel
+        Q_base = np.diag([1.0, 2.0])
+        scales = np.array([[1.0, 3.0], [2.0, 1.5], [0.5, 2.0], [1.0, 1.0]])
+
+        # Manually bake scales in: Q_k_scaled = diag(sqrt(s)) @ Q @ diag(sqrt(s))
+        Q_baked = [
+            np.diag(np.sqrt(scales[k])) @ Q_base @ np.diag(np.sqrt(scales[k]))
+            for k in range(N)
+        ]
+        ocp_baked = _ocp(two_out, N=N, Q=np.stack(Q_baked, axis=0).reshape(N, nz, nz)[0],
+                         R=np.eye(2), formulation=formulation)
+        # Build per-step (N, nz, nz) manually — use per-step Q_baked as (N, nz) diag
+        Q_baked_diag = np.array([[scales[k, 0], scales[k, 1] * 2] for k in range(N)])
+        ocp_baked2 = _ocp(two_out, N=N, Q=Q_baked_diag, R=np.eye(2), formulation=formulation)
+
+        ocp_scaled = _ocp(two_out, N=N, Q=Q_base, R=np.eye(2), formulation=formulation)
+        ocp_scaled.set_output_tracking_weight_scale_profile(scales)
+
+        x0 = [0.5, -0.3]
+        x_ref = [1.0, 0.5]
+        U_baked, _ = ocp_baked2.solve(x0, x_ref=x_ref)
+        U_scaled, _ = ocp_scaled.solve(x0, x_ref=x_ref)
+        np.testing.assert_allclose(U_scaled, U_baked, atol=1e-6)
+
+    @pytest.mark.parametrize("formulation", ["condensed", "sparse"])
+    def test_scalar_scale_profile_backward_compat(self, two_out, formulation):
+        """(N,) scale profile (backward-compat) and (N,1)-broadcast agree."""
+        N = 4
+        scales_1d = np.array([1.0, 2.0, 0.5, 3.0])
+        scales_2d = np.column_stack([scales_1d, scales_1d])  # (N, nz=2) uniform
+
+        ocp1 = _ocp(two_out, N=N, Q=np.eye(2), R=np.eye(2), formulation=formulation)
+        ocp1.set_output_tracking_weight_scale_profile(scales_1d)
+
+        ocp2 = _ocp(two_out, N=N, Q=np.eye(2), R=np.eye(2), formulation=formulation)
+        ocp2.set_output_tracking_weight_scale_profile(scales_2d)
+
+        U1, _ = ocp1.solve([0.5, -0.3], x_ref=[1.0, 0.5])
+        U2, _ = ocp2.solve([0.5, -0.3], x_ref=[1.0, 0.5])
+        np.testing.assert_allclose(U1, U2, atol=1e-6)
+
+    @pytest.mark.parametrize("formulation", ["condensed", "sparse"])
+    def test_per_channel_R_scale(self, two_out, formulation):
+        """(N, nu) input_regularisation_weight_scale_profile: higher R scale → smaller u."""
+        N = 4
+        ocp_lo = _ocp(two_out, N=N, Q=np.eye(2), R=np.eye(2), formulation=formulation)
+        ocp_hi = _ocp(two_out, N=N, Q=np.eye(2), R=np.eye(2), formulation=formulation)
+        # Scale up input cost on channel 0 only
+        r_scales = np.ones((N, 2))
+        r_scales[:, 0] = 10.0
+        ocp_hi.set_input_regularisation_weight_scale_profile(r_scales)
+
+        x0 = [0.5, -0.3]
+        x_ref = [1.0, 0.5]
+        U_lo, _ = ocp_lo.solve(x0, x_ref=x_ref)
+        U_hi, _ = ocp_hi.solve(x0, x_ref=x_ref)
+        # u[0] should be smaller (in magnitude) when its cost is higher
+        assert abs(U_hi[0]) < abs(U_lo[0]) + 1e-6
+
+
+class TestLinearisedContinuousMPCReq2:
+    """Req 2: rho_lin exposed on StandardLinearisedContinuousMPC constructor."""
+
+    def _make_mpc(self, rho_lin=0.0):
+        from mbc.control import StandardLinearisedContinuousMPC
+        from tests.test_mpc import ScalarNonlinear, _DummyEstimator2
+
+        model = ScalarNonlinear()
+        estimator = _DummyEstimator2([0.0])
+        return StandardLinearisedContinuousMPC(
+            model=model,
+            estimator=estimator,
+            N=4,
+            Q=1.0,
+            R=0.1,
+            dt=1.0,
+            u_min=np.array([-2.0]),
+            u_max=np.array([2.0]),
+            rho_lin=rho_lin,
+        )
+
+    def test_rho_lin_param_accepted(self):
+        """Constructor accepts rho_lin without error."""
+        mpc = self._make_mpc(rho_lin=50.0)
+        assert mpc._ocp._rho_lin == 50.0
+
+    def test_rho_lin_zero_default(self):
+        """Default rho_lin=0 leaves linear slack cost disabled."""
+        mpc = self._make_mpc()
+        assert mpc._ocp._rho_lin == 0.0

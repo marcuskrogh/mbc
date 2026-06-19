@@ -308,6 +308,7 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
         P: Any | None = None,
         S: Any | None = None,
         rho: float = 1e4,
+        rho_lin: float = 0.0,
         z_offset: float = 2.0,
         du_min: np.ndarray | None = None,
         du_max: np.ndarray | None = None,
@@ -344,6 +345,7 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
             du_min=du_min,
             du_max=du_max,
             rho=rho,
+            rho_lin=rho_lin,
             z_offset=z_offset,
         )
         self._bind_ocp(self._ocp)
