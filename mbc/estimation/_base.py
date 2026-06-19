@@ -241,6 +241,40 @@ class ContinuousDiscreteEstimator(ABC):
         P_pred : (nx, nx) predicted covariance.
         """
 
+    def predict_for(
+        self,
+        dt: float,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None,
+        t: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Time update over an arbitrary interval ``dt`` (need not equal ``Ts``).
+
+        Uses the same nominal sub-step size as :meth:`predict` but adapts the
+        step count to cover exactly ``dt``, so per-step accuracy is unchanged.
+        Suitable for off-grid (odd-interval) propagation when the controller is
+        off but state tracking must continue.
+
+        Parameters
+        ----------
+        dt : float              — integration duration in seconds.
+        u  : (nu,) ndarray      — input held constant (ZOH) over the interval.
+        d  : (nd,) ndarray      — disturbance held constant over the interval.
+        p  : (np,) ndarray      — parameter vector (``None`` for linear models).
+        t  : float              — start time of the interval.
+
+        Returns
+        -------
+        x_pred : (nx,) predicted state estimate.
+        P_pred : (nx, nx) predicted covariance.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement predict_for. "
+            "Override to support variable-length prediction intervals."
+        )
+
     @abstractmethod
     def update(
         self,

@@ -29,6 +29,14 @@ class LinearDiscreteMPC(ModelPredictiveController):
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Compute and return the optimal closed-loop MPC action."""
 
+    @abstractmethod
+    def propagate(
+        self,
+        ym: Any,
+        D: Any | None = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """Run the estimator without solving the OCP; return ``(x_hat, P)``."""
+
 
 class StandardLinearDiscreteMPC(LinearDiscreteMPC):
     """
@@ -90,3 +98,34 @@ class StandardLinearDiscreteMPC(LinearDiscreteMPC):
         self._prev_U, self._prev_X = U_seq, X_seq
 
         return u, U_seq, X_seq
+
+    def propagate(
+        self,
+        ym: Any,
+        D: Any | None = None,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Run the estimator without solving the OCP; return ``(x_hat, P)``.
+
+        Use this when the controller is switched off but state tracking must
+        continue.  The last applied input is held constant for the prediction
+        step; no new control action is produced and warm-start sequences are
+        not updated.
+
+        Parameters
+        ----------
+        ym : (nym,) array-like   — current measurement.
+        D  : array-like, optional — disturbance; updates the stored disturbance
+             for the *next* call if provided.
+
+        Returns
+        -------
+        x_hat : (nx,) filtered state estimate.
+        P     : (nx, nx) state error covariance.
+        """
+        nd = self._model.nd
+        ym_np = _any_to_np1d(ym)
+        x_hat, P = self._estimator.step(ym_np, self._u_prev_np, self._d_prev_np)
+        if D is not None:
+            self._d_prev_np = _any_to_np1d(D)[:nd].copy()
+        return np.asarray(x_hat, dtype=float), P

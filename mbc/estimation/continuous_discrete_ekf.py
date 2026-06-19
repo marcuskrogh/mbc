@@ -279,6 +279,42 @@ class ContinuousDiscreteEKF(ContinuousDiscreteEstimator):
         self._P = P
         return x.copy(), P.copy()
 
+    def predict_for(
+        self,
+        dt: float,
+        u: np.ndarray,
+        d: np.ndarray,
+        p: np.ndarray | None,
+        t: float,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """
+        Time update over an arbitrary interval ``dt``.
+
+        Keeps the same nominal sub-step size ``h = Ts / n_steps`` and runs
+        ``max(1, round(dt / h))`` sub-steps so per-step accuracy is unchanged
+        regardless of whether ``dt`` is shorter or longer than ``Ts``.
+
+        Parameters
+        ----------
+        dt : float              — integration duration in seconds.
+        u  : (nu,) ndarray      — input (ZOH) over the interval.
+        d  : (nd,) ndarray      — disturbance over the interval.
+        p  : (np,) ndarray      — parameter vector.
+        t  : float              — start time of the interval.
+        """
+        n_steps = max(1, round(dt / self._h))
+        h = dt / n_steps
+
+        x = self._x.copy()
+        P = self._P.copy()
+        t_j = t
+        for _ in range(n_steps):
+            x, P = self._moment_step(x, P, u, d, p, t_j, h)
+            t_j += h
+        self._x = x
+        self._P = P
+        return x.copy(), P.copy()
+
     def update(
         self,
         ym: np.ndarray,
