@@ -60,7 +60,16 @@ class _HorizonProfileSupport:
         return self._horizon_profile
 
     def clear_horizon_profile(self) -> None:
-        self._horizon_profile = HorizonProfile()
+        """Reset all horizon-profile fields to their defaults in place.
+
+        Mutates the existing :class:`HorizonProfile` object rather than
+        replacing it, so the shared reference established by :meth:`_bind_ocp`
+        (MPC ↔ OCP) is preserved.
+        """
+        prof = self._horizon_profile
+        fresh = HorizonProfile()
+        for f in fresh.__dataclass_fields__:
+            setattr(prof, f, getattr(fresh, f))
 
     def set_horizon_profile(self, **kwargs: Any) -> None:
         for key, value in kwargs.items():

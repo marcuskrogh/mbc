@@ -128,6 +128,30 @@ class TestHorizonProfiles:
         assert u.shape == (1,)
         assert ocp.horizon_profile is ctrl.horizon_profile
 
+    def test_clear_horizon_profile_preserves_shared_binding(self, scalar_disc):
+        """clear_horizon_profile() must not break the MPC↔OCP shared profile binding."""
+        from mbc.estimation import DiscreteLinearKF
+        from mbc.control import StandardLinearDiscreteMPC
+
+        kf = DiscreteLinearKF(scalar_disc)
+        ocp = StandardLinearDiscreteOCP(scalar_disc, N=3, Q=np.eye(1), R=np.eye(1) * 0.1)
+        ctrl = StandardLinearDiscreteMPC(scalar_disc, kf, ocp)
+
+        assert ctrl.horizon_profile is ocp.horizon_profile
+
+        ctrl.set_disturbance_profile(np.zeros(3))
+        ctrl.clear_horizon_profile()
+
+        # The shared reference must still hold after the clear.
+        assert ctrl.horizon_profile is ocp.horizon_profile
+
+        # A setter called on the controller must be visible from the OCP.
+        ctrl.set_output_tracking_weight_scale_profile(np.array([1.0, 2.0, 3.0]))
+        assert ocp.horizon_profile.output_tracking_weight_scale_profile is not None
+
+        # And vice versa — the cleared fields are gone on both sides.
+        assert ctrl.horizon_profile.disturbance_profile is None
+
     def test_per_step_weight_scale_profile(self, scalar_disc):
         """output_tracking_weight_scale_profile still works as (N,) scalar multiplier."""
         N = 4
