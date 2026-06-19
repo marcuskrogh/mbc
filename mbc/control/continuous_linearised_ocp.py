@@ -27,6 +27,36 @@ if TYPE_CHECKING:
     from ..models import ContinuousDiscreteLinearisedSDE
 
 
+def _deviation_input_bound_profiles(
+    *,
+    N: int,
+    nu: int,
+    u_s: np.ndarray,
+    u_min_abs: np.ndarray,
+    u_max_abs: np.ndarray,
+    input_min_profile: np.ndarray | None,
+    input_max_profile: np.ndarray | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """
+    Convert absolute input limits to deviation limits for δu = u − u_s.
+
+    Horizon profiles, when supplied, are interpreted as absolute limits and
+    shifted by the operating-point input ``u_s``.
+    """
+    u_s = np.asarray(u_s, dtype=float).reshape(nu)
+    u_ss_row = u_s.reshape(1, -1)
+    if input_min_profile is not None and input_max_profile is not None:
+        u_min_dev = np.asarray(input_min_profile, dtype=float).reshape(N, nu) - u_ss_row
+        u_max_dev = np.asarray(input_max_profile, dtype=float).reshape(N, nu) - u_ss_row
+        return u_min_dev, u_max_dev
+    u_min_abs = np.asarray(u_min_abs, dtype=float).reshape(nu)
+    u_max_abs = np.asarray(u_max_abs, dtype=float).reshape(nu)
+    return (
+        np.tile((u_min_abs - u_s).reshape(1, -1), (N, 1)),
+        np.tile((u_max_abs - u_s).reshape(1, -1), (N, 1)),
+    )
+
+
 class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOCP):
     """
     Receding-horizon QP for a linearised continuous-discrete system, with
@@ -177,14 +207,29 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
                 ws_dev["X"] = (np.asarray(X_ws, dtype=float).reshape(N, nx) - x_s).reshape(-1)
 
         # Solve in deviation space with absolute input regularisation.
-        saved_ue = self._horizon_profile.input_equilibrium
-        self._horizon_profile.input_equilibrium = u_s
+        prof = self._horizon_profile
+        u_min_abs, u_max_abs = self._cd_model.u_bounds
+        saved_min = prof.input_min_profile
+        saved_max = prof.input_max_profile
+        prof.input_min_profile, prof.input_max_profile = _deviation_input_bound_profiles(
+            N=N,
+            nu=nu,
+            u_s=u_s,
+            u_min_abs=u_min_abs,
+            u_max_abs=u_max_abs,
+            input_min_profile=saved_min,
+            input_max_profile=saved_max,
+        )
+        saved_ue = prof.input_equilibrium
+        prof.input_equilibrium = u_s
         try:
             U_dev, X_dev = super().solve(
                 delta_x0, delta_D, delta_x_ref, delta_u_prev, ws_dev
             )
         finally:
-            self._horizon_profile.input_equilibrium = saved_ue
+            prof.input_min_profile = saved_min
+            prof.input_max_profile = saved_max
+            prof.input_equilibrium = saved_ue
 
         # Convert back to absolute space
         U_abs = (U_dev.reshape(N, nu) + u_s).reshape(-1)

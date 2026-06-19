@@ -489,6 +489,83 @@ class TestPerChannelWeightScaleProfiles:
         assert abs(U_hi[0]) < abs(U_lo[0]) + 1e-6
 
 
+class TestLinearisedOCPAbsoluteInputBounds:
+    """Linearised OCPs must enforce absolute actuator limits when u_s ≠ 0."""
+
+    def test_continuous_linearised_ocp_respects_absolute_bounds(self):
+        from mbc.models import ContinuousDiscreteLinearisedSDE
+
+        class _BiasedRoom(ContinuousDiscreteLinearisedSDE):
+            _U_MIN = np.array([-2.0])
+            _U_MAX = np.array([+2.0])
+
+            @property
+            def Ts(self) -> float:
+                return 1.0
+
+            @property
+            def nx(self) -> int:
+                return 1
+
+            @property
+            def nu(self) -> int:
+                return 1
+
+            @property
+            def nd(self) -> int:
+                return 0
+
+            @property
+            def A(self) -> np.ndarray:
+                return np.array([[-0.08]])
+
+            @property
+            def B(self) -> np.ndarray:
+                return np.array([[0.4]])
+
+            @property
+            def E(self) -> np.ndarray:
+                return np.zeros((1, 0))
+
+            @property
+            def G(self) -> np.ndarray:
+                return np.array([[0.01]])
+
+            @property
+            def Cm(self) -> np.ndarray:
+                return np.eye(1)
+
+            @property
+            def Rm(self) -> np.ndarray:
+                return np.eye(1)
+
+            @property
+            def u_s(self) -> np.ndarray:
+                return np.array([1.5])
+
+            @property
+            def d_s(self) -> np.ndarray:
+                return np.zeros(0)
+
+            @property
+            def u_bounds(self) -> tuple[np.ndarray, np.ndarray]:
+                return self._U_MIN.copy(), self._U_MAX.copy()
+
+        model = _BiasedRoom()
+        ocp = StandardLinearizedContinuousDiscreteOCP(
+            model, N=5, Q=20.0, R=0.01, solver="highs",
+        )
+        U, _ = ocp.solve(
+            x0=np.array([18.0]),
+            D=np.zeros(0),
+            x_ref=np.array([23.0]),
+            u_prev=np.array([0.0]),
+        )
+        u_min, u_max = model.u_bounds
+        assert np.all(U.reshape(-1, 1) >= u_min - 1e-5)
+        assert np.all(U.reshape(-1, 1) <= u_max + 1e-5)
+
+
 class TestLinearisedContinuousMPCReq2:
     """Req 2: rho_lin exposed on StandardLinearisedContinuousMPC constructor."""
 

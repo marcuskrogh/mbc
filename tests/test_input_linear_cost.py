@@ -91,3 +91,19 @@ class TestSignedMagnitudeLinearCost:
         )
         U, _ = ocp.solve(x0=[0.0], x_ref=[-2.0])
         assert U.reshape(-1)[0] >= -0.05
+
+    def test_slack_with_soft_output_constraints(self):
+        """Input slacks must not break soft-output slack columns in the QP."""
+        model = BidirectionalPlant()
+        ocp = StandardLinearDiscreteOCP(
+            model, N=4, Q=np.eye(1) * 10.0, R=np.eye(1) * 0.01,
+            z_offset=0.5, rho=1e4,
+        )
+        ocp.set_input_linear_cost_profile(
+            np.full((4, 1), 0.05),
+            signed_magnitude_input_indices=np.array([0]),
+        )
+        U, _ = ocp.solve(x0=[0.0], x_ref=[5.0], D=np.zeros(0))
+        assert U.reshape(-1)[0] > 0.5
+        u_min, u_max = model.u_bounds
+        assert U.reshape(-1)[0] <= u_max[0] + 1e-5

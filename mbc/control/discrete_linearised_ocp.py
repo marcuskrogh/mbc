@@ -20,6 +20,7 @@ from typing import Any, TYPE_CHECKING
 import numpy as np
 
 from .discrete_linear_ocp import StandardLinearDiscreteOCP
+from .continuous_linearised_ocp import _deviation_input_bound_profiles
 from .qp_solver import QPSolverBackend
 
 if TYPE_CHECKING:
@@ -146,14 +147,29 @@ class StandardLinearisedDiscreteOCP(StandardLinearDiscreteOCP):
                 ws_dev["X"] = (np.asarray(X_ws, dtype=float).reshape(N, nx) - x_s).reshape(-1)
 
         # Solve in deviation space with absolute input regularisation.
-        saved_ue = self._horizon_profile.input_equilibrium
-        self._horizon_profile.input_equilibrium = u_s
+        prof = self._horizon_profile
+        u_min_abs, u_max_abs = model.u_bounds
+        saved_min = prof.input_min_profile
+        saved_max = prof.input_max_profile
+        prof.input_min_profile, prof.input_max_profile = _deviation_input_bound_profiles(
+            N=N,
+            nu=nu,
+            u_s=u_s,
+            u_min_abs=u_min_abs,
+            u_max_abs=u_max_abs,
+            input_min_profile=saved_min,
+            input_max_profile=saved_max,
+        )
+        saved_ue = prof.input_equilibrium
+        prof.input_equilibrium = u_s
         try:
             U_dev, X_dev = super().solve(
                 delta_x0, delta_D, delta_x_ref, delta_u_prev, ws_dev
             )
         finally:
-            self._horizon_profile.input_equilibrium = saved_ue
+            prof.input_min_profile = saved_min
+            prof.input_max_profile = saved_max
+            prof.input_equilibrium = saved_ue
 
         # Convert back to absolute space
         U_abs = (U_dev.reshape(N, nu) + u_s).reshape(-1)

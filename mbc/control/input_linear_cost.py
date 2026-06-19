@@ -238,19 +238,26 @@ def augment_condensed_qp(
 
     n_st = layout.n_st
     n_Z = n_U + 2 * n_st + n_eps
+    oE = n_U + 2 * n_st
 
     H_new = np.zeros((n_Z, n_Z))
-    H_new[:n_base, :n_base] = H
+    H_new[:n_U, :n_U] = H[:n_U, :n_U]
+    if n_eps > 0:
+        H_new[oE:oE + n_eps, oE:oE + n_eps] = H[n_U:n_base, n_U:n_base]
+
     f_new = np.zeros(n_Z)
-    f_new[:n_base] = f
+    f_new[:n_U] = f[:n_U]
+    if n_eps > 0:
+        f_new[oE:oE + n_eps] = f[n_U:n_base]
 
     lb_new = np.full(n_Z, -np.inf)
     ub_new = np.full(n_Z, np.inf)
     lb_new[:n_U] = lb[:n_U]
     ub_new[:n_U] = ub[:n_U]
     lb_new[n_U:n_U + 2 * n_st] = 0.0
-    lb_new[n_U + 2 * n_st:] = lb[n_U:]
-    ub_new[n_U + 2 * n_st:] = ub[n_U:]
+    if n_eps > 0:
+        lb_new[oE:oE + n_eps] = lb[n_U:n_base]
+        ub_new[oE:oE + n_eps] = ub[n_U:n_base]
 
     oS = n_U
     oT = n_U + n_st
@@ -276,15 +283,30 @@ def augment_condensed_qp(
     A_link = np.vstack(A_rows)
     b_link = np.asarray(b_rows, dtype=float)
 
-    G_pad = np.hstack([G, np.zeros((G.shape[0], 2 * n_st))])
+    if G.shape[1] == n_base:
+        G_pad = np.hstack([
+            G[:, :n_U],
+            np.zeros((G.shape[0], 2 * n_st)),
+            G[:, n_U:],
+        ])
+    else:
+        G_pad = np.hstack([G, np.zeros((G.shape[0], 2 * n_st))])
 
     A_existing = qp.get("A")
     b_existing = qp.get("b")
     if A_existing is not None:
-        A_pad = np.hstack([
-            np.asarray(A_existing, dtype=float),
-            np.zeros((A_existing.shape[0], 2 * n_st)),
-        ])
+        A_existing = np.asarray(A_existing, dtype=float)
+        if A_existing.shape[1] == n_base:
+            A_pad = np.hstack([
+                A_existing[:, :n_U],
+                np.zeros((A_existing.shape[0], 2 * n_st)),
+                A_existing[:, n_U:],
+            ])
+        else:
+            A_pad = np.hstack([
+                A_existing,
+                np.zeros((A_existing.shape[0], 2 * n_st)),
+            ])
         A_all = np.vstack([A_pad, A_link])
         b_all = np.concatenate([np.asarray(b_existing, dtype=float).reshape(-1), b_link])
     else:
