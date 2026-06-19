@@ -288,9 +288,42 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         arr = np.asarray(values, dtype=float)
         if arr.ndim == 0 or arr.size == 1:
             return np.full(N, float(arr.reshape(-1)[0]))
-        if arr.shape[0] != N:
-            raise ValueError(f"Horizon profile length {arr.shape[0]} != N={N}.")
-        return arr.reshape(N)
+        if arr.ndim == 1 and arr.shape[0] == N:
+            return arr.reshape(N)
+        if arr.ndim == 2 and arr.shape[0] == N:
+            # per-channel (N, dim) — return geometric mean per step for backward compat
+            return arr.prod(axis=1) ** (1.0 / arr.shape[1])
+        raise ValueError(f"Horizon profile length {arr.shape[0]} != N={N}.")
+
+    @staticmethod
+    def _per_step_weight_scales(values: Any | None, N: int, dim: int) -> np.ndarray:
+        """Return (N, dim) scale array for per-channel weight scaling.
+
+        Accepts:
+        - None → all ones.
+        - scalar → broadcast to ``(N, dim)``.
+        - (N,) → per-step scalar broadcast across channels.
+        - (N, dim) → per-step, per-channel scales.
+        """
+        if values is None:
+            return np.ones((N, dim))
+        arr = np.asarray(values, dtype=float)
+        if arr.ndim == 0 or arr.size == 1:
+            return np.full((N, dim), float(arr.flat[0]))
+        if arr.ndim == 1 and arr.shape[0] == N:
+            return np.tile(arr.reshape(N, 1), (1, dim))
+        if arr.ndim == 2 and arr.shape == (N, dim):
+            return arr.copy()
+        raise ValueError(
+            f"Weight scale profile shape {arr.shape} not compatible with N={N}, dim={dim}. "
+            f"Expected scalar, ({N},) per-step, or ({N},{dim}) per-channel."
+        )
+
+    @staticmethod
+    def _apply_weight_scale(M: np.ndarray, scale: np.ndarray) -> np.ndarray:
+        """Apply per-channel scale: diag(sqrt(scale)) @ M @ diag(sqrt(scale))."""
+        sq = np.sqrt(np.maximum(scale, 0.0))
+        return (sq[:, np.newaxis] * M) * sq[np.newaxis, :]
 
     @staticmethod
     def _per_step_weight_matrices(param: Any, N: int, dim: int) -> list[np.ndarray]:
@@ -579,9 +612,11 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
     ) -> tuple[dict[str, Any], Callable[[np.ndarray], tuple[np.ndarray, np.ndarray]]]:
         N = self._N
         prof = self._horizon_profile
-        q_scales = self._per_step_scales(prof.output_tracking_weight_scale_profile, N)
-        r_scales = self._per_step_scales(
-            prof.input_regularisation_weight_scale_profile, N
+        q_scales = self._per_step_weight_scales(
+            prof.output_tracking_weight_scale_profile, N, nz
+        )
+        r_scales = self._per_step_weight_scales(
+            prof.input_regularisation_weight_scale_profile, N, nu
         )
 
         Ad_pow = [np.eye(nx)]
@@ -603,9 +638,9 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         CP = Cz_bar @ Psi
         CL = Cz_bar @ Lambda
 
-        Q_mats = [self._Q_mats[k] * q_scales[k] for k in range(N)]
-        P_scaled = self._P_mat * q_scales[N - 1]
-        R_mats = [self._R_mats[k] * r_scales[k] for k in range(N)]
+        Q_mats = [self._apply_weight_scale(self._Q_mats[k], q_scales[k]) for k in range(N)]
+        P_scaled = self._apply_weight_scale(self._P_mat, q_scales[N - 1])
+        R_mats = [self._apply_weight_scale(self._R_mats[k], r_scales[k]) for k in range(N)]
 
         Q_bar = (
             block_diag(*(Q_mats[:N - 1] + [P_scaled])) if N > 1 else P_scaled
@@ -714,16 +749,18 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         oE = n_X + n_U
 
         prof = self._horizon_profile
-        q_scales = self._per_step_scales(prof.output_tracking_weight_scale_profile, N)
-        r_scales = self._per_step_scales(
-            prof.input_regularisation_weight_scale_profile, N
+        q_scales = self._per_step_weight_scales(
+            prof.output_tracking_weight_scale_profile, N, nz
+        )
+        r_scales = self._per_step_weight_scales(
+            prof.input_regularisation_weight_scale_profile, N, nu
         )
         z_ref_bar = self._per_step_output_references(Cz, x_ref, nz, N)
         band = self._per_step_band_half_widths(N, nz)  # (N, nz)
 
-        Q_mats = [self._Q_mats[k] * q_scales[k] for k in range(N)]
-        P_scaled = self._P_mat * q_scales[N - 1]
-        R_mats = [self._R_mats[k] * r_scales[k] for k in range(N)]
+        Q_mats = [self._apply_weight_scale(self._Q_mats[k], q_scales[k]) for k in range(N)]
+        P_scaled = self._apply_weight_scale(self._P_mat, q_scales[N - 1])
+        R_mats = [self._apply_weight_scale(self._R_mats[k], r_scales[k]) for k in range(N)]
 
         f = np.zeros(n_Z)
 

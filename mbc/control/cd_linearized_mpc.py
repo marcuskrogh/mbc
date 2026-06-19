@@ -18,6 +18,7 @@ from .._utils import _fd_jacobian, _zoh_full, _van_loan
 from ..models import DiscreteLinearSDE, ContinuousDiscreteSDE
 from ._base import ModelPredictiveController
 from .discrete_linear_ocp import StandardLinearDiscreteOCP
+from .qp_solver import QPSolverBackend
 
 
 class _DeviationDiscreteLinearSDE(DiscreteLinearSDE):
@@ -308,9 +309,13 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
         P: Any | None = None,
         S: Any | None = None,
         rho: float = 1e4,
+        rho_lin: float = 0.0,
         z_offset: float = 2.0,
         du_min: np.ndarray | None = None,
         du_max: np.ndarray | None = None,
+        solver: str | QPSolverBackend = "highs",
+        solver_options: dict[str, Any] | None = None,
+        formulation: str = "auto",
     ) -> None:
         super().__init__()
         self._model = model
@@ -344,7 +349,11 @@ class StandardLinearisedContinuousMPC(LinearisedContinuousMPC):
             du_min=du_min,
             du_max=du_max,
             rho=rho,
+            rho_lin=rho_lin,
             z_offset=z_offset,
+            solver=solver,
+            solver_options=solver_options,
+            formulation=formulation,
         )
         self._bind_ocp(self._ocp)
 
