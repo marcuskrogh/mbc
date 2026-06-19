@@ -228,7 +228,7 @@ class TestDiscreteLinearOCP:
         model = DoubleIntegrator()
         Q = np.eye(1)
         R = np.eye(1) * 0.1
-        return StandardLinearDiscreteOCP(model, N=N, Q=Q, R=R, y_offset=20.0, **kw)
+        return StandardLinearDiscreteOCP(model, N=N, Q=Q, R=R, z_offset=20.0, **kw)
 
     def test_solve_returns_correct_shapes(self):
         ocp = self._make_ocp(N=5)
@@ -290,9 +290,9 @@ class TestDiscreteLinearOCP:
         D = np.zeros((N * model.nd, 1))
         x_ref = model.x_ref
 
-        ocp_no_rom = StandardLinearDiscreteOCP(model, N=N, Q=Q, R=R, y_offset=20.0)
+        ocp_no_rom = StandardLinearDiscreteOCP(model, N=N, Q=Q, R=R, z_offset=20.0)
         ocp_rom = StandardLinearDiscreteOCP(
-            model, N=N, Q=Q, R=R, y_offset=20.0,
+            model, N=N, Q=Q, R=R, z_offset=20.0,
             S=np.eye(1) * 10.0,
         )
         U_no_rom, _ = ocp_no_rom.solve(x0, D, x_ref)
@@ -320,7 +320,7 @@ class TestMPCController:
         kf = DiscreteLinearKF(model)
         Q_ocp = np.eye(1)
         R_ocp = np.eye(1) * 0.1
-        ocp = StandardLinearDiscreteOCP(model, N=N, Q=Q_ocp, R=R_ocp, y_offset=20.0)
+        ocp = StandardLinearDiscreteOCP(model, N=N, Q=Q_ocp, R=R_ocp, z_offset=20.0)
         ctrl = StandardLinearDiscreteMPC(model, estimator=kf, ocp=ocp)
         return ctrl, model
 
@@ -387,7 +387,7 @@ class TestMPCController:
         kf = DiscreteLinearKF(model)
         Q_ocp = np.eye(1) * 5.0
         R_ocp = np.eye(1) * 0.1
-        ocp = StandardLinearDiscreteOCP(model, N=10, Q=Q_ocp, R=R_ocp, y_offset=20.0)
+        ocp = StandardLinearDiscreteOCP(model, N=10, Q=Q_ocp, R=R_ocp, z_offset=20.0)
         ctrl = StandardLinearDiscreteMPC(model, estimator=kf, ocp=ocp)
 
         x = np.array([0.0])
@@ -419,7 +419,7 @@ class TestContinuousLinearOCP:
         model = SimpleLinearCD()
         Q = np.eye(1)
         R = np.eye(1) * 0.1
-        return StandardLinearContinuousDiscreteOCP(model, N=N, Q=Q, R=R, y_offset=10.0), model
+        return StandardLinearContinuousDiscreteOCP(model, N=N, Q=Q, R=R, z_offset=10.0), model
 
     def test_solve_returns_correct_shapes(self):
         ocp, model = self._make_ocp(N=5)
@@ -477,7 +477,7 @@ class TestCDMPCController:
         kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
         Q = np.eye(1)
         R = np.eye(1) * 0.1
-        ocp = StandardLinearContinuousDiscreteOCP(model, N=N, Q=Q, R=R, y_offset=10.0)
+        ocp = StandardLinearContinuousDiscreteOCP(model, N=N, Q=Q, R=R, z_offset=10.0)
         ctrl = StandardLinearContinuousMPC(model, estimator=kf, ocp=ocp)
         return ctrl, model
 
@@ -514,7 +514,7 @@ class TestCDMPCController:
         kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
         Q = np.eye(1) * 5.0
         R = np.eye(1) * 0.01
-        ocp = StandardLinearContinuousDiscreteOCP(model, N=20, Q=Q, R=R, y_offset=10.0)
+        ocp = StandardLinearContinuousDiscreteOCP(model, N=20, Q=Q, R=R, z_offset=10.0)
         ctrl = StandardLinearContinuousMPC(model, estimator=kf, ocp=ocp)
 
         from mbc._utils import _zoh_full
@@ -1407,7 +1407,7 @@ class TestCDLinearizedMPCController:
             u_min=np.array([-1.0]),
             u_max=np.array([1.0]),
             x_ref=x_ref,
-            y_offset=10.0,
+            z_offset=10.0,
         )
         return ctrl, model
 
@@ -1435,7 +1435,7 @@ class TestCDLinearizedMPCController:
         R = np.eye(1) * 0.1
         ctrl = StandardLinearisedContinuousMPC(
             model=model, estimator=ekf, N=5, Q=Q, R=R, dt=1.0,
-            u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([1.0]), y_offset=10.0,
+            u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([1.0]), z_offset=10.0,
         )
 
         ctrl.compute(y=np.array([0.0]), d=np.array([0.0]), p=np.array([]), t=0.0)
@@ -1507,7 +1507,7 @@ class TestCDLinearizedMPCController:
         R = np.eye(1) * 0.05
         ctrl = StandardLinearisedContinuousMPC(
             model=model, estimator=ekf, N=10, Q=Q, R=R, dt=1.0,
-            u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([2.0]), y_offset=10.0,
+            u_min=np.array([-2.0]), u_max=np.array([2.0]), x_ref=np.array([2.0]), z_offset=10.0,
         )
 
         x = x0.copy()
@@ -1533,7 +1533,7 @@ class TestOCPFormulationEquivalence:
     @pytest.mark.parametrize("use_rom", [False, True])
     def test_discrete_condensed_equals_sparse(self, N, use_rom):
         model = DoubleIntegrator()
-        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0,
+        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, z_offset=2.0,
                   solver="highs")
         if use_rom:
             kw["S"] = np.eye(1) * 5.0
@@ -1551,7 +1551,7 @@ class TestOCPFormulationEquivalence:
     def test_cd_condensed_equals_sparse(self):
         model = SimpleLinearCD()
         N = 12
-        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0,
+        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, z_offset=10.0,
                   solver="highs")
         ocp_c = StandardLinearContinuousDiscreteOCP(formulation="condensed", **kw)
         ocp_s = StandardLinearContinuousDiscreteOCP(formulation="sparse", **kw)
@@ -1570,7 +1570,7 @@ class TestOCPFormulationEquivalence:
         x0 = np.array([0.0, 0.0])
         D = np.zeros(N * model.nd)
         x_ref = model.x_ref
-        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
+        kw = dict(model=model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, z_offset=2.0)
         U_ref, _ = StandardLinearDiscreteOCP(solver="highs", formulation="condensed",
                                          **kw).solve(x0, D, x_ref)
         solvers = ["highs"] + (["osqp"] if _OSQP_AVAILABLE else [])
@@ -1583,7 +1583,7 @@ class TestOCPFormulationEquivalence:
     def test_auto_is_backend_aware(self):
         """``auto`` → sparse for OSQP (banded-exploiting), condensed for HiGHS."""
         model = DoubleIntegrator()
-        kw = dict(Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=2.0)
+        kw = dict(Q=np.eye(1), R=np.eye(1) * 0.1, z_offset=2.0)
         for N in (5, 40, 100):
             assert StandardLinearDiscreteOCP(
                 model, N=N, solver="osqp", **kw)._resolve_formulation() == "sparse"
@@ -1614,7 +1614,7 @@ class TestWarmStartMPC:
         model = DoubleIntegrator()
         kf = DiscreteLinearKF(model)
         ocp = StandardLinearDiscreteOCP(
-            model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=20.0,
+            model, N=N, Q=np.eye(1), R=np.eye(1) * 0.1, z_offset=20.0,
             formulation=formulation,
         )
         ctrl = StandardLinearDiscreteMPC(model, estimator=kf, ocp=ocp, warm_start=warm_start)
@@ -1641,7 +1641,7 @@ class TestWarmStartMPC:
             model = SimpleLinearCD()
             kf = ContinuousDiscreteLinearKF(model, params=ContinuousDiscreteLinearKFParams(n_steps=10))
             ocp = StandardLinearContinuousDiscreteOCP(
-                model, N=10, Q=np.eye(1), R=np.eye(1) * 0.1, y_offset=10.0
+                model, N=10, Q=np.eye(1), R=np.eye(1) * 0.1, z_offset=10.0
             )
             ctrl = StandardLinearContinuousMPC(model, estimator=kf, ocp=ocp, warm_start=warm)
             us = []

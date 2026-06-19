@@ -52,7 +52,7 @@ class TestStandardLinearDiscreteOCP:
     def test_soft_output_constraint(self, scalar_disc):
         ocp = StandardLinearDiscreteOCP(
             model=scalar_disc, N=4, Q=np.eye(1), R=np.eye(1) * 0.1,
-            y_offset=0.5, rho=1e4,
+            z_offset=0.5, rho=1e4,
         )
         U, X = ocp.solve(x0=[0.0], D=np.zeros(4), x_ref=[1.0])
         z = np.array(X).reshape(-1, 1)
@@ -174,7 +174,7 @@ def _ocp(model, N=4, **kw):
 
 
 class TestPerStepWeightForms:
-    """Test that Q, R, P, S, rho, rho_lin, y_offset accept all three width forms."""
+    """Test that Q, R, P, S, rho, rho_lin, z_offset accept all three width forms."""
 
     # ── Q (stage tracking weight) ─────────────────────────────────────────
 
@@ -313,7 +313,7 @@ class TestPerStepWeightForms:
         rho_arr = np.ones((N, nz))
         rho_arr[:, 0] = 1e6
         rho_arr[:, 1] = 1.0
-        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=rho_arr, y_offset=0.01)
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=rho_arr, z_offset=0.01)
         U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
         assert U.shape == (8,)
 
@@ -321,8 +321,8 @@ class TestPerStepWeightForms:
         """(N,) rho differs from scalar rho in practice."""
         N = 4
         rho_vary = np.array([1e6, 1e6, 1.0, 1.0])
-        ocp_v = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=rho_vary, y_offset=0.5)
-        ocp_c = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1.0,      y_offset=0.5)
+        ocp_v = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=rho_vary, z_offset=0.5)
+        ocp_c = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1.0,      z_offset=0.5)
         U_v, _ = ocp_v.solve([0.0, 0.0], x_ref=[1.0, 1.0])
         U_c, _ = ocp_c.solve([0.0, 0.0], x_ref=[1.0, 1.0])
         assert not np.allclose(U_v, U_c)
@@ -335,35 +335,35 @@ class TestPerStepWeightForms:
         nz = 2
         rho_lin_arr = np.ones((N, nz)) * 100.0
         ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2),
-                   rho=1e4, rho_lin=rho_lin_arr, y_offset=0.5)
+                   rho=1e4, rho_lin=rho_lin_arr, z_offset=0.5)
         U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
         assert U.shape == (8,)
 
-    # ── y_offset (soft-output band half-width) ────────────────────────────
+    # ── z_offset (soft-output band half-width) ────────────────────────────
 
-    def test_y_offset_per_step_scalars(self, two_out):
-        """(N,) y_offset: wider band later → slack needed only in early steps."""
+    def test_z_offset_per_step_scalars(self, two_out):
+        """(N,) z_offset: wider band later → slack needed only in early steps."""
         N = 4
         y_tight_early = _ocp(two_out, Q=np.eye(2), R=np.eye(2),
-                              rho=1e4, y_offset=np.array([0.1, 0.1, 5.0, 5.0]))
+                              rho=1e4, z_offset=np.array([0.1, 0.1, 5.0, 5.0]))
         U, X = y_tight_early.solve([0.0, 0.0], x_ref=[1.0, 1.0])
         assert U.shape == (8,)
 
-    def test_y_offset_per_step_vectors(self, two_out):
-        """(N, nz) y_offset: different band per output channel."""
+    def test_z_offset_per_step_vectors(self, two_out):
+        """(N, nz) z_offset: different band per output channel."""
         N = 4
         nz = 2
         band_arr = np.ones((N, nz)) * 2.0
         band_arr[:, 0] = 0.1   # tight for output-0, wide for output-1
-        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1e4, y_offset=band_arr)
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1e4, z_offset=band_arr)
         U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])
         assert U.shape == (8,)
 
-    def test_y_offset_scalar_profile_override(self, two_out):
-        """Profile (N, nz) band overrides init-time y_offset."""
+    def test_z_offset_scalar_profile_override(self, two_out):
+        """Profile (N, nz) band overrides init-time z_offset."""
         N = 4
         nz = 2
-        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1e4, y_offset=0.5)
+        ocp = _ocp(two_out, Q=np.eye(2), R=np.eye(2), rho=1e4, z_offset=0.5)
         band_arr = np.ones((N, nz)) * 2.0
         ocp.set_soft_output_band_half_width_profile(band_arr)
         U, X = ocp.solve([0.0, 0.0], x_ref=[1.0, 1.0])

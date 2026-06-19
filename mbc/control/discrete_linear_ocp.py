@@ -179,7 +179,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
     rho_lin : float, (N,) or (N, nz) array-like, optional
         Linear (L1-style) penalty on ``ε``.  Same three forms as ``rho``.
         Default: 0.0 (disabled).
-    y_offset : float, (N,) or (N, nz) array-like, optional
+    z_offset : float, (N,) or (N, nz) array-like, optional
         Symmetric half-width δ of the soft-output band ``[z_ref − δ,
         z_ref + δ]``.  Same three forms as ``rho``.  Default: 2.0.
     solver : str or QPSolverBackend, optional
@@ -202,7 +202,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         du_max: Any | None = None,
         rho: float = 1e4,
         rho_lin: float = 0.0,
-        y_offset: float = 2.0,
+        z_offset: float = 2.0,
         solver: str | QPSolverBackend = "highs",
         solver_options: dict[str, Any] | None = None,
         formulation: str = "auto",
@@ -217,7 +217,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         self._N = N
         self._rho = rho
         self._rho_lin = rho_lin
-        self._y_offset = y_offset
+        self._z_offset = z_offset
         self._backend = make_qp_backend(solver, solver_options=solver_options)
         self._formulation = formulation
 
@@ -424,7 +424,7 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
     def _per_step_band_half_widths(self, N: int, nz: int) -> np.ndarray:
         """Return (N, nz) band half-width array (per-step, per-output)."""
         prof = self._horizon_profile.soft_output_band_half_width_profile
-        source = prof if prof is not None else self._y_offset
+        source = prof if prof is not None else self._z_offset
         return self._per_step_weight_vectors(source, N, nz)
 
     # ── Public solve ────────────────────────────────────────────────────────

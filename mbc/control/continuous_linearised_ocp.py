@@ -58,7 +58,7 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
         Quadratic penalty on the soft-output slack variable ``ε``.  Default: 1e4.
     rho_lin : float, (N,) or (N, nz) array-like, optional
         Linear (L1-style) penalty on ``ε``.  Default: 0.0.
-    y_offset : float, (N,) or (N, nz) array-like, optional
+    z_offset : float, (N,) or (N, nz) array-like, optional
         Symmetric half-width δ of the soft output constraint band.  Default: 2.0.
     solver : str or QPSolverBackend, optional
         Convex-QP backend.  Default: ``"highs"``.
@@ -84,7 +84,7 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
         S: Any | None = None,
         rho: float = 1e4,
         rho_lin: float = 0.0,
-        y_offset: float = 2.0,
+        z_offset: float = 2.0,
         solver: str | QPSolverBackend = "highs",
         solver_options: dict[str, Any] | None = None,
         formulation: str = "auto",
@@ -98,7 +98,7 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
             S=S,
             rho=rho,
             rho_lin=rho_lin,
-            y_offset=y_offset,
+            z_offset=z_offset,
             solver=solver,
             solver_options=solver_options,
             formulation=formulation,

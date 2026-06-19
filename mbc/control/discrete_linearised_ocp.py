@@ -62,7 +62,7 @@ class StandardLinearisedDiscreteOCP(StandardLinearDiscreteOCP):
     rho_lin : float or (N,) array-like, optional
         Linear penalty on the soft-output slack variable ``ε``.  Scalar or
         per-step (N,) array.  Default: 0.0.
-    y_offset : float or (N,) array-like, optional
+    z_offset : float or (N,) array-like, optional
         Symmetric half-width δ of the soft output constraint band.
         Default: 2.0.
     solver : str or QPSolverBackend, optional
