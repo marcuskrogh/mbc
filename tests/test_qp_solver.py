@@ -13,9 +13,15 @@ from mbc.control import (
     make_qp_backend,
 )
 
+try:
+    import osqp as _osqp_mod  # noqa: F401
+    _OSQP_AVAILABLE = True
+except ImportError:
+    _OSQP_AVAILABLE = False
+
 # Backends under test and a solution tolerance appropriate to each
 # (HiGHS active-set is essentially exact; OSQP is a first-order/ADMM solver).
-BACKENDS = [("highs", 1e-6), ("osqp", 1e-4)]
+BACKENDS = [("highs", 1e-6)] + ([("osqp", 1e-4)] if _OSQP_AVAILABLE else [])
 
 
 # Reference QP:  min ½xᵀPx + qᵀx,  P = 2I, q = [-2, -6]
@@ -116,8 +122,11 @@ class TestBackendFactory:
         b = HighsQPBackend()
         assert make_qp_backend(b) is b
 
-    def test_highs_and_osqp_keys(self):
+    def test_highs_key(self):
         assert isinstance(make_qp_backend("highs"), HighsQPBackend)
+
+    @pytest.mark.skipif(not _OSQP_AVAILABLE, reason="osqp not installed")
+    def test_osqp_key(self):
         assert isinstance(make_qp_backend("osqp"), OSQPBackend)
 
     def test_unknown_solver_raises(self):
