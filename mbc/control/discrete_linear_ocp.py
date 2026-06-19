@@ -156,17 +156,20 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
     du_min, du_max : (nu,) array-like, optional
         Hard input rate-of-movement box ``du_min ≤ Δu ≤ du_max``.
         ``None`` disables the corresponding bound.
-    rho : float, optional
-        Quadratic penalty on the soft-output slack variable ``ε``.
-        Default: 1e4.
-    rho_lin : float, optional
+    rho : float or (N,) array-like, optional
+        Quadratic penalty on the soft-output slack variable ``ε``.  A scalar
+        applies the same weight at every step; an (N,) array sets a per-step
+        weight.  Default: 1e4.
+    rho_lin : float or (N,) array-like, optional
         Linear penalty on the soft-output slack variable ``ε``.  Adds a term
         ``ρ_lin · 1ᵀε`` to the cost, which (since ``ε ≥ 0``) acts as an L1
-        penalty and promotes exact constraint satisfaction.  Default: 0.0
-        (disabled).
-    y_offset : float, optional
+        penalty and promotes exact constraint satisfaction.  A scalar applies
+        the same weight at every step; an (N,) array sets a per-step weight.
+        Default: 0.0 (disabled).
+    y_offset : float or (N,) array-like, optional
         Symmetric half-width δ of the soft-output band ``[z_ref − δ,
-        z_ref + δ]``.  Default: 2.0.
+        z_ref + δ]``.  A scalar applies the same band at every step; an (N,)
+        array sets a per-step half-width.  Default: 2.0.
     solver : str or QPSolverBackend, optional
         Convex-QP backend selector.  ``"highs"`` (default) or ``"osqp"`` (optional).
     solver_options : dict, optional
@@ -334,8 +337,8 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
     def _per_step_band_half_width(self, N: int) -> np.ndarray:
         prof = self._horizon_profile.soft_output_band_half_width_profile
         if prof is None:
-            return np.full(N, self._y_offset)
-        return self._per_step_scales(prof, N, default=self._y_offset)
+            return self._per_step_scales(self._y_offset, N)
+        return self._per_step_scales(prof, N)
 
     # ── Public solve ────────────────────────────────────────────────────────
 
@@ -541,15 +544,20 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
         n_eps = N * nz
         n_Z = n_U + n_eps
 
+        rho_steps = self._per_step_scales(self._rho, N)
+        rho_diag = np.repeat(rho_steps, nz)
+
         H = np.zeros((n_Z, n_Z))
         H[:n_U, :n_U] = H_uu
-        H[n_U:, n_U:] = self._rho * np.eye(n_eps)
+        H[n_U:, n_U:] = np.diag(rho_diag)
         H = 0.5 * (H + H.T)
 
         f = np.zeros(n_Z)
         f[:n_U] = f_u
-        if self._rho_lin != 0.0:
-            f[n_U:] = self._rho_lin
+        rho_lin_steps = self._per_step_scales(self._rho_lin, N)
+        rho_lin_vec = np.repeat(rho_lin_steps, nz)
+        if np.any(rho_lin_vec != 0.0):
+            f[n_U:] = rho_lin_vec
 
         u_min, u_max = self._model.u_bounds
         prof = self._horizon_profile
@@ -648,11 +656,15 @@ class StandardLinearDiscreteOCP(DiscreteOptimalControlProblem):
                 self._R, u_eq, N, nu, r_scales,
             )
 
-        if self._rho_lin != 0.0:
-            f[oE:oE + n_eps] = self._rho_lin
+        rho_steps = self._per_step_scales(self._rho, N)
+        rho_diag = np.repeat(rho_steps, nz)
+        rho_lin_steps = self._per_step_scales(self._rho_lin, N)
+        rho_lin_vec = np.repeat(rho_lin_steps, nz)
+        if np.any(rho_lin_vec != 0.0):
+            f[oE:oE + n_eps] = rho_lin_vec
 
         H = sp.block_diag(
-            x_blocks + [H_uu, self._rho * sp.eye(n_eps)],
+            x_blocks + [H_uu, sp.diags(rho_diag, format="csc")],
             format="csc",
         )
 

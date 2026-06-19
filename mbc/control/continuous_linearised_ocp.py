@@ -52,11 +52,13 @@ class StandardLinearizedContinuousDiscreteOCP(StandardLinearContinuousDiscreteOC
         Terminal output tracking cost.  Default: Q.
     S : (nu, nu) array-like, optional
         Input rate-of-movement cost  ‖Δ(δu)‖²_S.  ``None`` → disabled.
-    rho : float, optional
-        Quadratic penalty on the soft-output slack variable ``ε``.  Default: 1e4.
-    rho_lin : float, optional
-        Linear penalty on the soft-output slack variable ``ε``.  Default: 0.0.
-    y_offset : float, optional
+    rho : float or (N,) array-like, optional
+        Quadratic penalty on the soft-output slack variable ``ε``.  Scalar or
+        per-step (N,) array.  Default: 1e4.
+    rho_lin : float or (N,) array-like, optional
+        Linear penalty on the soft-output slack variable ``ε``.  Scalar or
+        per-step (N,) array.  Default: 0.0.
+    y_offset : float or (N,) array-like, optional
         Symmetric half-width δ of the soft output constraint band.
         Default: 2.0.
     solver : str or QPSolverBackend, optional
