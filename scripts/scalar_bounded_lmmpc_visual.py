@@ -47,7 +47,7 @@ from mbc.control import StandardLinearisedContinuousMPC
 DT    = 1.0
 N_SIM = 25
 N_MPC = 10
-X_REF = np.array([2.0])
+X_REF = np.array([0.5])
 
 
 class BoundedNonlinearScalar(ContinuousDiscreteSDE):
@@ -119,7 +119,7 @@ def run() -> None:
     for k in range(N_SIM):
         ym = model.hm(x_true, u_k, d_k, np.zeros(0), float(k)) + R_std * rng.standard_normal(1)
         Y_meas[k] = ym[0]
-        mpc.set_output_reference_profile(np.full((N_MPC, 1), z_ref[k]))
+        mpc.x_ref = np.array([z_ref[k]])
         u_k, _, _ = mpc.compute(y=ym, d=d_k, p=np.array([]), t=float(k))
         U_arr[k] = u_k[0]
         x_true = _euler_maruyama_step(x_true, u_k, d_k, model, rng)

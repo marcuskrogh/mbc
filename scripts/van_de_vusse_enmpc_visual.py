@@ -44,14 +44,15 @@ import matplotlib.gridspec as gridspec
 import matplotlib.ticker as ticker
 
 from mbc.models import ContinuousDiscreteSDE
-from mbc.estimation import ContinuousDiscreteEKF, ContinuousDiscreteEKFParams
+from mbc.estimation import ContinuousDiscreteEKF, ContinuousDiscreteEKFParams, IntegrationScheme
 from mbc.control import GeneralContinuousOCP, StandardNonlinearContinuousMPC
 
 
-DT    = 0.1
-T_END = 5.0
-N_SIM = int(T_END / DT)
-N_MPC = 20
+DT      = 0.1
+T_END   = 5.0
+N_SIM   = int(T_END / DT)
+N_MPC   = 20
+N_SUB   = 10
 
 
 class VanDeVusseCSTR(ContinuousDiscreteSDE):
@@ -95,12 +96,23 @@ class VanDeVusseCSTR(ContinuousDiscreteSDE):
 
 def _cb_ref(k: int) -> float:
     t = k * DT
-    if t < 1.5: return 0.05
-    if t < 3.5: return 0.12
-    return 0.08
+    if t < 1.5:
+        return 0.15
+    if t < 3.5:
+        return 0.25
+    return 0.35
 
 
-def _em_step(x: np.ndarray, u: np.ndarray, model: VanDeVusseCSTR, rng, n_sub: int = 10) -> np.ndarray:
+def _cb_ref_horizon(k: int) -> np.ndarray:
+    """Piecewise c_B reference over every OCP sub-step in the horizon."""
+    M = N_MPC * N_SUB
+    refs = np.empty((M + 1, 1))
+    for n in range(M + 1):
+        refs[n, 0] = _cb_ref(k + n // N_SUB)
+    return refs
+
+
+def _em_step(x: np.ndarray, u: np.ndarray, model: VanDeVusseCSTR, rng, n_sub: int = N_SUB) -> np.ndarray:
     h = DT / n_sub
     for _ in range(n_sub):
         dw = rng.standard_normal(model.nw) * np.sqrt(h)
@@ -119,19 +131,22 @@ def run() -> None:
 
     ekf = ContinuousDiscreteEKF(
         model, x0=x0.copy(), P0=P0,
-        params=ContinuousDiscreteEKFParams(n_steps=10),
+        params=ContinuousDiscreteEKFParams(n_steps=N_SUB),
     )
+    # Explicit Euler matches the plant simulator; implicit Euler mis-predicts the
+    # short-horizon inverse response in c_B and causes persistent undershoot.
     ocp = GeneralContinuousOCP(
         model, N=N_MPC,
-        Q_z=np.diag([50.0]),
-        R_stage=np.diag([0.5]),
-        P_terminal=np.diag([100.0]),
-        z_ref=np.array([0.05]),
+        Q_z=np.diag([200.0]),
+        R_stage=np.diag([0.02]),
+        P_terminal=np.diag([50.0]),
+        z_ref=np.array([_cb_ref(0)]),
         u_min=np.array([0.1]),
-        u_max=np.array([2.0]),
+        u_max=np.array([5.0]),
         dt=DT,
-        n_steps=5,
-        solver_options={"maxiter": 200},
+        n_steps=N_SUB,
+        scheme=IntegrationScheme.EXPLICIT_EULER,
+        solver_options={"maxiter": 250},
     )
     mpc = StandardNonlinearContinuousMPC(ekf, ocp)
     d_horizon = np.zeros((N_MPC, 0))
@@ -154,8 +169,7 @@ def run() -> None:
         ym = ym + R_std * rng.standard_normal(1)
         Y_meas[k] = ym[0]
 
-        z_ref_k = _cb_ref(k)
-        ocp._z_ref = ocp._broadcast_zref(np.array([z_ref_k]))
+        ocp._z_ref = _cb_ref_horizon(k)
         u_k = mpc.compute(ym, d_horizon, p=None, t=k * DT)
         U_arr[k] = u_k[0]
 
