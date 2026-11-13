@@ -48,3 +48,6 @@ desktop.ini
 
 # Claude Code
 .claude/settings.local.json
+
+# Synced agent skills at environment startup — do not commit
+.agents/skills/
